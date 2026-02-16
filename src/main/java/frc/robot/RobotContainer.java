@@ -49,7 +49,8 @@ public class RobotContainer implements Subsystem {
     public final CommandSwerveDrivetrain drivetrain = TunerConstants.createDrivetrain();
     
     public final WLEDSubsystem wled = new WLEDSubsystem();
-    private final Command loadLights = wled.loadSingletMarquee(WLEDSubsystem.PATH);
+    private final Command loadLights = wled.loadSingletMarquee(WLEDSubsystem.PATH_1);
+    private final Command loadStatic = wled.loadSingletMarquee(WLEDSubsystem.PATH_2);
 
     public RobotContainer() {
         configureBindings();
@@ -80,6 +81,9 @@ public class RobotContainer implements Subsystem {
         joystick.b().whileTrue(drivetrain.applyRequest(() ->
             point.withModuleDirection(new Rotation2d(-joystick.getLeftY(), -joystick.getLeftX()))
         ));
+
+        joystick.x().onTrue(loadLights);
+        joystick.x().onFalse(loadStatic);
 
         // Run SysId routines when holding back/start and X/Y.
         // Note that each routine should be run exactly once in a single log.

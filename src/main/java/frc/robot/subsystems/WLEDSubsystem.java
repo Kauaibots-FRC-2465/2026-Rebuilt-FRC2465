@@ -4,6 +4,7 @@ import java.net.DatagramPacket;
 import java.net.DatagramSocket;
 import java.net.InetAddress;
 import java.net.SocketException;
+import java.net.UnknownHostException;
 import java.util.LinkedList;
 import java.util.List;
 
@@ -24,7 +25,7 @@ public class WLEDSubsystem implements Subsystem {
     private static final int DDP_PORT = 4048,  
                              WIDTH = 32, 
                              MAX_HEIGHT = 8, 
-                             HEIGHT = 32, 
+                             HEIGHT = 16, 
                              CHANNELS = 4;
 
     private byte[][][][] aniMatrix;
@@ -33,7 +34,8 @@ public class WLEDSubsystem implements Subsystem {
     private int frame = 0;
 
 
-    public static final String PATH = Filesystem.getDeployDirectory().getAbsolutePath() + File.separator + "Sprite-0001.bmp";
+    public static final String PATH_1 = Filesystem.getDeployDirectory().getAbsolutePath() + File.separator + "Sprite-0001.bmp";
+    public static final String PATH_2 = Filesystem.getDeployDirectory().getAbsolutePath() + File.separator + "Sprite-0002.bmp";
     
 
     public WLEDSubsystem() {
@@ -52,57 +54,71 @@ public class WLEDSubsystem implements Subsystem {
     public void periodic() {
         if(isFirstRun) {
             try {
-                loadMarquee(PATH);
+                packets = loadMarquee(PATH_1);
                 System.out.println("Loaded image");
             } catch (BadImageFormatException | IOException e) {
                 System.out.println("Unable to load");
             }
             isFirstRun = false;
         }
-        frame++;
-        frame = frame % packets.size();
-        try {
-            this.socket.send(packets.get(frame));
-        } catch (IOException e) {
-            // TODO Auto-generated catch block
-            e.printStackTrace();
+        if (packets.size() > 0) {
+            frame++;
+            frame = frame % packets.size();
+            try {
+                this.socket.send(packets.get(frame));
+            } catch (IOException e) {
+                // TODO Auto-generated catch block
+                e.printStackTrace();
+            }
         }
     }
 
     public Command loadSingletMarquee(String path) {
+        List<DatagramPacket> datagramPackets = new LinkedList<>();
+        try {
+            datagramPackets = loadMarquee(path);
+        } catch (BadImageFormatException | IOException e) {
+            // TODO Auto-generated catch block
+            e.printStackTrace();
+        }
+        final List<DatagramPacket> finalPackets = datagramPackets;
         return runOnce(() -> {
-            try {
-                this.loadMarquee(path);
-            } catch (BadImageFormatException | IOException e) {
-                // TODO Auto-generated catch block
-                e.printStackTrace();
-            }
+            packets = finalPackets;
+            System.out.println("Loaded singlet marquee");
         });
     }
 
     public Command loadSingletAnimation(String path) {
+        List<DatagramPacket> datagramPackets = new LinkedList<>();
+        try {
+            datagramPackets = loadAnimation(path);
+        } catch (BadImageFormatException | IOException e) {
+            // TODO Auto-generated catch block
+            e.printStackTrace();
+        }
+        final List<DatagramPacket> finalPackets = datagramPackets;
         return runOnce(() -> {
-            try {
-                loadAnimation(path);
-            } catch (BadImageFormatException | IOException | RuntimeException e) {
-                // TODO Auto-generated catch block
-                e.printStackTrace();
-            }
+            packets = finalPackets;
+            System.out.println("Loaded singlet animation");
         });
     }
 
     public Command loadSingletImage(String path) {
+        List<DatagramPacket> datagramPackets = new LinkedList<>();
+        try {
+            datagramPackets = loadIcon(path);
+        } catch (IOException | BadImageFormatException e) {
+            // TODO Auto-generated catch block
+            e.printStackTrace();
+        }
+        final List<DatagramPacket> finalPackets = datagramPackets;
         return runOnce(() -> {
-            try {
-                loadIcon(path);
-            } catch (IOException | BadImageFormatException e) {
-                // TODO Auto-generated catch block
-                e.printStackTrace();
-            }
+            packets = finalPackets;
+            System.out.println("Loaded singlet image");
         });
     }
 
-    private void loadMarquee(String path) throws BadImageFormatException, IOException {
+    private List<DatagramPacket> loadMarquee(String path) throws BadImageFormatException, IOException {
         BufferedImage image = ImageIO.read(new File(path));
         if (image == null) {
             throw new BadImageFormatException("Error: Unsupported image format or file not found.");
@@ -133,15 +149,15 @@ public class WLEDSubsystem implements Subsystem {
 
          */
         aniMatrix = getAnim(realWidth, height, width, imageData, 1);
-        packets.clear();
         
+        List<DatagramPacket> thesePackets = new LinkedList<>();
         for (byte[][][] frame: aniMatrix) {
-            loadMatrixData(frame);
-            System.out.println("Loaded new packet");
+            thesePackets.addAll(loadMatrixData(frame));
         }
+        return thesePackets;
     }
 
-    private void loadAnimation(String path) throws BadImageFormatException, IOException {
+    private List<DatagramPacket> loadAnimation(String path) throws BadImageFormatException, IOException {
         BufferedImage image = ImageIO.read(new File(path));
         if (image == null) {
             throw new BadImageFormatException("Error: Unsupported image format or file not found.");
@@ -169,71 +185,69 @@ public class WLEDSubsystem implements Subsystem {
             
          */
 
-        aniMatrix = getAnim(realWidth, height, width, imageData, realWidth);
+        aniMatrix = getAnim(realWidth/width, height, width, imageData, realWidth);
 
-        packets.clear();
+        List<DatagramPacket> thesePackets = new LinkedList<>();
         for (byte[][][] frame: aniMatrix) {
-            loadMatrixData(frame);
+            thesePackets.addAll(loadMatrixData(frame));
         }
+        return thesePackets;
     }
     
-    private void loadMatrixData(byte[][][] matrix) {
-        try (DatagramSocket socket = new DatagramSocket()) {
-            int superOffset = 0;
-            while (WIDTH * MAX_HEIGHT * superOffset < WIDTH * HEIGHT){
-                InetAddress address = InetAddress.getByName(IP_ADDRESS);
-                // Header: Flags (0x41), Count, Offset, etc.
-                // For a 16x16 WRGB matrix, data length is 16*16*4 = 1024 bytes
-                byte[] payload = new byte[10 + (WIDTH * MAX_HEIGHT * CHANNELS)];
-                // DDP Header payload[0] = 0x41;
-                payload[0] = 0b01000001;
-                // Flags: Version 1, Push enabled
-                payload[1] = 0b00000001;
-                // Sequence (optional)
-                payload[2] = 0b00011011;
-                // Data Type: RGB or WRGB (Depending on WLED config)
-                payload[3] = 0b00000001;
-                // Destination ID
-                // Offset (4-7) and Length (8-9) - simplified for small matrices
-                int offset = WIDTH * MAX_HEIGHT * CHANNELS * superOffset;
-                payload[4] = (byte) ((offset >> 24) & 0xFF); // High byte
-                payload[5] = (byte) ((offset >> 16) & 0xFF);        // Low byte
-                payload[6] = (byte) ((offset >> 8) & 0xFF); // High byte
-                payload[7] = (byte) ((offset >> 0) & 0xFF);        // Low byte
-                int dataLength = WIDTH * MAX_HEIGHT * CHANNELS;
-                payload[8] = (byte) ((dataLength >> 8) & 0xFF); // High byte
-                payload[9] = (byte) (dataLength & 0xFF);        // Low byte
-                int bufferOffset = 9;
-                for (int y = 0; y < MAX_HEIGHT; y++) {
-                    for (int x = 0; x < WIDTH; x++) {
-                        int actualX = (y % 2 == 0) ? x : x; // z(WIDTH - 1 - x);
-                        // Accessing your data: matrix[y][actualX] = {W, R, G, B};
-                        int sourceY = y + (superOffset * MAX_HEIGHT);
-                        if (sourceY < HEIGHT) { // Safety check
-                            payload[++bufferOffset] = (byte) (matrix[sourceY][actualX][1] >> 4);
-                            payload[++bufferOffset] = (byte) (matrix[sourceY][actualX][2] >> 4);
-                            payload[++bufferOffset] = (byte) (matrix[sourceY][actualX][3] >> 4);
-                            payload[++bufferOffset] = (byte) (matrix[sourceY][actualX][0] >> 4);
-                        }
+    private List<DatagramPacket> loadMatrixData(byte[][][] matrix) throws UnknownHostException {
+        int superOffset = 0;
+        List<DatagramPacket> matrixData = new LinkedList<>();
+        while (WIDTH * MAX_HEIGHT * superOffset < WIDTH * HEIGHT){
+            InetAddress address = InetAddress.getByName(IP_ADDRESS);
+            // Header: Flags (0x41), Count, Offset, etc.
+            // For a 16x16 WRGB matrix, data length is 16*16*4 = 1024 bytes
+            byte[] payload = new byte[10 + (WIDTH * MAX_HEIGHT * CHANNELS)];
+            // DDP Header payload[0] = 0x41;
+            payload[0] = 0b01000001;
+            // Flags: Version 1, Push enabled
+            payload[1] = 0b00000001;
+            // Sequence (optional)
+            payload[2] = 0b00011011;
+            // Data Type: RGB or WRGB (Depending on WLED config)
+            payload[3] = 0b00000001;
+            // Destination ID
+            // Offset (4-7) and Length (8-9) - simplified for small matrices
+            int offset = WIDTH * MAX_HEIGHT * CHANNELS * superOffset;
+            payload[4] = (byte) ((offset >> 24) & 0xFF); // High byte
+            payload[5] = (byte) ((offset >> 16) & 0xFF);        // Low byte
+            payload[6] = (byte) ((offset >> 8) & 0xFF); // High byte
+            payload[7] = (byte) ((offset >> 0) & 0xFF);        // Low byte
+            int dataLength = WIDTH * MAX_HEIGHT * CHANNELS;
+            payload[8] = (byte) ((dataLength >> 8) & 0xFF); // High byte
+            payload[9] = (byte) (dataLength & 0xFF);        // Low byte
+            int bufferOffset = 9;
+            for (int y = 0; y < MAX_HEIGHT; y++) {
+                for (int x = 0; x < WIDTH; x++) {
+                    // Accessing your data: matrix[y][x] = {W, R, G, B};
+                    int sourceY = y + (superOffset * MAX_HEIGHT);
+                    if (sourceY < HEIGHT && x < WIDTH) { // Safety check
+                        //System.out.println(bufferOffset + "," + sourceY + ", " + x);
+                        payload[++bufferOffset] = (byte) (matrix[sourceY][x][1] >> 4);
+                        payload[++bufferOffset] = (byte) (matrix[sourceY][x][2] >> 4);
+                        payload[++bufferOffset] = (byte) (matrix[sourceY][x][3] >> 4);
+                        payload[++bufferOffset] = (byte) (matrix[sourceY][x][0] >> 4);
                     }
                 }
-                DatagramPacket packet = new DatagramPacket(payload, payload.length, address, DDP_PORT);
-                packets.add(packet);
-                //System.out.println(packet);
-                //System.out.println(payload);
-                System.out.println(payload.length);
-                superOffset ++;
             }
-        } catch (Exception e) {
-            e.printStackTrace();
+            DatagramPacket packet = new DatagramPacket(payload, payload.length, address, DDP_PORT);
+            //System.out.println(packet);
+            //System.out.println(payload);
+            //System.out.println(payload.length);
+            matrixData.add(packet);
+            superOffset ++;
         }
+        return matrixData;
     }
 
     
     private byte[][][] getImageData(BufferedImage image) {
         int realWidth = image.getWidth();
         System.out.println(realWidth);
-        int width = WIDTH;
         int height = 16;
         byte[][][] buffer = new byte[height][realWidth][4];
 
@@ -257,15 +271,41 @@ public class WLEDSubsystem implements Subsystem {
         return buffer;
     }
 
-    private void loadIcon(String path) throws IOException, BadImageFormatException {
+    
+    private byte[][][] getClippedImageData(BufferedImage image, int clipLength) {
+        int realWidth = image.getWidth();
+        System.out.println(realWidth);
+        int height = 16;
+        byte[][][] buffer = new byte[height][realWidth][4];
+
+        for (int w = 0; w < clipLength; ++w) {
+            for (int h = 0; h < height; ++h) {
+                int hexcode = image.getRGB(w % realWidth, h);
+                int red   = (hexcode >> 16) & 0xFF;
+                int green = (hexcode >> 8) & 0xFF;
+                int blue  = (hexcode & 0xFF);
+                int white = Math.min(Math.min(red, green), blue);
+        
+                red   -= white;
+                green -= white;
+                blue  -= white;
+
+                byte[] partial = {(byte) (white & 0xFF), (byte) (red & 0xFF), (byte) (green & 0xFF), (byte) (blue & 0xFF)};
+                
+                buffer[h][w] = partial;
+            }
+        }
+        return buffer;
+    }
+
+    
+    private List<DatagramPacket> loadIcon(String path) throws IOException, BadImageFormatException {
         BufferedImage image = ImageIO.read(new File(path));
         if (image == null) {
             throw new BadImageFormatException("Error: Unsupported image format or file not found.");
         }
-       
-        byte[][][] buffer = getImageData(image);
-        loadMatrixData(buffer);
-        image.getRGB(1, 1);
+        byte[][][] buffer = getClippedImageData(image, WIDTH);
+        return loadMatrixData(buffer);
     }
 
     /*
