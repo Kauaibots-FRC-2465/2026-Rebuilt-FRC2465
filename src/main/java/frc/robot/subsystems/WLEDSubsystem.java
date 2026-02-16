@@ -30,6 +30,9 @@ public class WLEDSubsystem implements Subsystem {
     private byte[][][][] aniMatrix;
     private List<DatagramPacket> packets = new LinkedList<>();
 
+    private int frame = 0;
+
+
     public static final String PATH = Filesystem.getDeployDirectory().getAbsolutePath() + File.separator + "Sprite-0001.bmp";
     
 
@@ -43,8 +46,138 @@ public class WLEDSubsystem implements Subsystem {
             e.printStackTrace();
         }
     }
+    
+    private boolean isFirstRun = true;
+    @Override
+    public void periodic() {
+        if(isFirstRun) {
+            try {
+                loadMarquee(PATH);
+                System.out.println("Loaded image");
+            } catch (BadImageFormatException | IOException e) {
+                System.out.println("Unable to load");
+            }
+            isFirstRun = false;
+        }
+        frame++;
+        frame = frame % packets.size();
+        try {
+            this.socket.send(packets.get(frame));
+        } catch (IOException e) {
+            // TODO Auto-generated catch block
+            e.printStackTrace();
+        }
+    }
 
-    public void loadMatrixData(byte[][][] matrix) {
+    public Command loadSingletMarquee(String path) {
+        return runOnce(() -> {
+            try {
+                this.loadMarquee(path);
+            } catch (BadImageFormatException | IOException e) {
+                // TODO Auto-generated catch block
+                e.printStackTrace();
+            }
+        });
+    }
+
+    public Command loadSingletAnimation(String path) {
+        return runOnce(() -> {
+            try {
+                loadAnimation(path);
+            } catch (BadImageFormatException | IOException | RuntimeException e) {
+                // TODO Auto-generated catch block
+                e.printStackTrace();
+            }
+        });
+    }
+
+    public Command loadSingletImage(String path) {
+        return runOnce(() -> {
+            try {
+                loadIcon(path);
+            } catch (IOException | BadImageFormatException e) {
+                // TODO Auto-generated catch block
+                e.printStackTrace();
+            }
+        });
+    }
+
+    private void loadMarquee(String path) throws BadImageFormatException, IOException {
+        BufferedImage image = ImageIO.read(new File(path));
+        if (image == null) {
+            throw new BadImageFormatException("Error: Unsupported image format or file not found.");
+        }
+
+       
+        int realWidth = image.getWidth();
+        int width = WIDTH;
+        int height = 16;
+        byte[][][] imageData = getImageData(image);
+        /*
+        byte[][][][] tempAnim = new byte[realWidth][height][width][4];
+       
+        for (int widthOffset = 0; widthOffset < realWidth; ++widthOffset) {
+            for (int heightOffset = 0; heightOffset < height; ++heightOffset) {
+                for (int dualOffset = 0; dualOffset < width; ++dualOffset) {
+                    //System.out.println(widthOffset);
+                    //System.out.println(heightOffset);
+                    //System.out.println(dualOffset);
+                    //System.out.println(realWidth);
+                    tempAnim[widthOffset][heightOffset][dualOffset][0] = imageData[heightOffset][(widthOffset + dualOffset) % realWidth][0];
+                    tempAnim[widthOffset][heightOffset][dualOffset][1] = imageData[heightOffset][(widthOffset + dualOffset) % realWidth][1];
+                    tempAnim[widthOffset][heightOffset][dualOffset][2] = imageData[heightOffset][(widthOffset + dualOffset) % realWidth][2];
+                    tempAnim[widthOffset][heightOffset][dualOffset][3] = imageData[heightOffset][(widthOffset + dualOffset) % realWidth][3];
+                }
+            }
+        }
+
+         */
+        aniMatrix = getAnim(realWidth, height, width, imageData, 1);
+        packets.clear();
+        
+        for (byte[][][] frame: aniMatrix) {
+            loadMatrixData(frame);
+            System.out.println("Loaded new packet");
+        }
+    }
+
+    private void loadAnimation(String path) throws BadImageFormatException, IOException {
+        BufferedImage image = ImageIO.read(new File(path));
+        if (image == null) {
+            throw new BadImageFormatException("Error: Unsupported image format or file not found.");
+        }
+
+       
+        int realWidth = image.getWidth();
+        int width = WIDTH;
+        assert realWidth % width == 0: "[AT WLEDSubsystem.loadAnimation(236:13)] Not of correct width. Please load an image which is an integer multiple of the current device's width.";
+        int height = 16;
+        byte[][][] imageData = getImageData(image);
+        /*
+        byte[][][][] tempAnim = new byte[realWidth][height][width][4];
+       
+        for (int widthOffset = 0; widthOffset < realWidth; widthOffset += realWidth) {
+            for (int heightOffset = 0; heightOffset < height; ++heightOffset){
+                for (int channelOffset = 0; channelOffset < width; ++channelOffset) {
+                    tempAnim[widthOffset][heightOffset][channelOffset][0] = imageData[heightOffset][(widthOffset + channelOffset) % realWidth][0];
+                    tempAnim[widthOffset][heightOffset][channelOffset][1] = imageData[heightOffset][(widthOffset + channelOffset) % realWidth][1];
+                    tempAnim[widthOffset][heightOffset][channelOffset][2] = imageData[heightOffset][(widthOffset + channelOffset) % realWidth][2];
+                    tempAnim[widthOffset][heightOffset][channelOffset][3] = imageData[heightOffset][(widthOffset + channelOffset) % realWidth][3];
+                }
+            }
+        }
+            
+         */
+
+        aniMatrix = getAnim(realWidth, height, width, imageData, realWidth);
+
+        packets.clear();
+        for (byte[][][] frame: aniMatrix) {
+            loadMatrixData(frame);
+        }
+    }
+    
+    private void loadMatrixData(byte[][][] matrix) {
         try (DatagramSocket socket = new DatagramSocket()) {
             int superOffset = 0;
             while (WIDTH * MAX_HEIGHT * superOffset < WIDTH * HEIGHT){
@@ -74,9 +207,7 @@ public class WLEDSubsystem implements Subsystem {
                 for (int y = 0; y < MAX_HEIGHT; y++) {
                     for (int x = 0; x < WIDTH; x++) {
                         int actualX = (y % 2 == 0) ? x : x; // z(WIDTH - 1 - x);
-                        // Serpentine flip
                         // Accessing your data: matrix[y][actualX] = {W, R, G, B};
-                        // R
                         int sourceY = y + (superOffset * MAX_HEIGHT);
                         if (sourceY < HEIGHT) { // Safety check
                             payload[++bufferOffset] = (byte) (matrix[sourceY][actualX][1] >> 4);
@@ -98,232 +229,72 @@ public class WLEDSubsystem implements Subsystem {
         }
     }
 
-
-    public void loadIcon(BufferedImage image, int offset) throws IOException, BadImageFormatException {
-        if (image == null) {
-            throw new BadImageFormatException("Error: Unsupported image format or file not found.");
-        }
-
-       
+    
+    private byte[][][] getImageData(BufferedImage image) {
         int realWidth = image.getWidth();
+        System.out.println(realWidth);
         int width = WIDTH;
         int height = 16;
-        byte[][][] buffer = new byte[height][width][4];
-        for (int w = 0; w < WIDTH; ++w) {
-            for (int h = 0; h < height; ++h) {
-                int hexcode = image.getRGB((w + offset) % realWidth, h);
-                int red   = (hexcode >> 16) & 0xFF;
-                int green = (hexcode >> 8) & 0xFF;
-                int blue  = (hexcode & 0xFF);
-                int white = 0;// Math.min(Math.min(RED, GREEN), BLUE);
-                red   -= white;
-                green -= white;
-                blue  -= white;
-                byte[] partial = {(byte) (white & 0xFF), (byte) (red & 0xFF), (byte) (green & 0xFF), (byte) (blue & 0xFF)};
-                buffer[h][w] = partial;
-            }
-        }
+        byte[][][] buffer = new byte[height][realWidth][4];
 
-        loadMatrixData(buffer);
-        image.getRGB(1, 1);
-    }
-
-    public Command loadSingletMarquee(String path) {
-        return runOnce(() -> {
-            try {
-                this.loadMarquee(path);
-            } catch (BadImageFormatException | IOException e) {
-                // TODO Auto-generated catch block
-                e.printStackTrace();
-            }
-        });
-    }
-
-    public Command loadSingletAnimation(String path) {
-        return runOnce(() -> {
-            try {
-                loadAnimation(path);
-            } catch (BadImageFormatException | IOException | RuntimeException e) {
-                // TODO Auto-generated catch block
-                e.printStackTrace();
-            }
-        });
-    }
-
-    public Command loadSingledImage(String path) {
-        return runOnce(() -> {
-            try {
-                loadIcon(path, 0);
-            } catch (IOException | BadImageFormatException e) {
-                // TODO Auto-generated catch block
-                e.printStackTrace();
-            }
-        });
-    }
-
-    private void loadIcon(String path, int offset) throws IOException, BadImageFormatException {
-        BufferedImage image = ImageIO.read(new File(path));
-        if (image == null) {
-            throw new BadImageFormatException("Error: Unsupported image format or file not found.");
-        }
-
-       
-        int realWidth = image.getWidth();
-        int width = WIDTH;
-        int height = 16;
-        byte[][][] buffer = new byte[height][width][4];
-        for (int w = 0; w < WIDTH; ++w) {
-            for (int h = 0; h < height; ++h) {
-                int hexcode = image.getRGB((w + offset) % realWidth, h);
-                int red   = (hexcode >> 16) & 0xFF;
-                int green = (hexcode >> 8) & 0xFF;
-                int blue  = (hexcode & 0xFF);
-                int white = 0;// Math.min(Math.min(RED, GREEN), BLUE);
-                red   -= white;
-                green -= white;
-                blue  -= white;
-                byte[] partial = {(byte) (white & 0xFF), (byte) (red & 0xFF), (byte) (green & 0xFF), (byte) (blue & 0xFF)};
-                buffer[h][w] = partial;
-            }
-        }
-
-        loadMatrixData(buffer);
-        image.getRGB(1, 1);
-    }
-
-    private int frame = 0;
-
-   
-    public void loadMarquee(String path) throws BadImageFormatException, IOException {
-        BufferedImage image = ImageIO.read(new File(path));
-        if (image == null) {
-            throw new BadImageFormatException("Error: Unsupported image format or file not found.");
-        }
-
-       
-        int realWidth = image.getWidth();
-        int width = WIDTH;
-        int height = 16;
-        byte[][][] imageData = new byte[height][realWidth][4];
         for (int w = 0; w < realWidth; ++w) {
             for (int h = 0; h < height; ++h) {
-                int hexcode = image.getRGB((w) % realWidth, h);
+                int hexcode = image.getRGB(w % realWidth, h);
                 int red   = (hexcode >> 16) & 0xFF;
                 int green = (hexcode >> 8) & 0xFF;
                 int blue  = (hexcode & 0xFF);
                 int white = Math.min(Math.min(red, green), blue);
+        
                 red   -= white;
                 green -= white;
                 blue  -= white;
+
                 byte[] partial = {(byte) (white & 0xFF), (byte) (red & 0xFF), (byte) (green & 0xFF), (byte) (blue & 0xFF)};
-                imageData[h][w] = partial;
+                
+                buffer[h][w] = partial;
             }
         }
-
-        byte[][][][] tempAnim = new byte[realWidth][height][width][4];
-       
-        for (int offset = 0; offset < realWidth; ++offset) {
-            for (int heightOffset = 0; heightOffset < height; ++heightOffset){
-                for (int dualOffset = 0; dualOffset < width; ++dualOffset) {
-                    tempAnim[offset][heightOffset][dualOffset][0] = imageData[heightOffset][(offset + dualOffset) % realWidth][0];
-                    tempAnim[offset][heightOffset][dualOffset][1] = imageData[heightOffset][(offset + dualOffset) % realWidth][1];
-                    tempAnim[offset][heightOffset][dualOffset][2] = imageData[heightOffset][(offset + dualOffset) % realWidth][2];
-                    tempAnim[offset][heightOffset][dualOffset][3] = imageData[heightOffset][(offset + dualOffset) % realWidth][3];
-                }
-            }
-        }
-
-        aniMatrix = tempAnim;
-
-        image.getRGB(1, 1);
-
-        
-
-        packets.clear();
-        for (byte[][][] frame: aniMatrix) {
-            loadMatrixData(frame);
-        }
+        return buffer;
     }
 
-    public void loadAnimation(String path) throws BadImageFormatException, IOException {
+    private void loadIcon(String path) throws IOException, BadImageFormatException {
         BufferedImage image = ImageIO.read(new File(path));
         if (image == null) {
             throw new BadImageFormatException("Error: Unsupported image format or file not found.");
         }
-
        
-        int realWidth = image.getWidth();
-        int width = WIDTH;
-        if (realWidth % width != 0) {
-            throw new RuntimeException("[AT WLEDSubsystem.loadAnimation(236:13)] Not of correct width. Please load an image which is a multiple of the current device's width.");
-        }
-        int height = 16;
-        byte[][][] imageData = new byte[height][realWidth][4];
-        for (int w = 0; w < realWidth; ++w) {
-            for (int h = 0; h < height; ++h) {
-                int hexcode = image.getRGB((w) % realWidth, h);
-                int red   = (hexcode >> 16) & 0xFF;
-                int green = (hexcode >> 8) & 0xFF;
-                int blue  = (hexcode & 0xFF);
-                int white = 0;// Math.min(Math.min(RED, GREEN), BLUE);
-                red   -= white;
-                green -= white;
-                blue  -= white;
-                byte[] partial = {(byte) (white & 0xFF), (byte) (red & 0xFF), (byte) (green & 0xFF), (byte) (blue & 0xFF)};
-                imageData[h][w] = partial;
-            }
-        }
+        byte[][][] buffer = getImageData(image);
+        loadMatrixData(buffer);
+        image.getRGB(1, 1);
+    }
 
-        byte[][][][] tempAnim = new byte[realWidth][height][width][4];
+    /*
+     * Calculates the animation based on imageData and stride
+     * @return A byte[][][][] of form byte[frames][height][width][channels]
+     */
+    private byte[][][][] getAnim(int frames, int height, int width, byte[][][] imageData, int stride) {
+        byte[][][][] tempAnim = new byte[frames][height][width][4];
        
-        for (int offset = 0; offset < realWidth; offset += realWidth) {
+        for (int widthOffset = 0; widthOffset < frames; widthOffset += stride) {
             for (int heightOffset = 0; heightOffset < height; ++heightOffset){
-                for (int dualOffset = 0; dualOffset < width; ++dualOffset) {
-                    tempAnim[offset][heightOffset][dualOffset][0] = imageData[heightOffset][(offset + dualOffset) % realWidth][0];
-                    tempAnim[offset][heightOffset][dualOffset][1] = imageData[heightOffset][(offset + dualOffset) % realWidth][1];
-                    tempAnim[offset][heightOffset][dualOffset][2] = imageData[heightOffset][(offset + dualOffset) % realWidth][2];
-                    tempAnim[offset][heightOffset][dualOffset][3] = imageData[heightOffset][(offset + dualOffset) % realWidth][3];
+                for (int channelOffset = 0; channelOffset < width; ++channelOffset) {
+                    tempAnim[widthOffset][heightOffset][channelOffset][0] = imageData[heightOffset][(widthOffset + channelOffset) % frames][0];
+                    tempAnim[widthOffset][heightOffset][channelOffset][1] = imageData[heightOffset][(widthOffset + channelOffset) % frames][1];
+                    tempAnim[widthOffset][heightOffset][channelOffset][2] = imageData[heightOffset][(widthOffset + channelOffset) % frames][2];
+                    tempAnim[widthOffset][heightOffset][channelOffset][3] = imageData[heightOffset][(widthOffset + channelOffset) % frames][3];
                 }
             }
         }
-
-        aniMatrix = tempAnim;
-
-        image.getRGB(1, 1);
-
-        packets.clear();
-        for (byte[][][] frame: aniMatrix) {
-            loadMatrixData(frame);
-        }
+        return tempAnim;
     }
-
-    boolean isFirstRun = false;
-    @Override
-    public void periodic() {
-        System.out.println("Periodicing...");
-        if(isFirstRun) {
-            try {
-                loadMarquee(PATH);
-            } catch (BadImageFormatException | IOException e) {}
-            isFirstRun = false;
-        }
-        frame++;
-        frame = frame % packets.size();
-        try {
-            this.socket.send(packets.get(frame));
-        } catch (IOException e) {
-            // TODO Auto-generated catch block
-            e.printStackTrace();
-        }
-        System.out.println("Periodicing done.");
-       
-    }
-
+   
     private class BadImageFormatException extends Exception {
         protected BadImageFormatException(String message){
             super(message);
         }
     }
+
+
 } 
 // 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17
 //                    

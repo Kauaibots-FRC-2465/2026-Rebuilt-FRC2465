@@ -18,6 +18,7 @@ import edu.wpi.first.math.geometry.Rotation2d;
 import edu.wpi.first.wpilibj.motorcontrol.MotorController;
 import edu.wpi.first.wpilibj.motorcontrol.Spark;
 import edu.wpi.first.wpilibj2.command.Command;
+import edu.wpi.first.wpilibj2.command.CommandScheduler;
 import edu.wpi.first.wpilibj2.command.Commands;
 import edu.wpi.first.wpilibj2.command.Subsystem;
 import edu.wpi.first.wpilibj2.command.button.CommandXboxController;
@@ -46,22 +47,19 @@ public class RobotContainer implements Subsystem {
     private final CommandXboxController joystick = new CommandXboxController(0);
 
     public final CommandSwerveDrivetrain drivetrain = TunerConstants.createDrivetrain();
-
+    
     public final WLEDSubsystem wled = new WLEDSubsystem();
+    private final Command loadLights = wled.loadSingletMarquee(WLEDSubsystem.PATH);
 
     public RobotContainer() {
         configureBindings();
     }
 
     private void configureBindings() {
-        try {
-            wled.loadMarquee(WLEDSubsystem.PATH);
-        } catch (Exception e) {
-            // TODO Auto-generated catch block
-            e.printStackTrace();
-        }
+        
         // Note that X is defined as forward according to WPILib convention,
         // and Y is defined as to the left according to WPILib convention.
+        schedule(loadLights);
         drivetrain.setDefaultCommand(
             // Drivetrain will execute this command periodically
             drivetrain.applyRequest(() ->
@@ -125,5 +123,9 @@ public class RobotContainer implements Subsystem {
             // Finally idle for the rest of auton
             drivetrain.applyRequest(() -> idle)
         );
+    }
+
+    private void schedule(Command command) {
+        CommandScheduler.getInstance().schedule(command);
     }
 }
