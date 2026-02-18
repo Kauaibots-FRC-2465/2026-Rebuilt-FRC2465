@@ -227,10 +227,10 @@ public class WLEDSubsystem implements Subsystem {
                     int sourceY = y + (superOffset * MAX_HEIGHT);
                     if (sourceY < HEIGHT && x < WIDTH) { // Safety check
                         //System.out.println(bufferOffset + "," + sourceY + ", " + x);
-                        payload[++bufferOffset] = (byte) (matrix[sourceY][x][1] >> 4);
-                        payload[++bufferOffset] = (byte) (matrix[sourceY][x][2] >> 4);
-                        payload[++bufferOffset] = (byte) (matrix[sourceY][x][3] >> 4);
-                        payload[++bufferOffset] = (byte) (matrix[sourceY][x][0] >> 4);
+                        payload[++bufferOffset] = (byte) (matrix[sourceY][x][1]);
+                        payload[++bufferOffset] = (byte) (matrix[sourceY][x][2]);
+                        payload[++bufferOffset] = (byte) (matrix[sourceY][x][3]);
+                        payload[++bufferOffset] = (byte) (matrix[sourceY][x][0]);
                     }
                 }
             }
