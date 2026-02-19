@@ -7,16 +7,15 @@ package frc.robot;
 
 import static edu.wpi.first.units.Units.*;
 
-import java.io.IOException;
+import javax.crypto.KEM.Encapsulated;
 
 import com.ctre.phoenix6.swerve.SwerveModule.DriveRequestType;
 //import com.revrobotics.spark.SparkLowLevel.MotorType;
 //import com.revrobotics.spark.SparkMax;
 import com.ctre.phoenix6.swerve.SwerveRequest;
 
+import edu.wpi.first.apriltag.AprilTagDetection;
 import edu.wpi.first.math.geometry.Rotation2d;
-import edu.wpi.first.wpilibj.motorcontrol.MotorController;
-import edu.wpi.first.wpilibj.motorcontrol.Spark;
 import edu.wpi.first.wpilibj2.command.Command;
 import edu.wpi.first.wpilibj2.command.CommandScheduler;
 import edu.wpi.first.wpilibj2.command.Commands;
@@ -27,17 +26,22 @@ import edu.wpi.first.wpilibj2.command.sysid.SysIdRoutine.Direction;
 
 import frc.robot.generated.TunerConstants;
 import frc.robot.subsystems.CommandSwerveDrivetrain;
+import frc.robot.subsystems.GoBildaPinpointFRCDriver;
+import frc.robot.subsystems.LimelightSubsystem;
+import frc.robot.subsystems.PinpointSubsystem;
+import frc.robot.subsystems.PoseEstimatorSubsystem;
 import frc.robot.subsystems.WLEDSubsystem;
+import frc.robot.subsystems.SwerveDrivetrainSubsystem;
 
 public class RobotContainer implements Subsystem {
     private double MaxSpeed = 0.3 * TunerConstants.kSpeedAt12Volts.in(MetersPerSecond); // kSpeedAt12Volts desired top speed
-    private double MaxAngularRate = 0.3 * RotationsPerSecond.of(0.75).in(RadiansPerSecond); // 3/4 of a rotation per second max angular velocity
+    private double MaxAngularRate = 0.5 * RotationsPerSecond.of(0.75).in(RadiansPerSecond); // 3/4 of a rotation per second max angular velocity
 
     //SparkMax flywheel = new SparkMax(7, MotorType.kBrushless);
 
     /* Setting up bindings for necessary control of the swerve drive platform */
     private final SwerveRequest.FieldCentric drive = new SwerveRequest.FieldCentric()
-            .withDeadband(MaxSpeed * 0.02).withRotationalDeadband(MaxAngularRate * 0.02) // Add a 10% deadband
+            .withDeadband(MaxSpeed * 0.01).withRotationalDeadband(MaxAngularRate * 0.01) // Add a 10% deadband
             .withDriveRequestType(DriveRequestType.OpenLoopVoltage); // Use open-loop control for drive motors
     private final SwerveRequest.SwerveDriveBrake brake = new SwerveRequest.SwerveDriveBrake();
     private final SwerveRequest.PointWheelsAt point = new SwerveRequest.PointWheelsAt();
@@ -52,7 +56,41 @@ public class RobotContainer implements Subsystem {
     private final Command loadLights = wled.loadSingletMarquee(WLEDSubsystem.PATH_1);
     private final Command loadStatic = wled.loadSingletMarquee(WLEDSubsystem.PATH_2);
 
+    public final PoseEstimatorSubsystem poseEstimatorSubsystem;
+    public final PoseEstimatorSubsystem.Configuration poseEstimatorConfiguration = new PoseEstimatorSubsystem.Configuration();
+
+    public final SwerveDrivetrainSubsystem encapsulatedDrivetrain;
+
+
     public RobotContainer() {
+        poseEstimatorConfiguration.initialThetaDeviation = 
+        poseEstimatorConfiguration.initialXDeviation = 
+        poseEstimatorConfiguration.initialYDeviation = 0;
+
+        poseEstimatorConfiguration.odoHeadingDeviationPerDistance =
+        poseEstimatorConfiguration.odoHeadingDeviationPerRadian =
+        poseEstimatorConfiguration.odoLateralDeviationPerDistance =
+        poseEstimatorConfiguration.odoLateralDeviationPerRadian =
+        poseEstimatorConfiguration.odoLongitudinalDeviationPerDistance =
+        poseEstimatorConfiguration.odoLongitudinalDeviationPerRadian = 0.01;
+
+        PinpointSubsystem pinpointSubsystem = new PinpointSubsystem();
+        poseEstimatorConfiguration.odometryPose = pinpointSubsystem.getPose2dSupplier();
+        poseEstimatorConfiguration.odometryTimestamp = pinpointSubsystem.getTimestampSupplier();
+        poseEstimatorConfiguration.odometryValid = pinpointSubsystem.getIsValidSupplier();
+        
+        LimelightSubsystem limelightSubsystem = new LimelightSubsystem(pinpointSubsystem.getHeadingSupplier(Degree), true, new int[] {1, 2, 3, 4, 5, 6});
+        poseEstimatorConfiguration.visionPose = limelightSubsystem.getPose2dSupplier();
+        poseEstimatorConfiguration.visionTimestamp = limelightSubsystem.getPose2dTimestampSupplier();
+        poseEstimatorConfiguration.visionIsValid = limelightSubsystem.getIsValidSupplier();
+
+        poseEstimatorConfiguration.visionThetaDeviation = limelightSubsystem.getThetaDeviationSupplier();
+        poseEstimatorConfiguration.visionXDeviation = limelightSubsystem.getXDeviationSupplier();
+        poseEstimatorConfiguration.visionYDeviation = limelightSubsystem.getYDeviationSupplier();
+        
+        poseEstimatorSubsystem = new PoseEstimatorSubsystem(poseEstimatorConfiguration);
+        encapsulatedDrivetrain = new SwerveDrivetrainSubsystem(drivetrain, poseEstimatorSubsystem); 
+
         configureBindings();
     }
 
@@ -64,9 +102,9 @@ public class RobotContainer implements Subsystem {
         drivetrain.setDefaultCommand(
             // Drivetrain will execute this command periodically
             drivetrain.applyRequest(() ->
-                drive.withVelocityX(-joystick.getLeftY() * Math.abs(joystick.getLeftY()) * MaxSpeed) // Drive forward with negative Y (forward)
-                    .withVelocityY(-joystick.getLeftX() * Math.abs(joystick.getLeftX()) * MaxSpeed) // Drive left with negative X (left)
-                    .withRotationalRate(-joystick.getRightX() * Math.abs(joystick.getRightX()) * MaxAngularRate) // Drive counterclockwise with negative X (left)
+                drive.withVelocityX(-joystick.getLeftY() /* Math.abs(joystick.getLeftY())*/ * MaxSpeed) // Drive forward with negative Y (forward)
+                    .withVelocityY(-joystick.getLeftX() /* Math.abs(joystick.getLeftX())*/ * MaxSpeed) // Drive left with negative X (left)
+                    .withRotationalRate(-joystick.getRightX() /* Math.abs(joystick.getRightX())*/ * MaxAngularRate) // Drive counterclockwise with negative X (left)
             )
         );
 
