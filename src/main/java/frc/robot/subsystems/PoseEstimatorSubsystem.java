@@ -295,7 +295,6 @@ public class PoseEstimatorSubsystem extends SubsystemBase {
         Rotation2d newHeading = newPose.getRotation();
         odometryHistory.getScratchpad().pose = newPose;
         odometryHistory.getScratchpad().timestamp = odometryTimestamp.get();
-        System.out.println("Timestamp: " + odometryTimestamp.get());
         odometryHistory.add();
         if (odometryHistory.size() == 1) {
             priorPose = newPose;
@@ -372,10 +371,10 @@ public class PoseEstimatorSubsystem extends SubsystemBase {
             Long   priorOdometryTimestamp   = odometryHistory.get(1).timestamp;
             Long   timeSinceLatestOdometry  = (RobotController.getFPGATime() - latestOdometryTimestamp);
             Long   timeBetweenLatestAndPriorOdometry = (latestOdometryTimestamp - priorOdometryTimestamp);
-            System.out.println("Latest time: " + latestOdometryTimestamp);
-            System.out.println("Prior time:  " + priorOdometryTimestamp);
-            System.out.println("Delta time:  " + timeBetweenLatestAndPriorOdometry);
-            System.out.println(odometryHistory.size());
+            // System.out.println("Latest time: " + latestOdometryTimestamp);
+            // System.out.println("Prior time:  " + priorOdometryTimestamp);
+            // System.out.println("Delta time:  " + timeBetweenLatestAndPriorOdometry);
+            // System.out.println(odometryHistory.size());
             if (timeBetweenLatestAndPriorOdometry <= 0) {
                 throw new IllegalStateException(
                         "CRITICAL: Odometry timestamps are non-monotonic or duplicate. dt=" +

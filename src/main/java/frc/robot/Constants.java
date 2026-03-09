@@ -16,4 +16,22 @@ public final class Constants {
   public static class OperatorConstants {
     public static final int kDriverControllerPort = 0;
   }
+  
+  public static class MotorConstants {
+    public static class MotorIDs { 
+      public static final int PRIMARY_MOTOR_ID = 0;
+      public static final int REVERSE_MOTOR_ID = 0;
+    }
+    
+    public static class MotorPIDs {
+
+        public static final double PRIMARY_TURRET_K_P = 0;
+        public static final double PRIMARY_TURRET_K_D = 0;
+        public static final double PRIMARY_TURRET_K_I = 0;
+        public static final double REVERSE_TURRED_K_P = 0;
+        public static final double REVERSE_TURRED_K_D = 0;
+        public static final double REVERSE_TURRED_K_I = 0;
+
+    }
+  }
 }
