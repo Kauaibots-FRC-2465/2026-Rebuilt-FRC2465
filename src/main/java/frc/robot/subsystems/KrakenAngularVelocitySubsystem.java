@@ -14,14 +14,7 @@ import edu.wpi.first.wpilibj2.command.Command;
 import edu.wpi.first.wpilibj2.command.SubsystemBase;
 import frc.robot.OverrideCommand;
 
-// For tuning see https://phoenixpro-documentation--161.org.readthedocs.build/en/161/docs/application-notes/manual-pid-tuning.html
-// Clockwise positive on Left flywheel
-// Right flywheel (42) set to follow left, Opposed, ID 41
-// kp=6
-// ks=2.2
-// kv=0.01
-
-public class KrakenFlywheelSubsystem extends SubsystemBase {
+public class KrakenAngularVelocitySubsystem extends SubsystemBase {
     // hardware references
     private TalonFX kraken;
 
@@ -29,10 +22,9 @@ public class KrakenFlywheelSubsystem extends SubsystemBase {
     private final VelocityTorqueCurrentFOC velocityRequest =
             new VelocityTorqueCurrentFOC(0)
                     .withSlot(0)
-                    .withOverrideCoastDurNeutral(true);
+                    .withOverrideCoastDurNeutral(false); // don't coast when RPS set to 0
     
     private final NeutralOut neutralRequest = new NeutralOut();
-    // need to set neutralRequest mode to coast
 
     // flywheel data
     private double flywheelDiameterInches;
@@ -43,16 +35,14 @@ public class KrakenFlywheelSubsystem extends SubsystemBase {
     // behavior monitoring
     private double desiredRPS;
 
-    public KrakenFlywheelSubsystem(int canId, String motorName, double flywheelDiameterInches, double kS, double kV, double kP, double peakCurrent) {
+    public KrakenAngularVelocitySubsystem(int canId, String motorName, double flywheelDiameterInches, double kS, double kV, double kP, double peakCurrent) {
         this.flywheelDiameterInches = flywheelDiameterInches;
         if (flywheelDiameterInches == 0) throw new IllegalArgumentException ("ASSERTION FAILED:"+
                 " flywheelDiameterInches cannot be 0.");
+
         kraken=new TalonFX(canId);
-
         TalonFXConfiguration cfg = new TalonFXConfiguration();
-
         cfg.MotorOutput.NeutralMode = NeutralModeValue.Coast;
-
         // Slot 0 — VelocityTorqueCurrentFOC gains
         // kS: static friction feedforward (amps)
         // kV: velocity feedforward (amps per RPS)
@@ -60,18 +50,15 @@ public class KrakenFlywheelSubsystem extends SubsystemBase {
         cfg.Slot0.kS = kS;
         cfg.Slot0.kV = kV;
         cfg.Slot0.kP = kP;
-
         // Torque current limits — tune to your mechanism
         cfg.TorqueCurrent.PeakForwardTorqueCurrent  =  peakCurrent; // amps
         cfg.TorqueCurrent.PeakReverseTorqueCurrent  = -peakCurrent; // amps
-
         // Attempt apply; warn on failure but don't crash the robot
         StatusCode status = kraken.getConfigurator().apply(cfg);
         if (!status.isOK()) {
             DriverStation.reportError(
                     "[" + motorName + "] TalonFX config failed: " + status, false);
         }
-
         // Optimize CAN bus utilization — only update these signals at the given frequency
         /*BaseStatusSignal.setUpdateFrequencyForAll(
                 100,
@@ -79,12 +66,10 @@ public class KrakenFlywheelSubsystem extends SubsystemBase {
         );*/
         // Reduce all other signals to 6hz
         kraken.optimizeBusUtilization();
+
+        // TODO: need to set neutralRequest mode to coast
    
         setDefaultCommand(cmdCoast());
-    }
-
-    @Override
-    public void periodic() {
     }
 
     public Command cmdCoast() {
@@ -101,12 +86,13 @@ public class KrakenFlywheelSubsystem extends SubsystemBase {
             @Override
             public void initialize() {
                 desiredRPSSupplier = rps;
+                desiredRPS = Double.NaN;
             }
 
             @Override
             public void execute() {
                 double newDesiredRPS = desiredRPSSupplier.getAsDouble(); 
-                if(desiredRPS!=newDesiredRPS) {
+                if(Double.isNaN(desiredRPS) || Math.abs(desiredRPS-newDesiredRPS)>.001) { // Only change speeds if > .001 RPS change is detected
                     desiredRPS=newDesiredRPS;
                     kraken.setControl(velocityRequest.withVelocity(desiredRPS));
                 }
