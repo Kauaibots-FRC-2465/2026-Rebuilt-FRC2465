@@ -29,9 +29,16 @@ import frc.robot.subsystems.PoseEstimatorSubsystem;
 import frc.robot.subsystems.WLEDSubsystem;
 import frc.robot.subsystems.SwerveDrivetrainSubsystem;
 
+// For tuning see https://phoenixpro-documentation--161.org.readthedocs.build/en/161/docs/application-notes/manual-pid-tuning.html
+// Clockwise positive on Left flywheel
+// Right flywheel (42) set to follow left, Opposed, ID 41
+// kp=6
+// ks=2.2
+// kv=0.01
+
 public class RobotContainer implements Subsystem {
-    private double MaxSpeed = 0.3 * TunerConstants.kSpeedAt12Volts.in(MetersPerSecond); // kSpeedAt12Volts desired top speed
-    private double MaxAngularRate = 0.5 * RotationsPerSecond.of(0.75).in(RadiansPerSecond); // 3/4 of a rotation per second max angular velocity
+    private double MaxSpeed = 1 * TunerConstants.kSpeedAt12Volts.in(MetersPerSecond); // kSpeedAt12Volts desired top speed
+    private double MaxAngularRate = 1 * RotationsPerSecond.of(0.75).in(RadiansPerSecond); // 3/4 of a rotation per second max angular velocity
 
     //SparkMax flywheel = new SparkMax(7, MotorType.kBrushless);
 

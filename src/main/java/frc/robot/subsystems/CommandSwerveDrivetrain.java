@@ -26,7 +26,7 @@ import edu.wpi.first.wpilibj2.command.Subsystem;
 import edu.wpi.first.wpilibj2.command.sysid.SysIdRoutine;
 import frc.robot.LimelightHelpers;
 import frc.robot.generated.TunerConstants.TunerSwerveDrivetrain;
-import frc.robot.utility.PPrint;
+import frc.robot.utility.ThrottlePrint;
 
 /**
  * Class that extends the Phoenix 6 SwerveDrivetrain class and implements

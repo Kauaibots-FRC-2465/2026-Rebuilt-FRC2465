@@ -10,7 +10,7 @@ import edu.wpi.first.wpilibj2.command.InstantCommand;
 import edu.wpi.first.wpilibj2.command.SubsystemBase;
 import frc.robot.LimelightHelpers;
 import frc.robot.LimelightHelpers.PoseEstimate;
-import frc.robot.utility.PPrint;
+import frc.robot.utility.ThrottlePrint;
 
 public class LimelightSubsystem extends SubsystemBase {
     DoubleSupplier externalHeadingDegreesSupplier;
@@ -85,7 +85,7 @@ public class LimelightSubsystem extends SubsystemBase {
             } else {
                 LimelightHelpers.setRobotOrientation("limelight", externalHeadingDegreesSupplier.getAsDouble(), 0, 0, 0, 0, 0);
                 currentPoseEstimate = LimelightHelpers.getBotPoseEstimate_wpiBlue_MegaTag2(null);
-                if(currentPoseEstimate != null) PPrint.every(10, currentPoseEstimate.toString());
+                if(currentPoseEstimate != null) ThrottlePrint.every(10, currentPoseEstimate.toString());
                 xDeviation=stddevs[6];
                 yDeviation=stddevs[7];
                 Math.toRadians(stddevs[9]);

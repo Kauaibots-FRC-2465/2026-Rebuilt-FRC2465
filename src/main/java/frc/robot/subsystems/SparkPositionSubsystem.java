@@ -10,7 +10,7 @@ import edu.wpi.first.wpilibj2.command.SubsystemBase;
 import frc.robot.Constants;
 import static java.lang.Math.PI;
 
-public class SparkmaxPositionSubsystem extends SubsystemBase {
+public class SparkPositionSubsystem extends SubsystemBase {
     private final SparkMax primaryMotor;
     private final SparkMax reverseMotor;
 
@@ -33,7 +33,7 @@ public class SparkmaxPositionSubsystem extends SubsystemBase {
     }
     
 
-    public SparkmaxPositionSubsystem(int primaryId, int reverseId) {
+    public SparkPositionSubsystem(int primaryId, int reverseId) {
         primaryMotor = new SparkMax(primaryId, MotorType.kBrushless);
         reverseMotor = new SparkMax(reverseId, MotorType.kBrushless);
 

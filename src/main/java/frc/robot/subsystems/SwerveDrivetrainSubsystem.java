@@ -7,7 +7,7 @@ import com.ctre.phoenix6.swerve.SwerveRequest;
 import edu.wpi.first.math.geometry.Pose2d;
 import edu.wpi.first.wpilibj2.command.CommandScheduler;
 import edu.wpi.first.wpilibj2.command.Subsystem;
-import frc.robot.utility.PPrint;
+import frc.robot.utility.ThrottlePrint;
 
 public class SwerveDrivetrainSubsystem implements Subsystem {
     CommandSwerveDrivetrain encapsulatedDrivetrain;
@@ -24,7 +24,7 @@ public class SwerveDrivetrainSubsystem implements Subsystem {
     @Override
     public void periodic() {
         Pose2d retrievedPose = poseSupplier.get();
-        if (retrievedPose != null) PPrint.every(25, retrievedPose.toString());
+        if (retrievedPose != null) ThrottlePrint.every(25, retrievedPose.toString());
         if (retrievedPose != null) encapsulatedDrivetrain.addVisionMeasurement(retrievedPose, timestampSupplier.get());
     }
     
