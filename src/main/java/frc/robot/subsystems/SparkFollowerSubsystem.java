@@ -21,6 +21,9 @@ import edu.wpi.first.wpilibj2.command.SubsystemBase;
  * <p>Each follower motor is configured locally and commanded to follow a
  * specified leader CAN ID.
  *
+ * <p>If a follower SparkMax reports a reset warning, this subsystem marks that
+ * follower unconfigured and retries configuration until successful.
+ *
  * <p>This subsystem is responsible for:
  * <ul>
  *   <li>storing follower/leader pair information</li>
@@ -39,7 +42,9 @@ public class SparkFollowerSubsystem extends SubsystemBase {
         private final String motorName;
         private final int leaderCanID;
         private final MotorType motorType;
-        private final int smartCurrentLimitAmps;
+        private final int stallCurrentLimitAmps;
+        private final int freeCurrentLimitAmps;
+        private final double maxVoltageRequired;
         private final IdleMode idleMode;
         private final boolean invert;
         private final SparkMax followerMotor;
@@ -52,7 +57,9 @@ public class SparkFollowerSubsystem extends SubsystemBase {
                 String motorName,
                 int leaderCanID,
                 MotorType motorType,
-                int smartCurrentLimitAmps,
+                int stallCurrentLimitAmps,
+                int freeCurrentLimitAmps,
+                double maxVoltageRequired,
                 IdleMode idleMode,
                 boolean invert,
                 SparkMax followerMotor) {
@@ -60,7 +67,9 @@ public class SparkFollowerSubsystem extends SubsystemBase {
             this.motorName = motorName;
             this.leaderCanID = leaderCanID;
             this.motorType = motorType;
-            this.smartCurrentLimitAmps = smartCurrentLimitAmps;
+            this.stallCurrentLimitAmps = stallCurrentLimitAmps;
+            this.freeCurrentLimitAmps = freeCurrentLimitAmps;
+            this.maxVoltageRequired = maxVoltageRequired;
             this.idleMode = idleMode;
             this.invert = invert;
             this.followerMotor = followerMotor;
@@ -85,14 +94,22 @@ public class SparkFollowerSubsystem extends SubsystemBase {
      * @param motorName descriptive name used in diagnostics.
      * @param leaderCanID CAN ID of the leader motor controller.
      * @param motorType motor type for the follower SparkMax.
-     * @param smartCurrentLimitAmps smart current limit in amps.
+     * @param stallCurrentLimitAmps smart current limit near zero speed in amps.
+     * @param freeCurrentLimitAmps smart current limit near free speed in amps.
+     * @param maxVoltageRequired nominal voltage used for voltage compensation.
      * @param idleMode neutral behavior for this follower.
      * @param invert whether follower output is inverted relative to leader.
+     *
+     * <p>Follower mode is configured through SparkMax persistent parameters
+     * (without persisting to flash) and therefore re-applied after resets via
+     * {@link #periodic()}.
      * @throws NullPointerException if {@code motorName}, {@code motorType}, or {@code idleMode} is null.
      * @throws IllegalArgumentException if {@code canID} is not in [0, 62].
      * @throws IllegalArgumentException if {@code leaderCanID} is not in [0, 62].
      * @throws IllegalArgumentException if {@code canID == leaderCanID}.
-     * @throws IllegalArgumentException if {@code smartCurrentLimitAmps <= 0}.
+     * @throws IllegalArgumentException if {@code stallCurrentLimitAmps <= 0}.
+     * @throws IllegalArgumentException if {@code freeCurrentLimitAmps < 0}.
+     * @throws IllegalArgumentException if {@code maxVoltageRequired <= 0.0}.
      * @throws IllegalArgumentException if a follower with the same CAN ID already exists.
      */
     public void addFollower(
@@ -100,7 +117,9 @@ public class SparkFollowerSubsystem extends SubsystemBase {
             String motorName,
             int leaderCanID,
             MotorType motorType,
-            int smartCurrentLimitAmps,
+            int stallCurrentLimitAmps,
+            int freeCurrentLimitAmps,
+            double maxVoltageRequired,
             IdleMode idleMode,
             boolean invert) {
         Objects.requireNonNull(motorName, "motorName must not be null");
@@ -121,10 +140,20 @@ public class SparkFollowerSubsystem extends SubsystemBase {
                     "[" + motorName + " | CAN " + canID
                             + "] follower must not have the same CAN ID as the leader.");
         }
-        if (smartCurrentLimitAmps <= 0) {
+        if (stallCurrentLimitAmps <= 0) {
             throw new IllegalArgumentException(
                     "[" + motorName + " | CAN " + canID
-                            + "] smartCurrentLimitAmps must be positive.");
+                            + "] stallCurrentLimitAmps must be positive.");
+        }
+        if (freeCurrentLimitAmps < 0) {
+            throw new IllegalArgumentException(
+                    "[" + motorName + " | CAN " + canID
+                            + "] freeCurrentLimitAmps must be non-negative.");
+        }
+        if (!(maxVoltageRequired > 0.0)) {
+            throw new IllegalArgumentException(
+                    "[" + motorName + " | CAN " + canID
+                            + "] maxVoltageRequired must be positive.");
         }
         if (containsFollowerCanID(canID)) {
             throw new IllegalArgumentException(
@@ -139,7 +168,9 @@ public class SparkFollowerSubsystem extends SubsystemBase {
                 motorName,
                 leaderCanID,
                 motorType,
-                smartCurrentLimitAmps,
+                stallCurrentLimitAmps,
+                freeCurrentLimitAmps,
+                maxVoltageRequired,
                 idleMode,
                 invert,
                 followerMotor);
@@ -232,7 +263,8 @@ public class SparkFollowerSubsystem extends SubsystemBase {
 
         SparkMaxConfig cfg = new SparkMaxConfig();
         cfg.idleMode(entry.idleMode);
-        cfg.smartCurrentLimit(entry.smartCurrentLimitAmps);
+        cfg.smartCurrentLimit(entry.stallCurrentLimitAmps, entry.freeCurrentLimitAmps);
+        cfg.voltageCompensation(entry.maxVoltageRequired);
         cfg.follow(entry.leaderCanID, entry.invert);
 
         REVLibError status = entry.followerMotor.configure(

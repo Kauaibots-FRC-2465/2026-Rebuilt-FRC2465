@@ -24,7 +24,7 @@ public class SwerveDrivetrainSubsystem implements Subsystem {
     @Override
     public void periodic() {
         Pose2d retrievedPose = poseSupplier.get();
-        if (retrievedPose != null) ThrottlePrint.every(25, retrievedPose.toString());
+        //if (retrievedPose != null) ThrottlePrint.printmod(25, retrievedPose.toString());
         if (retrievedPose != null) encapsulatedDrivetrain.addVisionMeasurement(retrievedPose, timestampSupplier.get());
     }
     

@@ -85,7 +85,7 @@ public class LimelightSubsystem extends SubsystemBase {
             } else {
                 LimelightHelpers.setRobotOrientation("limelight", externalHeadingDegreesSupplier.getAsDouble(), 0, 0, 0, 0, 0);
                 currentPoseEstimate = LimelightHelpers.getBotPoseEstimate_wpiBlue_MegaTag2(null);
-                if(currentPoseEstimate != null) ThrottlePrint.every(10, currentPoseEstimate.toString());
+                //if(currentPoseEstimate != null) ThrottlePrint.printmod(10, currentPoseEstimate.toString());
                 xDeviation=stddevs[6];
                 yDeviation=stddevs[7];
                 Math.toRadians(stddevs[9]);

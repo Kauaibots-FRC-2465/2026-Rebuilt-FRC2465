@@ -8,6 +8,8 @@ package frc.robot;
 import static edu.wpi.first.units.Units.*;
 
 import com.ctre.phoenix6.swerve.SwerveModule.DriveRequestType;
+import com.revrobotics.spark.SparkLowLevel.MotorType;
+import com.revrobotics.spark.config.SparkBaseConfig.IdleMode;
 //import com.revrobotics.spark.SparkLowLevel.MotorType;
 //import com.revrobotics.spark.SparkMax;
 import com.ctre.phoenix6.swerve.SwerveRequest;
@@ -23,9 +25,12 @@ import edu.wpi.first.wpilibj2.command.sysid.SysIdRoutine.Direction;
 
 import frc.robot.generated.TunerConstants;
 import frc.robot.subsystems.CommandSwerveDrivetrain;
+import frc.robot.subsystems.KrakenFlywheelSubsystem;
 import frc.robot.subsystems.LimelightSubsystem;
 import frc.robot.subsystems.PinpointSubsystem;
 import frc.robot.subsystems.PoseEstimatorSubsystem;
+import frc.robot.subsystems.SparkAnglePositionSubsystem;
+import frc.robot.subsystems.SparkFollowerSubsystem;
 import frc.robot.subsystems.WLEDSubsystem;
 import frc.robot.subsystems.SwerveDrivetrainSubsystem;
 
@@ -51,7 +56,8 @@ public class RobotContainer implements Subsystem {
 
     private final Telemetry logger = new Telemetry(MaxSpeed);
 
-    private final CommandXboxController joystick = new CommandXboxController(0);
+    private final CommandXboxController driversController = new CommandXboxController(0);
+    private final CommandXboxController engineersController = new CommandXboxController(1);
 
     public final CommandSwerveDrivetrain drivetrain = TunerConstants.createDrivetrain();
     
@@ -64,6 +70,32 @@ public class RobotContainer implements Subsystem {
 
     public final SwerveDrivetrainSubsystem encapsulatedDrivetrain;
 
+    public final SparkAnglePositionSubsystem horizontalAimSubsystem;
+    public final SparkFollowerSubsystem sparkFollowerSubsystem = new SparkFollowerSubsystem();
+
+    public final KrakenFlywheelSubsystem verticalAimSubsystem;
+    // CTRE CAN MAP
+    // 11 Encoder for Front Left Swerve
+    // 12 Encoder for Back Left Swerve
+    // 13 Encoder for Back Right Swerve
+    // 14 Encoder for Front Right Swerve
+    // 21 Kraken x60 Drive of Front Left Swerve
+    // 22 Kraken x60 Drive of Back Left Swerve
+    // 23 Kraken x60 Drive of Back Right Swerve
+    // 24 Kraken x60 Drive of Front Right Swerve
+    // 31 Kraken x44 Steer of Front Left Steer
+    // 32 Kraken x44 Steer of Back Left Steer
+    // 33 Kraken x44 Steer of Back Right Steer
+    // 34 Kraken x44 Steer of Front Right Steer
+    // 40 Kraken x44 of Kicker
+    // 41 Kraken x60 of Left Flywheel
+    // 42 Kraken x60 of Right Flywheel
+    // 50 Kraken x60 of Lifter
+
+    // ROIBORIO CAN MAP
+    // 1  Neo 550 of Left Rotation 
+    // 2  Neo 550 of Right Rotation with encoder
+    // 3  Neo 550 of Hood Angle
 
     public RobotContainer() {
         poseEstimatorConfiguration.initialThetaDeviation = 
@@ -94,8 +126,37 @@ public class RobotContainer implements Subsystem {
         poseEstimatorSubsystem = new PoseEstimatorSubsystem(poseEstimatorConfiguration);
         encapsulatedDrivetrain = new SwerveDrivetrainSubsystem(drivetrain, poseEstimatorSubsystem); 
 
+        horizontalAimSubsystem = new SparkAnglePositionSubsystem(
+            2,
+            "Right Horizontal Aim Neo 550",
+            233.0/12.0*5.0, // Positioning gear plate hsa 233 teeth, pinions have 12
+            5,
+            .2,
+            1,
+            10,
+            40,
+            12,
+            Degrees.of(-22),
+            Degrees.of(22),
+            false,
+            true);
+        sparkFollowerSubsystem.addFollower(
+            1,
+            "Left Horizontal Aim Neo 550",
+            2,
+            MotorType.kBrushless,
+            10,
+            40,
+            12,
+            IdleMode.kBrake,
+            false);
+
+        //verticalAimSubsystem = new KrakenFlywheelSubsystem(41, "Left Flywheel Kraken x60", 4, 1, , null, MaxAngularRate, MaxAngularRate, MaxAngularRate, MaxAngularRate, MaxSpeed, MaxAngularRate)
         configureBindings();
+
     }
+
+
 
     private void configureBindings() {
         
@@ -105,9 +166,9 @@ public class RobotContainer implements Subsystem {
         drivetrain.setDefaultCommand(
             // Drivetrain will execute this command periodically
             drivetrain.applyRequest(() ->
-                drive.withVelocityX(-joystick.getLeftY() /* Math.abs(joystick.getLeftY())*/ * MaxSpeed) // Drive forward with negative Y (forward)
-                    .withVelocityY(-joystick.getLeftX() /* Math.abs(joystick.getLeftX())*/ * MaxSpeed) // Drive left with negative X (left)
-                    .withRotationalRate(-joystick.getRightX() /* Math.abs(joystick.getRightX())*/ * MaxAngularRate) // Drive counterclockwise with negative X (left)
+                drive.withVelocityX(-driversController.getLeftY() /* Math.abs(joystick.getLeftY())*/ * MaxSpeed) // Drive forward with negative Y (forward)
+                    .withVelocityY(-driversController.getLeftX() /* Math.abs(joystick.getLeftX())*/ * MaxSpeed) // Drive left with negative X (left)
+                    .withRotationalRate(-driversController.getRightX() /* Math.abs(joystick.getRightX())*/ * MaxAngularRate) // Drive counterclockwise with negative X (left)
             )
         );
 
@@ -118,20 +179,20 @@ public class RobotContainer implements Subsystem {
             drivetrain.applyRequest(() -> idle).ignoringDisable(true)
         );
 
-        joystick.a().whileTrue(drivetrain.applyRequest(() -> brake));
-        joystick.b().whileTrue(drivetrain.applyRequest(() ->
-            point.withModuleDirection(new Rotation2d(-joystick.getLeftY(), -joystick.getLeftX()))
+        driversController.a().whileTrue(drivetrain.applyRequest(() -> brake));
+        driversController.b().whileTrue(drivetrain.applyRequest(() ->
+            point.withModuleDirection(new Rotation2d(-driversController.getLeftY(), -driversController.getLeftX()))
         ));
 
-        joystick.x().onTrue(loadLights);
-        joystick.x().onFalse(loadStatic);
+        driversController.x().onTrue(loadLights);
+        driversController.x().onFalse(loadStatic);
 
         // Run SysId routines when holding back/start and X/Y.
         // Note that each routine should be run exactly once in a single log.
-        joystick.back().and(joystick.y()).whileTrue(drivetrain.sysIdDynamic(Direction.kForward));
-        joystick.back().and(joystick.x()).whileTrue(drivetrain.sysIdDynamic(Direction.kReverse));
-        joystick.start().and(joystick.y()).whileTrue(drivetrain.sysIdQuasistatic(Direction.kForward));
-        joystick.start().and(joystick.x()).whileTrue(drivetrain.sysIdQuasistatic(Direction.kReverse));
+        driversController.back().and(driversController.y()).whileTrue(drivetrain.sysIdDynamic(Direction.kForward));
+        driversController.back().and(driversController.x()).whileTrue(drivetrain.sysIdDynamic(Direction.kReverse));
+        driversController.start().and(driversController.y()).whileTrue(drivetrain.sysIdQuasistatic(Direction.kForward));
+        driversController.start().and(driversController.x()).whileTrue(drivetrain.sysIdQuasistatic(Direction.kReverse));
 
        //joystick.x().whileTrue(
        //    Commands.startEnd(
@@ -146,7 +207,9 @@ public class RobotContainer implements Subsystem {
        //    )
        //);
        //// Reset the field-centric heading on left bumper press.
-        joystick.leftBumper().onTrue(drivetrain.runOnce(drivetrain::seedFieldCentric));
+        driversController.leftBumper().onTrue(drivetrain.runOnce(drivetrain::seedFieldCentric));
+
+        horizontalAimSubsystem.setDefaultCommand(horizontalAimSubsystem.cmdSetScaledAngle(()->engineersController.getRightX()));
 
         drivetrain.registerTelemetry(logger::telemeterize);
     }
