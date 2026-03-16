@@ -10,6 +10,8 @@ import static edu.wpi.first.units.Units.*;
 import com.ctre.phoenix6.swerve.SwerveModule.DriveRequestType;
 import com.revrobotics.spark.SparkLowLevel.MotorType;
 import com.revrobotics.spark.config.SparkBaseConfig.IdleMode;
+import com.ctre.phoenix6.signals.MotorAlignmentValue;
+import com.ctre.phoenix6.signals.NeutralModeValue;
 //import com.revrobotics.spark.SparkLowLevel.MotorType;
 //import com.revrobotics.spark.SparkMax;
 import com.ctre.phoenix6.swerve.SwerveRequest;
@@ -26,6 +28,7 @@ import edu.wpi.first.wpilibj2.command.sysid.SysIdRoutine.Direction;
 import frc.robot.generated.TunerConstants;
 import frc.robot.subsystems.CommandSwerveDrivetrain;
 import frc.robot.subsystems.KrakenFlywheelSubsystem;
+import frc.robot.subsystems.KrakenFollowerSubsystem;
 import frc.robot.subsystems.LimelightSubsystem;
 import frc.robot.subsystems.PinpointSubsystem;
 import frc.robot.subsystems.PoseEstimatorSubsystem;
@@ -42,6 +45,25 @@ import frc.robot.subsystems.SwerveDrivetrainSubsystem;
 // kv=0.01
 
 public class RobotContainer implements Subsystem {
+    private final static float REMEMBER_TO_SET_CURRENTLY_0 = 0f;
+    private final static float REMEMBER_TO_TUNE_CURRENTLY_1 = 1f;
+    
+    private final static int INCHES = 1;
+
+    private static enum MotorData {
+        RIGHT_FLYWHEEL(42, "Right Flywheel Kraken x60"),
+        LEFT_FLYWHEEL(41, "Left Flywheel Kraken x60"),
+        BACK_FLYWHEEL(43, "Back Flywheel Kraken x60");
+
+        final int id;
+        final String name;
+
+        private MotorData(int id, String name) {
+            this.id = id;
+            this.name = name;
+        }
+    }
+
     private double MaxSpeed = 1 * TunerConstants.kSpeedAt12Volts.in(MetersPerSecond); // kSpeedAt12Volts desired top speed
     private double MaxAngularRate = 1 * RotationsPerSecond.of(0.75).in(RadiansPerSecond); // 3/4 of a rotation per second max angular velocity
 
@@ -74,6 +96,7 @@ public class RobotContainer implements Subsystem {
     public final SparkFollowerSubsystem sparkFollowerSubsystem = new SparkFollowerSubsystem();
 
     public final KrakenFlywheelSubsystem verticalAimSubsystem;
+    public final KrakenFollowerSubsystem flywheelFollowerSubsystem = new KrakenFollowerSubsystem();
     // CTRE CAN MAP
     // 11 Encoder for Front Left Swerve
     // 12 Encoder for Back Left Swerve
@@ -151,7 +174,20 @@ public class RobotContainer implements Subsystem {
             IdleMode.kBrake,
             false);
 
-        //verticalAimSubsystem = new KrakenFlywheelSubsystem(41, "Left Flywheel Kraken x60", 4, 1, , null, MaxAngularRate, MaxAngularRate, MaxAngularRate, MaxAngularRate, MaxSpeed, MaxAngularRate)
+        verticalAimSubsystem = new KrakenFlywheelSubsystem(
+          MotorData.RIGHT_FLYWHEEL.id,   // | Motor ID
+          MotorData.RIGHT_FLYWHEEL.name, // | Motor Name
+          4 * INCHES,                    // | Wheel size
+          16f/24f,                       // | Gear ratio
+          2.2,                        // | kS
+          0.01,                       // | kV 
+          6,                          // | kP
+          40                 // | Peak current
+        );
+        
+        flywheelFollowerSubsystem.addFollower(MotorData.LEFT_FLYWHEEL.id, MotorData.LEFT_FLYWHEEL.name, MotorData.RIGHT_FLYWHEEL.id, 40, MotorAlignmentValue.Opposed, NeutralModeValue.Brake);
+        flywheelFollowerSubsystem.addFollower(MotorData.BACK_FLYWHEEL.id, MotorData.BACK_FLYWHEEL.name, MotorData.RIGHT_FLYWHEEL.id, 40, MotorAlignmentValue.Opposed, NeutralModeValue.Brake);
+
         configureBindings();
 
     }
@@ -171,6 +207,8 @@ public class RobotContainer implements Subsystem {
                     .withRotationalRate(-driversController.getRightX() /* Math.abs(joystick.getRightX())*/ * MaxAngularRate) // Drive counterclockwise with negative X (left)
             )
         );
+
+        verticalAimSubsystem.setDefaultCommand(verticalAimSubsystem.cmdSetRPSFac(driversController::getRightTriggerAxis, 10d));
 
         // Idle while the robot is disabled. This ensures the configured
         // neutral mode is applied to the drive motors while disabled.

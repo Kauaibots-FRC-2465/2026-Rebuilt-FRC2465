@@ -1,4 +1,4 @@
-package frc.robot.subsystems;
+package frc.robot.subsystems.helpers;
 
 import static edu.wpi.first.units.Units.Rotations;
 
@@ -209,7 +209,7 @@ public class SparkAnglePositionSubsystem extends SubsystemBase {
 
     @Override
     public void periodic() {
-        double absoluteEncoderRotations = absoluteEncoder.getPosition();
+        //// double absoluteEncoderRotations = absoluteEncoder.getPosition();
 
         Warnings warnings = sparkMax.getWarnings();
         if (warnings.rawBits != previousWarningBits && warnings.rawBits != 0) {

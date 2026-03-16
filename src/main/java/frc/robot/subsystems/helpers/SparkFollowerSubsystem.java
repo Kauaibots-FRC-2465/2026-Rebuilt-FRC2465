@@ -1,4 +1,4 @@
-package frc.robot.subsystems;
+package frc.robot.subsystems.helpers;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -41,6 +41,7 @@ public class SparkFollowerSubsystem extends SubsystemBase {
         private final int canID;
         private final String motorName;
         private final int leaderCanID;
+        @SuppressWarnings("unused")
         private final MotorType motorType;
         private final int stallCurrentLimitAmps;
         private final int freeCurrentLimitAmps;

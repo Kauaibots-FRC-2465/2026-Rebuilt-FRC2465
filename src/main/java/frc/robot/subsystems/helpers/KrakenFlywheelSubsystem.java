@@ -1,4 +1,4 @@
-package frc.robot.subsystems;
+package frc.robot.subsystems.helpers;
 
 import java.util.function.DoubleSupplier;
 
@@ -204,6 +204,10 @@ public class KrakenFlywheelSubsystem extends SubsystemBase {
      */
     public Command cmdSetRPM(DoubleSupplier rpm) {
         return cmdSetRPS(()->rpm.getAsDouble()/60);
+    }
+
+    public Command cmdSetRPSFac(DoubleSupplier rps, Double factor) {
+        return cmdSetRPS(()->rps.getAsDouble()*factor);
     }
 
     /**
