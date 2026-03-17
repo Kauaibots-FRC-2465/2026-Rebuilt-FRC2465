@@ -68,7 +68,6 @@ public class WLEDSubsystem implements Subsystem {
                 this.socket.send(packets.get(frame));
             } catch (IOException e) {
                 // TODO Auto-generated catch block
-                e.printStackTrace();
             }
         }
     }

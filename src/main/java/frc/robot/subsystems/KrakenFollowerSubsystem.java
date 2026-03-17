@@ -1,4 +1,4 @@
-package frc.robot.subsystems.helpers;
+package frc.robot.subsystems;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -37,6 +37,7 @@ public class KrakenFollowerSubsystem extends SubsystemBase {
     private static final int MIN_CAN_ID = 0;
     private static final int MAX_CAN_ID = 62;
     private static final int CONFIG_RETRY_DELAY_CYCLES = 100;
+    private final String canBusName;
 
     /**
      * Stored configuration and motor reference for a single follower entry.
@@ -88,7 +89,11 @@ public class KrakenFollowerSubsystem extends SubsystemBase {
     /**
      * Creates an empty follower manager subsystem.
      */
-    public KrakenFollowerSubsystem() {
+    public KrakenFollowerSubsystem(String canBusName) {
+        if (canBusName == null || canBusName.isBlank()) {
+            throw new IllegalArgumentException("canBusName must not be blank.");
+        }
+        this.canBusName = canBusName;
     }
 
     /**
@@ -153,7 +158,7 @@ public class KrakenFollowerSubsystem extends SubsystemBase {
                             + "] follower CAN ID has already been added.");
         }
 
-        TalonFX followerMotor = new TalonFX(canID);
+        TalonFX followerMotor = new TalonFX(canID, canBusName);
 
         FollowerEntry entry = new FollowerEntry(
                 canID,
@@ -182,7 +187,7 @@ public class KrakenFollowerSubsystem extends SubsystemBase {
                 entry.cyclesBeforeNextConfigAttempt = 0;
                 DriverStation.reportError(
                         "[" + entry.motorName + " | CAN " + entry.canID
-                                + "] TalonFX reset detected. Reconfiguring follower.",
+                                + " | Bus " + canBusName + "] TalonFX reset detected. Reconfiguring follower.",
                         false);
             }
 
@@ -278,7 +283,7 @@ public class KrakenFollowerSubsystem extends SubsystemBase {
         if (!configStatus.isOK()) {
             DriverStation.reportError(
                     "[" + entry.motorName + " | CAN " + entry.canID
-                            + "] TalonFX config failed: " + configStatus, false);
+                            + " | Bus " + canBusName + "] TalonFX config failed: " + configStatus, false);
             return false;
         }
 
@@ -287,7 +292,7 @@ public class KrakenFollowerSubsystem extends SubsystemBase {
         if (!followerStatus.isOK()) {
             DriverStation.reportError(
                     "[" + entry.motorName + " | CAN " + entry.canID
-                            + "] Failed to enable follower mode: " + followerStatus, false);
+                            + " | Bus " + canBusName + "] Failed to enable follower mode: " + followerStatus, false);
             return false;
         }
 

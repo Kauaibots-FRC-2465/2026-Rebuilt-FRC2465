@@ -4,20 +4,26 @@
 
 package frc.robot.subsystems;
 
+import static edu.wpi.first.units.Units.Degree;
+import static edu.wpi.first.units.Units.Inch;
+
 import java.util.function.BooleanSupplier;
 import java.util.function.DoubleSupplier;
 import java.util.function.Supplier;
 
 import edu.wpi.first.math.geometry.Pose2d;
 import edu.wpi.first.wpilibj2.command.SubsystemBase;
+import frc.robot.utility.ThrottlePrint;
 import edu.wpi.first.units.AngleUnit;
+import edu.wpi.first.units.DistanceUnit;
 
 
 public class PinpointSubsystem extends SubsystemBase {
     GoBildaPinpointFRCDriver pinpoint;
 
-    public PinpointSubsystem() {
+    public PinpointSubsystem(double xPodOffset, double yPodOffset, DistanceUnit distanceUnit) {
         pinpoint=new GoBildaPinpointFRCDriver();
+        pinpoint.setOffsets(xPodOffset, yPodOffset, distanceUnit);
         pinpoint.setEncoderResolution(GoBildaPinpointFRCDriver.GoBildaOdometryPods.goBILDA_4_BAR_POD);
         pinpoint.setBulkReadScope(
             pinpoint.DEVICE_STATUS,
@@ -32,7 +38,7 @@ public class PinpointSubsystem extends SubsystemBase {
             pinpoint.H_VELOCITY);
     }
 
-    int wait=100;
+    int wait=20;
 
     @Override
     public void periodic() {
@@ -40,7 +46,7 @@ public class PinpointSubsystem extends SubsystemBase {
             wait--;
             return;
         }
-        if(!pinpoint.update()) pinpoint.update(); // Try twice if we fail once
+        pinpoint.update();
     }
 
     public BooleanSupplier getIsValidSupplier() {

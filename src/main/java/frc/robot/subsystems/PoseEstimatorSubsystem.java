@@ -4,10 +4,18 @@ import java.util.function.BooleanSupplier;
 import java.util.function.DoubleSupplier;
 import java.util.function.Supplier;
 
+import com.ctre.phoenix6.SignalLogger;
+
 import edu.wpi.first.math.geometry.Pose2d;
 import edu.wpi.first.math.geometry.Rotation2d;
 import edu.wpi.first.math.geometry.Twist2d;
-
+import edu.wpi.first.networktables.DoubleArrayPublisher;
+import edu.wpi.first.networktables.DoublePublisher;
+import edu.wpi.first.networktables.IntegerPublisher;
+import edu.wpi.first.networktables.NetworkTable;
+import edu.wpi.first.networktables.NetworkTableInstance;
+import edu.wpi.first.networktables.StringPublisher;
+import edu.wpi.first.networktables.StructPublisher;
 import edu.wpi.first.wpilibj.RobotController;
 import edu.wpi.first.wpilibj2.command.SubsystemBase;
 import frc.robot.utility.RingBuffer;
@@ -77,6 +85,85 @@ import frc.robot.utility.RingBuffer;
  * update odometry in a supplier method.)
  */
 public class PoseEstimatorSubsystem extends SubsystemBase {
+    private static class PoseDashboardPublisher {
+        private final StructPublisher<Pose2d> posePublisher;
+        private final DoubleArrayPublisher fieldPosePublisher;
+        private final StringPublisher fieldTypePublisher;
+        private final double[] poseArray = new double[3];
+
+        PoseDashboardPublisher(NetworkTable parentTable, String name) {
+            posePublisher = parentTable.getStructTopic(name, Pose2d.struct).publish();
+            NetworkTable fieldTable = parentTable.getSubTable(name);
+            fieldPosePublisher = fieldTable.getDoubleArrayTopic("robotPose").publish();
+            fieldTypePublisher = fieldTable.getStringTopic(".type").publish();
+        }
+
+        void publish(Pose2d pose, String signalLogKey) {
+            posePublisher.set(pose);
+            fieldTypePublisher.set("Field2d");
+            poseArray[0] = pose.getX();
+            poseArray[1] = pose.getY();
+            poseArray[2] = pose.getRotation().getDegrees();
+            fieldPosePublisher.set(poseArray);
+            SignalLogger.writeStruct(signalLogKey, Pose2d.struct, pose);
+        }
+    }
+
+    private final NetworkTableInstance ntInstance = NetworkTableInstance.getDefault();
+    private final NetworkTable odometryTable = ntInstance.getTable("PoseEstimator");
+    private final NetworkTable debugTable = odometryTable.getSubTable("Debug");
+    private final PoseDashboardPublisher newOdometryPosePublisher =
+            new PoseDashboardPublisher(debugTable, "NewOdometryPose");
+    private final PoseDashboardPublisher visionPosePublisher =
+            new PoseDashboardPublisher(debugTable, "visionPose");
+    private final PoseDashboardPublisher odometryAnchorPublisher =
+            new PoseDashboardPublisher(debugTable, "odometryAnchor");
+    private final PoseDashboardPublisher fusedAnchorPublisher =
+            new PoseDashboardPublisher(debugTable, "fusedAnchor");
+    private final PoseDashboardPublisher latestOdometryPosePublisher =
+            new PoseDashboardPublisher(debugTable, "latestOdometryPose");
+    private final PoseDashboardPublisher priorOdometryPosePublisher =
+            new PoseDashboardPublisher(debugTable, "priorOdometryPose");
+    private final PoseDashboardPublisher odometryNowPublisher =
+            new PoseDashboardPublisher(debugTable, "odometryNow");
+    private final PoseDashboardPublisher fusedPosePublisher =
+            new PoseDashboardPublisher(debugTable, "fusedPose");
+    private final IntegerPublisher visionTimestampPublisher =
+            debugTable.getIntegerTopic("visionTimestamp").publish();
+    private final IntegerPublisher odometryHistorySizePublisher =
+            debugTable.getIntegerTopic("odometryHistory size").publish();
+    private final IntegerPublisher dtPublisher =
+            debugTable.getIntegerTopic("dt from before to after odometry record").publish();
+    private final DoublePublisher xKalmanGainPublisher =
+            debugTable.getDoubleTopic("xKalmanGain").publish();
+    private final DoublePublisher yKalmanGainPublisher =
+            debugTable.getDoubleTopic("yKalmanGain").publish();
+    private final DoublePublisher thetaKalmanGainPublisher =
+            debugTable.getDoubleTopic("thetaKalmanGain").publish();
+    private final IntegerPublisher newOdometryPoseTimestampPublisher =
+            debugTable.getIntegerTopic("NewOdometryPoseTimestamp").publish();
+    private final DoublePublisher xVarianceOdometryPublisher =
+            debugTable.getDoubleTopic("x variance, odometry").publish();
+    private final DoublePublisher yVarianceOdometryPublisher =
+            debugTable.getDoubleTopic("y variance, odometry").publish();
+    private final DoublePublisher hVarianceOdometryPublisher =
+            debugTable.getDoubleTopic("h variance, odometry").publish();
+    private final IntegerPublisher latestOdometryTimestampPublisher =
+            debugTable.getIntegerTopic("latestOdometryTimestamp").publish();
+    private final IntegerPublisher priorOdometryTimestampPublisher =
+            debugTable.getIntegerTopic("priorOdometryTimestamp").publish();
+    private final IntegerPublisher timeSinceLatestOdometryPublisher =
+            debugTable.getIntegerTopic("timeSinceLatestOdometry").publish();
+    private final IntegerPublisher timeBetweenLatestAndPriorOdometryPublisher =
+            debugTable.getIntegerTopic("timeBetweenLatestAndPriorOdometry").publish();
+    private final DoublePublisher twistFractionToGetToNowPublisher =
+            debugTable.getDoubleTopic("twistFractionToGetToNow").publish();
+    private final DoublePublisher xVarianceVisionPublisher =
+            debugTable.getDoubleTopic("x variance, vision").publish();
+    private final DoublePublisher yVarianceVisionPublisher =
+            debugTable.getDoubleTopic("y variance, vision").publish();
+    private final DoublePublisher thetaVarianceVisionPublisher =
+            debugTable.getDoubleTopic("theta variance, vision").publish();
 
     private class OdometryData {
         Pose2d pose;
@@ -108,62 +195,62 @@ public class PoseEstimatorSubsystem extends SubsystemBase {
     }
 
     public PoseEstimatorSubsystem(Configuration config) {
-        odometryPose = config.odometryPose;
-        odometryTimestamp = config.odometryTimestamp;
-        odometryIsValid = config.odometryValid;
+        odometryPoseSupplier = config.odometryPose;
+        odometryTimestampSupplier = config.odometryTimestamp;
+        odometryIsValidSupplier = config.odometryValid;
         odoLongitudinalDeviationPerDistance = config.odoLongitudinalDeviationPerDistance;
         odoLateralDeviationPerDistance = config.odoLateralDeviationPerDistance;
         odoHeadingDeviationPerDistance = config.odoHeadingDeviationPerDistance;
         odoLongitudinalDeviationPerRadian = config.odoLongitudinalDeviationPerRadian;
         odoLateralDeviationPerRadian = config.odoLateralDeviationPerRadian;
         odoHeadingDeviationPerRadian = config.odoHeadingDeviationPerRadian;
-        visionPose = config.visionPose;
-        visionTimestamp = config.visionTimestamp;
-        visionIsValid = config.visionIsValid;
-        visionXDeviation = config.visionXDeviation;
-        visionYDeviation = config.visionYDeviation;
-        visionThetaDeviation = config.visionThetaDeviation;
-        xVarianceBound = config.initialXDeviation * config.initialXDeviation;
-        yVarianceBound = config.initialYDeviation * config.initialYDeviation;
-        ThetaVarianceBound = config.initialThetaDeviation * config.initialThetaDeviation;
+        visionPoseSupplier = config.visionPose;
+        visionTimestampSupplier = config.visionTimestamp;
+        visionIsValidSupplier = config.visionIsValid;
+        visionXDeviationSupplier = config.visionXDeviation;
+        visionYDeviationSupplier = config.visionYDeviation;
+        visionThetaDeviationSupplier = config.visionThetaDeviation;
+        xVarianceOdometry = config.initialXDeviation * config.initialXDeviation;
+        yVarianceOdometry = config.initialYDeviation * config.initialYDeviation;
+        thetaVarianceOdometry = config.initialThetaDeviation * config.initialThetaDeviation;
         fusedAnchor = odometryAnchor = new Pose2d();
     }
 
     Pose2d odometryAnchor;
     Pose2d fusedAnchor;
 
-    private final Supplier<Pose2d> odometryPose;
-    private final Supplier<Long> odometryTimestamp;
-    private final BooleanSupplier odometryIsValid;
+    private final Supplier<Pose2d> odometryPoseSupplier;
+    private final Supplier<Long> odometryTimestampSupplier;
+    private final BooleanSupplier odometryIsValidSupplier;
     private final double odoLongitudinalDeviationPerDistance;
     private final double odoLateralDeviationPerDistance;
     private final double odoHeadingDeviationPerDistance;
     private final double odoLongitudinalDeviationPerRadian;
     private final double odoLateralDeviationPerRadian;
     private final double odoHeadingDeviationPerRadian;
-    private final DoubleSupplier visionXDeviation;
-    private final DoubleSupplier visionYDeviation;
-    private final DoubleSupplier visionThetaDeviation;
-    private Supplier<Pose2d> visionPose;
-    private Supplier<Long> visionTimestamp;
-    private BooleanSupplier visionIsValid;
+    private final DoubleSupplier visionXDeviationSupplier;
+    private final DoubleSupplier visionYDeviationSupplier;
+    private final DoubleSupplier visionThetaDeviationSupplier;
+    private Supplier<Pose2d> visionPoseSupplier;
+    private Supplier<Long> visionTimestampSupplier;
+    private BooleanSupplier visionIsValidSupplier;
 
-    double xVarianceBound = 0;
-    double yVarianceBound = 0;
-    double ThetaVarianceBound = 0;
+    double xVarianceOdometry;
+    double yVarianceOdometry;
+    double thetaVarianceOdometry;
 
     Pose2d priorPose;
     Rotation2d priorHeading;
 
     @Override
     public void periodic() {
-        if (odometryIsValid.getAsBoolean()) {
+        if (odometryIsValidSupplier.getAsBoolean()) {
             updateOdometry();
         } else {
             odometryHistory.clear();
         }
 
-        if (visionIsValid.getAsBoolean()) {
+        if (visionIsValidSupplier.getAsBoolean()) {
             fuseVision();
         }
     }
@@ -211,15 +298,20 @@ public class PoseEstimatorSubsystem extends SubsystemBase {
     private void fuseVision() {
         OdometryData newerOdometryData = null;
         OdometryData olderOdometryData = null;
-        Long visionTime = visionTimestamp.get();
+        Long visionTimestamp = visionTimestampSupplier.get();
+        visionTimestampPublisher.set(visionTimestamp);
+        SignalLogger.writeInteger("PoseEstimator/Debug/visionTimestamp", visionTimestamp);
+        odometryHistorySizePublisher.set(odometryHistory.size());
+        SignalLogger.writeInteger("PoseEstimator/Debug/odometryHistory size", odometryHistory.size());
+
         if (odometryHistory.size() < 2)
             return;
         for (int index = 0; index < odometryHistory.size(); ++index) {
             Long odometryTimestamp = odometryHistory.get(index).timestamp;
-            if (odometryTimestamp >= visionTime) {
+            if (odometryTimestamp >= visionTimestamp) {
                 newerOdometryData = odometryHistory.get(index);
             }
-            if (odometryTimestamp <= visionTime) {
+            if (odometryTimestamp <= visionTimestamp) {
                 olderOdometryData = odometryHistory.get(index);
                 break;
             }
@@ -230,27 +322,41 @@ public class PoseEstimatorSubsystem extends SubsystemBase {
             return;
         }
         long dt = newerOdometryData.timestamp - olderOdometryData.timestamp;
-        double alpha = (double) (visionTime - olderOdometryData.timestamp) / dt;
-        Pose2d matchingVisionPose = visionPose.get();
+        dtPublisher.set(dt);
+        SignalLogger.writeInteger("PoseEstimator/Debug/dt from before to after odometry record", dt);
+        double alpha = (double) (visionTimestamp - olderOdometryData.timestamp) / dt;
+        Pose2d visionPose = visionPoseSupplier.get();
+        visionPosePublisher.publish(visionPose, "PoseEstimator/Debug/visionPose");
         odometryAnchor = olderOdometryData.pose.interpolate(newerOdometryData.pose, alpha);
-        double vXVariance = visionXDeviation.getAsDouble();
-        vXVariance = vXVariance * vXVariance;
-        double vYVariance = visionYDeviation.getAsDouble();
-        vYVariance = vYVariance * vYVariance;
-        double vThetaVariance = visionThetaDeviation.getAsDouble();
-        vThetaVariance = vThetaVariance * vThetaVariance;
-        double xKalmanGain = xVarianceBound / (xVarianceBound + vXVariance);
-        double yKalmanGain = yVarianceBound / (yVarianceBound + vYVariance);
-        double ThetaKalmanGain = ThetaVarianceBound / (ThetaVarianceBound + vThetaVariance);
+        odometryAnchorPublisher.publish(odometryAnchor, "PoseEstimator/Debug/odometryAnchor");
+        double xVarianceVision = visionXDeviationSupplier.getAsDouble();
+        xVarianceVision = xVarianceVision * xVarianceVision;
+        xVarianceVisionPublisher.set(xVarianceVision);
+        double yVarianceVision = visionYDeviationSupplier.getAsDouble();
+        yVarianceVision = yVarianceVision * yVarianceVision;
+        yVarianceVisionPublisher.set(yVarianceVision);
+        double thetaVarianceVision = visionThetaDeviationSupplier.getAsDouble();
+        thetaVarianceVisionPublisher.set(thetaVarianceVision);
+        thetaVarianceVision = thetaVarianceVision * thetaVarianceVision;
+        double xKalmanGain = xVarianceOdometry / (xVarianceOdometry + xVarianceVision);
+        double yKalmanGain = yVarianceOdometry / (yVarianceOdometry + yVarianceVision);
+        double thetaKalmanGain = thetaVarianceOdometry / (thetaVarianceOdometry + thetaVarianceVision);
+        xKalmanGainPublisher.set(xKalmanGain);
+        yKalmanGainPublisher.set(yKalmanGain);
+        thetaKalmanGainPublisher.set(thetaKalmanGain);
+        SignalLogger.writeDouble("PoseEstimator/Debug/xKalmanGain", xKalmanGain);
+        SignalLogger.writeDouble("PoseEstimator/Debug/yKalmanGain", yKalmanGain);
+        SignalLogger.writeDouble("PoseEstimator/Debug/thetaKalmanGain", thetaKalmanGain);
         Rotation2d odometryRotation = odometryAnchor.getRotation();
-        double ThetaDifference = matchingVisionPose.getRotation().minus(odometryRotation).getRadians();
+        double ThetaDifference = visionPose.getRotation().minus(odometryRotation).getRadians();
         fusedAnchor = new Pose2d(
-                odometryAnchor.getX() * (1 - xKalmanGain) + matchingVisionPose.getX() * (xKalmanGain),
-                odometryAnchor.getY() * (1 - yKalmanGain) + matchingVisionPose.getY() * (yKalmanGain),
-                odometryRotation.plus(new Rotation2d(ThetaDifference * ThetaKalmanGain)));
-        xVarianceBound = (1.0 - xKalmanGain) * xVarianceBound;
-        yVarianceBound = (1.0 - yKalmanGain) * yVarianceBound;
-        ThetaVarianceBound = (1.0 - ThetaKalmanGain) * ThetaVarianceBound;
+                odometryAnchor.getX() * (1 - xKalmanGain) + visionPose.getX() * (xKalmanGain),
+                odometryAnchor.getY() * (1 - yKalmanGain) + visionPose.getY() * (yKalmanGain),
+                odometryRotation.plus(new Rotation2d(ThetaDifference * thetaKalmanGain)));
+        fusedAnchorPublisher.publish(fusedAnchor, "PoseEstimator/Debug/fusedAnchor");
+        xVarianceOdometry = (1.0 - xKalmanGain) * xVarianceOdometry;
+        yVarianceOdometry = (1.0 - yKalmanGain) * yVarianceOdometry;
+        thetaVarianceOdometry = (1.0 - thetaKalmanGain) * thetaVarianceOdometry;
     }
 
     /**
@@ -291,46 +397,85 @@ public class PoseEstimatorSubsystem extends SubsystemBase {
      * be in any direction.
      */
     private void updateOdometry() {
-        Pose2d newPose = odometryPose.get();
+        Pose2d newPose = odometryPoseSupplier.get();
+        newOdometryPosePublisher.publish(newPose, "PoseEstimator/Debug/NewOdometryPose");
         Rotation2d newHeading = newPose.getRotation();
+
         odometryHistory.getScratchpad().pose = newPose;
-        odometryHistory.getScratchpad().timestamp = odometryTimestamp.get();
+        odometryHistory.getScratchpad().timestamp = odometryTimestampSupplier.get();
+        newOdometryPoseTimestampPublisher.set(odometryHistory.getScratchpad().timestamp);
+        SignalLogger.writeInteger(
+                "PoseEstimator/Debug/NewOdometryPoseTimestamp",
+                odometryHistory.getScratchpad().timestamp);
         odometryHistory.add();
-        if (odometryHistory.size() == 1) {
+        if (odometryHistory.size() == 1) { // If this is the first pose, make it the prior pose too
             priorPose = newPose;
             priorHeading = priorPose.getRotation();
             return;
         }
+
+        // Calculate how far the robot has moved and turned.
         double delta_x = Math.abs(newPose.getX() - priorPose.getX());
         double delta_y = Math.abs(newPose.getY() - priorPose.getY());
         double delta_d = Math.sqrt(delta_x * delta_x + delta_y * delta_y);
         double delta_h = Math.abs(newPose.getRotation().minus(priorHeading).getRadians());
-        double ThetaDeviation = Math.sqrt(ThetaVarianceBound);
+        // Variances, which is the key value used by kalman filters, can be added, but they are in squared units.
+        // When we calcualte the changes in the error, we need to do it in non-squared units, which is deviation.
+        // Calculate the deviation from the current variance.
+        
+        // Calculate the potential current heading deviation (+/- so many degrees.)
+        double ThetaDeviation = Math.sqrt(thetaVarianceOdometry);
+
+        // We get some theta deviation when we turn, some when we drive.  Multiply how much we did these things by their respective constants.
+        double additionalDeviation = odoHeadingDeviationPerDistance * delta_d + odoHeadingDeviationPerRadian * delta_h;
+        // Convert to variance and add the variance to the prior variance
+        thetaVarianceOdometry += additionalDeviation * additionalDeviation;
+        // Bound it so we can't ever be more than +/- 90 confused
+        thetaVarianceOdometry = Math.min(Math.PI / 2 * Math.PI / 2, thetaVarianceOdometry);
+
+        // For convenience, get the sin and cos values of the heading deviation.
+        // We're actually using the prior ThetaDeviation instead of the new ThetaDeviation to do this, but
+        // since the time slices are so small it's not a serious source of error.
         double ThetaDeviationBoundCos = Math.cos(ThetaDeviation);
         double ThetaDeviationBoundSin = Math.sin(ThetaDeviation);
-        double newDeviation = odoHeadingDeviationPerDistance * delta_d + odoHeadingDeviationPerRadian * delta_h;
-        ThetaVarianceBound += newDeviation * newDeviation;
-        ThetaVarianceBound = Math.min(Math.PI / 2 * Math.PI / 2, ThetaVarianceBound);
-        double xVersineError = (delta_x
-                - ThetaDeviationBoundCos * (delta_x - odoLongitudinalDeviationPerDistance * delta_x));
+
+        // Calcuale how much x deviation we get from our change in x given our theta deviation
+        // See C-D distance of Geogebra/sigma x calculation.ggb x_1-(x_1-σ_x_m) cos(σ_θ) 
+        double xVersineError = (delta_x - ThetaDeviationBoundCos * (delta_x - odoLongitudinalDeviationPerDistance * delta_x));
+
+        // Calcuale how much x deviation we get from our change in y given our theta deviation
         double xCrossContaminationError = delta_y * ThetaDeviationBoundSin
                 + odoLateralDeviationPerDistance * delta_y * ThetaDeviationBoundCos;
+        // Calcuale how much x deviation we get from our change in y given our heading
         double xErrorFromHeading = (Math.abs(priorHeading.getCos()) * odoLongitudinalDeviationPerRadian
                 + Math.abs(priorHeading.getSin()) * odoLateralDeviationPerRadian) * delta_h;
-        newDeviation = xVersineError + xCrossContaminationError + xErrorFromHeading;
-        xVarianceBound += newDeviation * newDeviation; // Add variance
+        // Add them all together
+        additionalDeviation = xVersineError + xCrossContaminationError + xErrorFromHeading;
+        // Convert it to deviation and add it in.
+
+        xVarianceOdometry += additionalDeviation * additionalDeviation; // Add variance
+
+        // Repeat the calculation for y
         double yVersineError = (delta_y
                 - ThetaDeviationBoundCos * (delta_y - odoLongitudinalDeviationPerDistance * delta_y));
         double yCrossContaminationError = delta_x * ThetaDeviationBoundSin
                 + odoLateralDeviationPerDistance * delta_x * ThetaDeviationBoundCos;
         double yErrorFromHeading = (Math.abs(priorHeading.getSin()) * odoLongitudinalDeviationPerRadian
                 + Math.abs(priorHeading.getCos()) * odoLateralDeviationPerRadian) * delta_h;
-        newDeviation = yVersineError + yCrossContaminationError + yErrorFromHeading;
-        yVarianceBound += newDeviation * newDeviation; // Add variance
-        xVarianceBound = Math.min(xVarianceBound, 3 * 3); // We should never be this lost; clamp here to prevent NaNs
+        additionalDeviation = yVersineError + yCrossContaminationError + yErrorFromHeading;
+        yVarianceOdometry += additionalDeviation * additionalDeviation; // Add variance
+
+        // Bound the deviation
+        xVarianceOdometry = Math.min(xVarianceOdometry, 3 * 3); // We should never be this lost; clamp here to prevent NaNs
                                                           // and also
-        yVarianceBound = Math.min(yVarianceBound, 3 * 3); // extreme values leading to overconfidence after a vision
+        yVarianceOdometry = Math.min(yVarianceOdometry, 3 * 3); // extreme values leading to overconfidence after a vision
                                                           // update
+        xVarianceOdometryPublisher.set(xVarianceOdometry);
+        yVarianceOdometryPublisher.set(yVarianceOdometry);
+        hVarianceOdometryPublisher.set(thetaVarianceOdometry);
+        SignalLogger.writeDouble("PoseEstimator/Debug/xVarianceBound", xVarianceOdometry);
+        SignalLogger.writeDouble("PoseEstimator/Debug/yVarianceBound", yVarianceOdometry);
+        SignalLogger.writeDouble("PoseEstimator/Debug/hVarianceBound", thetaVarianceOdometry);
         priorPose = newPose;
         priorHeading = newHeading;
     }
@@ -371,10 +516,19 @@ public class PoseEstimatorSubsystem extends SubsystemBase {
             Long   priorOdometryTimestamp   = odometryHistory.get(1).timestamp;
             Long   timeSinceLatestOdometry  = (RobotController.getFPGATime() - latestOdometryTimestamp);
             Long   timeBetweenLatestAndPriorOdometry = (latestOdometryTimestamp - priorOdometryTimestamp);
-            // System.out.println("Latest time: " + latestOdometryTimestamp);
-            // System.out.println("Prior time:  " + priorOdometryTimestamp);
-            // System.out.println("Delta time:  " + timeBetweenLatestAndPriorOdometry);
-            // System.out.println(odometryHistory.size());
+            latestOdometryPosePublisher.publish(latestOdometryPose, "PoseEstimator/Debug/latestOdometryPose");
+            latestOdometryTimestampPublisher.set(latestOdometryTimestamp);
+            priorOdometryPosePublisher.publish(priorOdometryPose, "PoseEstimator/Debug/priorOdometryPose");
+            priorOdometryTimestampPublisher.set(priorOdometryTimestamp);
+            timeSinceLatestOdometryPublisher.set(timeSinceLatestOdometry);
+            timeBetweenLatestAndPriorOdometryPublisher.set(timeBetweenLatestAndPriorOdometry);
+            SignalLogger.writeInteger("PoseEstimator/Debug/latestOdometryTimestamp", latestOdometryTimestamp);
+            SignalLogger.writeInteger("PoseEstimator/Debug/priorOdometryTimestamp", priorOdometryTimestamp);
+            SignalLogger.writeInteger("PoseEstimator/Debug/timeSinceLatestOdometry", timeSinceLatestOdometry);
+            SignalLogger.writeInteger(
+                    "PoseEstimator/Debug/timeBetweenLatestAndPriorOdometry",
+                    timeBetweenLatestAndPriorOdometry);
+
             if (timeBetweenLatestAndPriorOdometry <= 0) {
                 throw new IllegalStateException(
                         "CRITICAL: Odometry timestamps are non-monotonic or duplicate. dt=" +
@@ -384,14 +538,17 @@ public class PoseEstimatorSubsystem extends SubsystemBase {
             if (timeBetweenLatestAndPriorOdometry > 50000)
                 return null; // if more than 50 ms between poses, tell the downstream drive not to rely on us
             double twistFractionToGetToNow = (double) timeSinceLatestOdometry / timeBetweenLatestAndPriorOdometry;
-            if (twistFractionToGetToNow > 1.5)
+            if (twistFractionToGetToNow > 2)
                 return null; // If we have to extrapolate more than 1.5 cycles, tell the downstream drive not
                              // to rely on us
+            twistFractionToGetToNowPublisher.set(twistFractionToGetToNow);
+            SignalLogger.writeDouble("PoseEstimator/Debug/twistFractionToGetToNow", twistFractionToGetToNow);
             Twist2d extrapolatedTwist = priorOdometryPose.log(latestOdometryPose);
             extrapolatedTwist.dtheta *= twistFractionToGetToNow;
             extrapolatedTwist.dx     *= twistFractionToGetToNow;
             extrapolatedTwist.dy     *= twistFractionToGetToNow;
             Pose2d odometryNow = latestOdometryPose.exp(extrapolatedTwist);
+            odometryNowPublisher.publish(odometryNow, "PoseEstimator/Debug/odometryNow");
             /*
              * * Geometric Logic Confirmation:
              * 1. odometryNow.minus(odometryAnchor) calculates the relative Transform2d
@@ -406,23 +563,25 @@ public class PoseEstimatorSubsystem extends SubsystemBase {
              * fusedAnchor.exp(odometryAnchor.log(odometryNow))
              * for a static rebase.
              */
-            return fusedAnchor.plus(odometryNow.minus(odometryAnchor));
+            Pose2d fusedPose = fusedAnchor.plus(odometryNow.minus(odometryAnchor));
+            fusedPosePublisher.publish(fusedPose, "PoseEstimator/Debug/fusedPose");
+            return fusedPose;
         };
     }
 
     public DoubleSupplier getFusedXDeviation() {
-        return () -> Math.sqrt(xVarianceBound);
+        return () -> Math.sqrt(xVarianceOdometry);
     }
 
     public DoubleSupplier getFusedYDeviation() {
-        return () -> Math.sqrt(yVarianceBound);
+        return () -> Math.sqrt(yVarianceOdometry);
     }
 
     public DoubleSupplier getFusedThetaDeviation() {
-        return () -> Math.sqrt(ThetaVarianceBound);
+        return () -> Math.sqrt(thetaVarianceOdometry);
     }
     
     public Supplier<Long> getTimestampSupplier() {
-        return odometryTimestamp; 
+        return odometryTimestampSupplier; 
     }
 }

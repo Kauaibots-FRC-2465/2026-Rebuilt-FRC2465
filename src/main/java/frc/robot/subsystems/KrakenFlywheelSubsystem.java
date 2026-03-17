@@ -1,4 +1,4 @@
-package frc.robot.subsystems.helpers;
+package frc.robot.subsystems;
 
 import java.util.function.DoubleSupplier;
 
@@ -32,6 +32,7 @@ public class KrakenFlywheelSubsystem extends SubsystemBase {
     // Hardware identity
     private final TalonFX kraken;
     private final int canID;
+    private final String canBusName;
     private final String motorName;
 
     // Mechanism model
@@ -64,6 +65,7 @@ public class KrakenFlywheelSubsystem extends SubsystemBase {
      * tuning remains similar to traditional flywheel tuning.
      *
      * @param canID                  The CAN ID of the leader motor.
+     * @param canBusName             The CAN bus name the motor is connected to.
      * @param motorName              A descriptive name for the motor (used for error reporting).
      * @param flywheelDiameterInches The diameter of the flywheel in inches.
      * @param gearRatio              Sensor-to-mechanism ratio (motor rotations per
@@ -79,9 +81,12 @@ public class KrakenFlywheelSubsystem extends SubsystemBase {
      * @throws IllegalArgumentException if {@code gearRatio <= 0.0}
      * @throws IllegalArgumentException if {@code peakCurrent <= 0.0}
      */
-    public KrakenFlywheelSubsystem(int canID, String motorName, double flywheelDiameterInches, double gearRatio, double kS, double kV, double kP, double peakCurrent) {
+    public KrakenFlywheelSubsystem(int canID, String canBusName, String motorName, double flywheelDiameterInches, double gearRatio, double kS, double kV, double kP, double peakCurrent) {
         if (!isValidCanID(canID)) {
             throw new IllegalArgumentException("ASSERTION FAILED: canID must be in range [0, 62].");
+        }
+        if (canBusName == null || canBusName.isBlank()) {
+            throw new IllegalArgumentException("ASSERTION FAILED: canBusName must not be blank.");
         }
         if (!(flywheelDiameterInches > 0.0)) {
             throw new IllegalArgumentException("ASSERTION FAILED: flywheelDiameterInches must be positive.");
@@ -96,8 +101,9 @@ public class KrakenFlywheelSubsystem extends SubsystemBase {
         this.flywheelDiameterInches = flywheelDiameterInches;
         this.gearRatio = gearRatio;
         this.canID = canID;
+        this.canBusName = canBusName;
 
-        kraken=new TalonFX(canID);
+        kraken=new TalonFX(canID, canBusName);
         cfg.MotorOutput.NeutralMode = NeutralModeValue.Coast;
         cfg.Feedback.SensorToMechanismRatio = this.gearRatio;
         // Slot 0 — VelocityTorqueCurrentFOC gains
@@ -122,7 +128,7 @@ public class KrakenFlywheelSubsystem extends SubsystemBase {
             
             DriverStation.reportError(
                     "[" + motorName + " | CAN " + canID
-                            + "] TalonFX reset detected. Reconfiguring motor.",
+                            + " | Bus " + canBusName + "] TalonFX reset detected. Reconfiguring motor.",
                     false);
         }
 
@@ -144,7 +150,8 @@ public class KrakenFlywheelSubsystem extends SubsystemBase {
         StatusCode status = kraken.getConfigurator().apply(cfg, 0.050);
         if (!status.isOK()) {
             DriverStation.reportError(
-                    "[" + motorName + " with CAN ID " + canID + "] TalonFX config failed: " + status, false);
+                    "[" + motorName + " with CAN ID " + canID + " on bus " + canBusName
+                            + "] TalonFX config failed: " + status, false);
             return false;
         }
         // Optimize CAN bus utilization — only update these signals at the given frequency

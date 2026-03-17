@@ -97,13 +97,13 @@ public class GoBildaPinpointFRCDriver {
 
         public float getf() {
             if (type != RegisterType.FLOAT) throw new RuntimeException("Attempt to read non-float register as a float.");
-            //TBD: Deal with non bulk registers //if lastUpdate!=updateCount) readRegister(this);
+            if (lastUpdate != updateCount && !isInBulkReadScope(this)) readRegister(this);
             return this.fvalue;
         }
 
         public int geti() {
             if (type != RegisterType.INT32) throw new RuntimeException("Attempt to read non-integer register as an integer.");
-            //if (lastUpdate!=updateCount) readRegister(this);
+            if (lastUpdate != updateCount && !isInBulkReadScope(this)) readRegister(this);
             return this.ivalue;
         }
 
@@ -422,6 +422,15 @@ public class GoBildaPinpointFRCDriver {
         i2c.writeBulk(buffer.array(), arrayList.size()+1);
     }
 
+    private boolean isInBulkReadScope(Register register) {
+        for (Register bulkRegister : bulkReadScope) {
+            if (bulkRegister == register) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     /**
      * Sets the odometry pod positions relative to the point that the odometry computer tracks around.<br><br>
      * The most common tracking position is the center of the robot. <br> <br>
@@ -676,15 +685,6 @@ public class GoBildaPinpointFRCDriver {
         return Millimeters.of(Y_POSITION.getf()).in(distanceUnit);
     }
 
-
-    /**
-     * @return the normalized estimated H (heading) position of the robot in specified unit
-     * normalized heading is wrapped from -180°, to 180°.
-     */
-    public Rotation2d getHeading(){
-        return new Rotation2d(H_ORIENTATION.getf());
-    }
-
     /**
      * @return the unnormalized estimated H (heading) position of the robot in specified unit
      * unnormalized heading is not constrained from -180° to 180°. It will continue counting
@@ -739,7 +739,8 @@ public class GoBildaPinpointFRCDriver {
         return new Pose2d(
             getPosX(Meters),
             getPosY(Meters),
-            getHeading());
+            new Rotation2d(getHeading(Radians))
+            );
     }
 
     /**

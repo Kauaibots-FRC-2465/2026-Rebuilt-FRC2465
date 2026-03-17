@@ -53,7 +53,7 @@ public class RobotContainer implements Subsystem {
     private static enum MotorData {
         RIGHT_FLYWHEEL(42, "Right Flywheel Kraken x60"),
         LEFT_FLYWHEEL(41, "Left Flywheel Kraken x60"),
-        BACK_FLYWHEEL(43, "Back Flywheel Kraken x60");
+        BACK_FLYWHEEL(44, "Backspin Flywheel Kraken x60");
 
         final int id;
         final String name;
@@ -96,7 +96,7 @@ public class RobotContainer implements Subsystem {
     public final SparkFollowerSubsystem sparkFollowerSubsystem = new SparkFollowerSubsystem();
 
     public final KrakenFlywheelSubsystem verticalAimSubsystem;
-    public final KrakenFollowerSubsystem flywheelFollowerSubsystem = new KrakenFollowerSubsystem();
+    public final KrakenFollowerSubsystem flywheelFollowerSubsystem = new KrakenFollowerSubsystem("Default Name");
     // CTRE CAN MAP
     // 11 Encoder for Front Left Swerve
     // 12 Encoder for Back Left Swerve
@@ -113,7 +113,11 @@ public class RobotContainer implements Subsystem {
     // 40 Kraken x44 of Kicker
     // 41 Kraken x60 of Left Flywheel
     // 42 Kraken x60 of Right Flywheel
+    // 44 Kraken x60 of Backspin Flywheel
     // 50 Kraken x60 of Lifter
+    // 51 Kraken x60 of Left Intake
+    // 52 Kraken x60 of Right Intake
+    // 53 Kraken x60 of Intake Drive
 
     // ROIBORIO CAN MAP
     // 1  Neo 550 of Left Rotation 
@@ -121,9 +125,9 @@ public class RobotContainer implements Subsystem {
     // 3  Neo 550 of Hood Angle
 
     public RobotContainer() {
-        poseEstimatorConfiguration.initialThetaDeviation = 
-        poseEstimatorConfiguration.initialXDeviation = 
-        poseEstimatorConfiguration.initialYDeviation = 0;
+        poseEstimatorConfiguration.initialThetaDeviation = 10.0/180.8*3.14159; 
+        poseEstimatorConfiguration.initialXDeviation = 1;
+        poseEstimatorConfiguration.initialYDeviation = 1;
 
         poseEstimatorConfiguration.odoHeadingDeviationPerDistance =
         poseEstimatorConfiguration.odoHeadingDeviationPerRadian =
@@ -132,12 +136,16 @@ public class RobotContainer implements Subsystem {
         poseEstimatorConfiguration.odoLongitudinalDeviationPerDistance =
         poseEstimatorConfiguration.odoLongitudinalDeviationPerRadian = 0.01;
 
-        PinpointSubsystem pinpointSubsystem = new PinpointSubsystem();
+        PinpointSubsystem pinpointSubsystem = new PinpointSubsystem(6.0625, -2.5, Inch);
         poseEstimatorConfiguration.odometryPose = pinpointSubsystem.getPose2dSupplier();
         poseEstimatorConfiguration.odometryTimestamp = pinpointSubsystem.getTimestampSupplier();
         poseEstimatorConfiguration.odometryValid = pinpointSubsystem.getIsValidSupplier();
         
-        LimelightSubsystem limelightSubsystem = new LimelightSubsystem(pinpointSubsystem.getHeadingSupplier(Degree), true, new int[] {1, 2, 3, 4, 5, 6});
+        LimelightSubsystem limelightSubsystem = new LimelightSubsystem(pinpointSubsystem.getHeadingSupplier(Degree), false, new int[] 
+            {     1,  2,  3,  4,  5,  6,  7,  8,  9,
+             10, 11, 12, 13, 14, 15, 16, 17, 18, 19,
+             20, 21, 22, 23, 24, 25, 26, 27, 28, 29,
+             30, 31, 32});
         poseEstimatorConfiguration.visionPose = limelightSubsystem.getPose2dSupplier();
         poseEstimatorConfiguration.visionTimestamp = limelightSubsystem.getPose2dTimestampSupplier();
         poseEstimatorConfiguration.visionIsValid = limelightSubsystem.getIsValidSupplier();
@@ -176,6 +184,7 @@ public class RobotContainer implements Subsystem {
 
         verticalAimSubsystem = new KrakenFlywheelSubsystem(
           MotorData.RIGHT_FLYWHEEL.id,   // | Motor ID
+          "Default Name",                // | CANivore bus name
           MotorData.RIGHT_FLYWHEEL.name, // | Motor Name
           4 * INCHES,                    // | Wheel size
           16f/24f,                       // | Gear ratio
