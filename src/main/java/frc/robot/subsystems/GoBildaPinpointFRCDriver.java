@@ -295,7 +295,17 @@ public class GoBildaPinpointFRCDriver {
     @SuppressWarnings("incomplete-switch")
     public void readRegister(Register register){
 
-        i2c.read(register.address, RegisterType.GENERIC.length+CRC_SIZE, buffer.array());
+        if (register == X_POD_OFFSET || register == Y_POD_OFFSET) {
+           System.out.println("Trying to read");
+        }
+        for (int index = 0; index < RegisterType.GENERIC.length + CRC_SIZE; index++) {
+            buffer.put(index, (byte) 0);
+        }
+        boolean readFailed = i2c.read(register.address, RegisterType.GENERIC.length + CRC_SIZE, buffer.array());
+        if (readFailed) {
+            DEVICE_STATUS.set(DeviceStatus.FAULT_BAD_READ.status);
+            return;
+        }
 
         switch (register.type) {
             case INT32:
@@ -306,7 +316,13 @@ public class GoBildaPinpointFRCDriver {
                 }
                 break;
             case FLOAT:
+                if (register == X_POD_OFFSET || register == Y_POD_OFFSET) {
+                    System.out.println(" Checking CRC");
+                }
                 if(checkCRC(buffer.array(), RegisterType.FLOAT)) {
+                    if (register == X_POD_OFFSET || register == Y_POD_OFFSET) {
+                        System.out.println(register.address + "passed:" + buffer.getFloat(0));
+                    }
                     register.set(buffer.getFloat(0));
                 } else {
                     DEVICE_STATUS.set(DeviceStatus.FAULT_BAD_READ.status);

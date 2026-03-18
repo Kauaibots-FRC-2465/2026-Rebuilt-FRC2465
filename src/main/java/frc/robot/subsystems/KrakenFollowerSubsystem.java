@@ -296,7 +296,7 @@ public class KrakenFollowerSubsystem extends SubsystemBase {
             return false;
         }
 
-        entry.followerMotor.optimizeBusUtilization();
+        //entry.followerMotor.optimizeBusUtilization();
         entry.configured = true;
         entry.cyclesBeforeNextConfigAttempt = 0;
         return true;

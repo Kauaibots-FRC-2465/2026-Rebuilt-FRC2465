@@ -4,7 +4,6 @@
 
 package frc.robot.subsystems;
 
-import static edu.wpi.first.units.Units.Degree;
 import static edu.wpi.first.units.Units.Inch;
 
 import java.util.function.BooleanSupplier;
@@ -20,11 +19,28 @@ import edu.wpi.first.units.DistanceUnit;
 
 public class PinpointSubsystem extends SubsystemBase {
     GoBildaPinpointFRCDriver pinpoint;
+    private final double xPodOffset;
+    private final double yPodOffset;
+    private final DistanceUnit distanceUnit;
+    private final GoBildaPinpointFRCDriver.GoBildaOdometryPods odometryPod;
+    private final GoBildaPinpointFRCDriver.EncoderDirection xPodDirection;
+    private final GoBildaPinpointFRCDriver.EncoderDirection yPodDirection;
+    private boolean configurationSent = false;
 
-    public PinpointSubsystem(double xPodOffset, double yPodOffset, DistanceUnit distanceUnit) {
+    public PinpointSubsystem(
+            double xPodOffset,
+            double yPodOffset,
+            DistanceUnit distanceUnit,
+            GoBildaPinpointFRCDriver.GoBildaOdometryPods odometryPod,
+            GoBildaPinpointFRCDriver.EncoderDirection xPodDirection,
+            GoBildaPinpointFRCDriver.EncoderDirection yPodDirection) {
         pinpoint=new GoBildaPinpointFRCDriver();
-        pinpoint.setOffsets(xPodOffset, yPodOffset, distanceUnit);
-        pinpoint.setEncoderResolution(GoBildaPinpointFRCDriver.GoBildaOdometryPods.goBILDA_4_BAR_POD);
+        this.xPodOffset = xPodOffset;
+        this.yPodOffset = yPodOffset;
+        this.distanceUnit = distanceUnit;
+        this.odometryPod = odometryPod;
+        this.xPodDirection = xPodDirection;
+        this.yPodDirection = yPodDirection;
         pinpoint.setBulkReadScope(
             pinpoint.DEVICE_STATUS,
             pinpoint.LOOP_TIME,
@@ -39,14 +55,18 @@ public class PinpointSubsystem extends SubsystemBase {
     }
 
     int wait=20;
-
+    int throttle=20;
+    
     @Override
     public void periodic() {
-        if(wait > 0) {
-            wait--;
-            return;
-        }
         pinpoint.update();
+        if(pinpoint.getDeviceStatus() != GoBildaPinpointFRCDriver.DeviceStatus.READY) return;
+        if (!configurationSent) {
+            pinpoint.setOffsets(xPodOffset, yPodOffset, distanceUnit);
+            pinpoint.setEncoderDirections(xPodDirection, yPodDirection);
+            pinpoint.setEncoderResolution(odometryPod);
+            configurationSent = true;
+        }
     }
 
     public BooleanSupplier getIsValidSupplier() {

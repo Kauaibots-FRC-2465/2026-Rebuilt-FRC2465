@@ -53,7 +53,9 @@ public class RobotContainer implements Subsystem {
     private static enum MotorData {
         RIGHT_FLYWHEEL(42, "Right Flywheel Kraken x60"),
         LEFT_FLYWHEEL(41, "Left Flywheel Kraken x60"),
-        BACK_FLYWHEEL(44, "Backspin Flywheel Kraken x60");
+        BACK_FLYWHEEL(44, "Backspin Flywheel Kraken x60"),
+        KICKER(40, "Kicker Kraken x60"),
+        BACKSPIN(44, "Backspin Kraken x60");
 
         final int id;
         final String name;
@@ -95,7 +97,10 @@ public class RobotContainer implements Subsystem {
     public final SparkAnglePositionSubsystem horizontalAimSubsystem;
     public final SparkFollowerSubsystem sparkFollowerSubsystem = new SparkFollowerSubsystem();
 
-    public final KrakenFlywheelSubsystem verticalAimSubsystem;
+    public final KrakenFlywheelSubsystem mainShooter;
+    public final KrakenFlywheelSubsystem kicker;
+    public final KrakenFlywheelSubsystem backspin;
+
     public final KrakenFollowerSubsystem flywheelFollowerSubsystem = new KrakenFollowerSubsystem("Default Name");
     // CTRE CAN MAP
     // 11 Encoder for Front Left Swerve
@@ -136,7 +141,13 @@ public class RobotContainer implements Subsystem {
         poseEstimatorConfiguration.odoLongitudinalDeviationPerDistance =
         poseEstimatorConfiguration.odoLongitudinalDeviationPerRadian = 0.01;
 
-        PinpointSubsystem pinpointSubsystem = new PinpointSubsystem(6.0625, -2.5, Inch);
+        PinpointSubsystem pinpointSubsystem = new PinpointSubsystem(
+            -6.0625 /*y of x-forward pod*/,
+            -2.5 /*x of y- strafe pod*/,
+            Inch,
+            frc.robot.subsystems.GoBildaPinpointFRCDriver.GoBildaOdometryPods.goBILDA_4_BAR_POD,
+            frc.robot.subsystems.GoBildaPinpointFRCDriver.EncoderDirection.FORWARD,
+            frc.robot.subsystems.GoBildaPinpointFRCDriver.EncoderDirection.REVERSED);
         poseEstimatorConfiguration.odometryPose = pinpointSubsystem.getPose2dSupplier();
         poseEstimatorConfiguration.odometryTimestamp = pinpointSubsystem.getTimestampSupplier();
         poseEstimatorConfiguration.odometryValid = pinpointSubsystem.getIsValidSupplier();
@@ -182,20 +193,43 @@ public class RobotContainer implements Subsystem {
             IdleMode.kBrake,
             false);
 
-        verticalAimSubsystem = new KrakenFlywheelSubsystem(
+        mainShooter = new KrakenFlywheelSubsystem(
           MotorData.RIGHT_FLYWHEEL.id,   // | Motor ID
           "Default Name",                // | CANivore bus name
           MotorData.RIGHT_FLYWHEEL.name, // | Motor Name
           4 * INCHES,                    // | Wheel size
           16f/24f,                       // | Gear ratio
-          2.2,                        // | kS
-          0.01,                       // | kV 
-          6,                          // | kP
+          2.3,                        // | kS
+          0.14,                       // | kV 
+          2,                          // | kP
+          40                 // | Peak current
+        );
+
+        kicker = new KrakenFlywheelSubsystem(
+          MotorData.KICKER.id,   // | Motor ID
+          "Default Name",                // | CANivore bus name
+          MotorData.KICKER.name, // | Motor Name
+          3 * INCHES,                    // | Wheel size
+          16f/24f,                       // | Gear ratio
+          2.7,                        // | kS
+          0.0095,                       // | kV 
+          2,                          // | kP
           40                 // | Peak current
         );
         
-        flywheelFollowerSubsystem.addFollower(MotorData.LEFT_FLYWHEEL.id, MotorData.LEFT_FLYWHEEL.name, MotorData.RIGHT_FLYWHEEL.id, 40, MotorAlignmentValue.Opposed, NeutralModeValue.Brake);
-        flywheelFollowerSubsystem.addFollower(MotorData.BACK_FLYWHEEL.id, MotorData.BACK_FLYWHEEL.name, MotorData.RIGHT_FLYWHEEL.id, 40, MotorAlignmentValue.Opposed, NeutralModeValue.Brake);
+        backspin = new KrakenFlywheelSubsystem(
+          MotorData.BACKSPIN.id,   // | Motor ID
+          "Default Name",                // | CANivore bus name
+          MotorData.BACKSPIN.name, // | Motor Name
+          2 * INCHES,                    // | Wheel size
+          16f/24f,                       // | Gear ratio
+          2.3,                        // | kS
+          0.013,                       // | kV 
+          2,                          // | kP
+          40                 // | Peak current
+        );
+
+        flywheelFollowerSubsystem.addFollower(MotorData.LEFT_FLYWHEEL.id, MotorData.LEFT_FLYWHEEL.name, MotorData.RIGHT_FLYWHEEL.id, 40, MotorAlignmentValue.Opposed, NeutralModeValue.Coast);
 
         configureBindings();
 
@@ -217,7 +251,9 @@ public class RobotContainer implements Subsystem {
             )
         );
 
-        verticalAimSubsystem.setDefaultCommand(verticalAimSubsystem.cmdSetRPSFac(driversController::getRightTriggerAxis, 10d));
+        mainShooter.setDefaultCommand(mainShooter.cmdSetRPSFac(driversController::getRightTriggerAxis, 712.0));
+        kicker.setDefaultCommand(kicker.cmdSetRPSFac(driversController::getRightTriggerAxis, 712.0));
+        backspin.setDefaultCommand(backspin.cmdSetRPSFac(driversController::getRightTriggerAxis, 712.0));
 
         // Idle while the robot is disabled. This ensures the configured
         // neutral mode is applied to the drive motors while disabled.

@@ -2,6 +2,7 @@ package frc.robot.subsystems;
 
 import java.util.function.DoubleSupplier;
 
+import com.ctre.phoenix6.BaseStatusSignal;
 import com.ctre.phoenix6.StatusCode;
 import com.ctre.phoenix6.configs.TalonFXConfiguration;
 import com.ctre.phoenix6.controls.NeutralOut;
@@ -155,12 +156,12 @@ public class KrakenFlywheelSubsystem extends SubsystemBase {
             return false;
         }
         // Optimize CAN bus utilization — only update these signals at the given frequency
-        /*BaseStatusSignal.setUpdateFrequencyForAll(
-                100,
-                kraken.getVelocity()
-        );*/
+        BaseStatusSignal.setUpdateFrequencyForAll(
+                500,
+                kraken.getTorqueCurrent()
+        );
         // Reduce all other signals to 6hz
-        kraken.optimizeBusUtilization();
+        //kraken.optimizeBusUtilization();
         configured = true;
         desiredRPS = Double.NaN;
         cyclesBeforeNextConfigAttempt = 0;
@@ -224,6 +225,10 @@ public class KrakenFlywheelSubsystem extends SubsystemBase {
      */
     public Command cmdSetIPS(DoubleSupplier ips) {
         return cmdSetRPS(() -> ips.getAsDouble() / Math.PI / flywheelDiameterInches);
+    }
+
+    public Command cmdSetIPSFactor(DoubleSupplier ips, Double factor) {
+        return cmdSetRPS(() -> ips.getAsDouble() / Math.PI / flywheelDiameterInches * factor);
     }
 
     private static boolean isValidCanID(int canID) {
