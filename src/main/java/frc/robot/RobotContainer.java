@@ -17,6 +17,7 @@ import com.ctre.phoenix6.signals.NeutralModeValue;
 import com.ctre.phoenix6.swerve.SwerveRequest;
 
 import edu.wpi.first.math.geometry.Rotation2d;
+import edu.wpi.first.units.measure.Angle;
 import edu.wpi.first.wpilibj2.command.Command;
 import edu.wpi.first.wpilibj2.command.CommandScheduler;
 import edu.wpi.first.wpilibj2.command.Commands;
@@ -55,7 +56,9 @@ public class RobotContainer implements Subsystem {
         LEFT_FLYWHEEL(41, "Left Flywheel Kraken x60"),
         BACK_FLYWHEEL(44, "Backspin Flywheel Kraken x60"),
         KICKER(40, "Kicker Kraken x60"),
-        BACKSPIN(44, "Backspin Kraken x60");
+        BACKSPIN(44, "Backspin Kraken x60"),
+        INTAKEDRIVE(53, "Intake Drive Kraken x60"),
+        HOOD(3, "Hood Neo 550");
 
         final int id;
         final String name;
@@ -97,9 +100,13 @@ public class RobotContainer implements Subsystem {
     public final SparkAnglePositionSubsystem horizontalAimSubsystem;
     public final SparkFollowerSubsystem sparkFollowerSubsystem = new SparkFollowerSubsystem();
 
+    public final SparkAnglePositionSubsystem hood;
+
     public final KrakenFlywheelSubsystem mainShooter;
     public final KrakenFlywheelSubsystem kicker;
     public final KrakenFlywheelSubsystem backspin;
+    public final KrakenFlywheelSubsystem intakedrive;
+
 
     public final KrakenFollowerSubsystem flywheelFollowerSubsystem = new KrakenFollowerSubsystem("Default Name");
     // CTRE CAN MAP
@@ -193,6 +200,21 @@ public class RobotContainer implements Subsystem {
             IdleMode.kBrake,
             false);
 
+        hood = new SparkAnglePositionSubsystem(MotorData.HOOD.id,
+            MotorData.HOOD.name,
+            150.0/10.0*22.0/32.0*5.0*5.0,
+            5.0*5.0,
+            0.06,
+            0.0,
+            10,
+            40,
+            12.0,
+            Degrees.of(0.0),
+            Degrees.of(48.7409948542),
+            true,
+            false);
+
+
         mainShooter = new KrakenFlywheelSubsystem(
           MotorData.RIGHT_FLYWHEEL.id,   // | Motor ID
           "Default Name",                // | CANivore bus name
@@ -229,6 +251,18 @@ public class RobotContainer implements Subsystem {
           40                 // | Peak current
         );
 
+        intakedrive = new KrakenFlywheelSubsystem(
+          MotorData.INTAKEDRIVE.id,   // | Motor ID
+          "Default Name",                // | CANivore bus name
+          MotorData.INTAKEDRIVE.name, // | Motor Name
+          2.5 * INCHES,                    // | Wheel size
+          34f/44f,                       // | Gear ratio
+          2.3,                        // | kS
+          0.013,                       // | kV 
+          2,                          // | kP
+          40                 // | Peak current
+        );
+
         flywheelFollowerSubsystem.addFollower(MotorData.LEFT_FLYWHEEL.id, MotorData.LEFT_FLYWHEEL.name, MotorData.RIGHT_FLYWHEEL.id, 40, MotorAlignmentValue.Opposed, NeutralModeValue.Coast);
 
         configureBindings();
@@ -251,10 +285,14 @@ public class RobotContainer implements Subsystem {
             )
         );
 
-        mainShooter.setDefaultCommand(mainShooter.cmdSetRPSFac(driversController::getRightTriggerAxis, 712.0));
-        kicker.setDefaultCommand(kicker.cmdSetRPSFac(driversController::getRightTriggerAxis, 712.0));
-        backspin.setDefaultCommand(backspin.cmdSetRPSFac(driversController::getRightTriggerAxis, 712.0));
+        mainShooter.setDefaultCommand(mainShooter.cmdSetIPSFactor(driversController::getRightTriggerAxis, 712.0));
+        kicker.setDefaultCommand(kicker.cmdSetIPSFactor(driversController::getRightTriggerAxis, 712.0));
+        backspin.setDefaultCommand(backspin.cmdSetIPSFactor(driversController::getRightTriggerAxis, 712.0));
 
+        intakedrive.setDefaultCommand(intakedrive.cmdSetIPSFactor(engineersController::getLeftTriggerAxis, 600.0));
+
+
+        hood.setDefaultCommand(hood.cmdSetScaledAngle(engineersController::getRightTriggerAxis));
         // Idle while the robot is disabled. This ensures the configured
         // neutral mode is applied to the drive motors while disabled.
         final var idle = new SwerveRequest.Idle();
@@ -292,7 +330,8 @@ public class RobotContainer implements Subsystem {
        //// Reset the field-centric heading on left bumper press.
         driversController.leftBumper().onTrue(drivetrain.runOnce(drivetrain::seedFieldCentric));
 
-        horizontalAimSubsystem.setDefaultCommand(horizontalAimSubsystem.cmdSetScaledAngle(()->engineersController.getRightX()));
+        horizontalAimSubsystem.setDefaultCommand(
+            horizontalAimSubsystem.cmdSetScaledAngle(() -> (engineersController.getRightX() + 1.0) / 2.0));
 
         drivetrain.registerTelemetry(logger::telemeterize);
     }

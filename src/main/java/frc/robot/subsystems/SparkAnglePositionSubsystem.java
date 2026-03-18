@@ -294,21 +294,20 @@ public class SparkAnglePositionSubsystem extends SubsystemBase {
     }
 
     /**
-     * Commands mechanism angle from a scaled angle input in the range [-1, +1].
+     * Commands mechanism angle from a scaled angle input in the range [0, 1].
      *
      * <p>The scaled input is linearly mapped so:
-     * -1.0 maps to minimum configured angle and +1.0 maps to maximum configured angle.
-     * Values outside [-1, +1] are clipped before mapping.
+     * 0.0 maps to minimum configured angle and 1.0 maps to maximum configured angle.
+     * Values outside [0, 1] are clipped before mapping.
      *
      * <p>This method forwards to {@link #cmdSetAngle(Supplier)}.
      *
-     * @param scaledAngle supplier for desired scaled angle in [-1, +1].
+     * @param scaledAngle supplier for desired scaled angle in [0, 1].
      * @return command that holds the desired scaled angle.
      */
     public Command cmdSetScaledAngle(DoubleSupplier scaledAngle) {
         return cmdSetAngle(() -> {
-            double clipped = Math.max(-1.0, Math.min(1.0, scaledAngle.getAsDouble()));
-            double normalized = (clipped + 1.0) / 2.0;
+            double normalized = Math.max(0.0, Math.min(1.0, scaledAngle.getAsDouble()));
             double angleRotations = minimumAngleRotations
                     + normalized * (maximumAngleRotations - minimumAngleRotations);
             return Rotations.of(angleRotations);
