@@ -106,7 +106,6 @@ public class KrakenFlywheelSubsystem extends SubsystemBase {
 
         kraken=new TalonFX(canID, canBusName);
         cfg.MotorOutput.NeutralMode = NeutralModeValue.Coast;
-        cfg.Feedback.SensorToMechanismRatio = this.gearRatio;
         // Slot 0 — VelocityTorqueCurrentFOC gains
         // kS: static friction feedforward (amps)
         // kV: velocity feedforward (amps per mechanism RPS)
@@ -196,10 +195,10 @@ public class KrakenFlywheelSubsystem extends SubsystemBase {
 
             @Override
             public void execute() {
-                double newDesiredRPS = desiredRPSSupplier.getAsDouble(); 
+                double newDesiredRPS = desiredRPSSupplier.getAsDouble();
                 if(Double.isNaN(desiredRPS) || Math.abs(desiredRPS-newDesiredRPS)>.001) { // Only change speeds if > .001 RPS change is detected
                     desiredRPS=newDesiredRPS;
-                    kraken.setControl(velocityRequest.withVelocity(desiredRPS));
+                    kraken.setControl(velocityRequest.withVelocity(desiredRPS * gearRatio));
                 }
             }
         };
