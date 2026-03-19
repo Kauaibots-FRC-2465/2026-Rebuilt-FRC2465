@@ -39,10 +39,10 @@ import frc.robot.utility.ThrottlePrint;
  * <p>Non-reset SparkMax warnings are reported to Driver Station for operator
  * awareness but do not trigger automatic protective action in this subsystem.
  *
- * <p>If the relative encoder is initialized to the wrong absolute wrap (for
- * example after manual setup or controller reset), use
- * {@link #cmdRecenterForward()} or {@link #cmdRecenterReverse()} to shift the
- * selected absolute wrap by exactly one absolute-encoder rotation.
+     * <p>If the relative encoder is initialized incorrectly (for example after
+     * manual setup or controller reset), use {@link #cmdRecenterForward()} or
+     * {@link #cmdRecenterReverse()} to re-synchronize the relative encoder
+     * directly from the current absolute encoder reading.
  *
  * <p>Use {@link SparkFollowerSubsystem} to add follower motors.
  */
@@ -315,19 +315,17 @@ public class SparkAnglePositionSubsystem extends SubsystemBase {
     }
 
     /**
-     * Re-centers relative encoder position using the next forward absolute wrap.
+     * Re-centers relative encoder position directly from the current absolute encoder reading.
      *
-     * <p>This command compares the current relative and absolute positions,
-     * estimates the nearest whole-number absolute wrap offset, then shifts that
-     * offset forward by +1 absolute rotation and re-initializes the relative
-     * encoder from the resulting absolute position.
+     * <p>This command treats the absolute encoder as authoritative and
+     * re-initializes the relative encoder from the current absolute position.
      * If the computed target is outside configured mechanism limits, no update
      * is applied and an error is reported.
      *
-     * @return one-shot command that performs forward recentering.
+     * @return one-shot command that performs recentering.
      */
     public Command cmdRecenterForward() {
-        return createRecenterCommand(+1, "forward");
+        return createRecenterCommand("forward");
     }
 
     /**
@@ -340,19 +338,17 @@ public class SparkAnglePositionSubsystem extends SubsystemBase {
     }
 
     /**
-     * Re-centers relative encoder position using the next reverse absolute wrap.
+     * Re-centers relative encoder position directly from the current absolute encoder reading.
      *
-     * <p>This command compares the current relative and absolute positions,
-     * estimates the nearest whole-number absolute wrap offset, then shifts that
-     * offset backward by -1 absolute rotation and re-initializes the relative
-     * encoder from the resulting absolute position.
+     * <p>This command treats the absolute encoder as authoritative and
+     * re-initializes the relative encoder from the current absolute position.
      * If the computed target is outside configured mechanism limits, no update
      * is applied and an error is reported.
      *
-     * @return one-shot command that performs reverse recentering.
+     * @return one-shot command that performs recentering.
      */
     public Command cmdRecenterReverse() {
-        return createRecenterCommand(-1, "reverse");
+        return createRecenterCommand("reverse");
     }
 
     /**
@@ -413,13 +409,13 @@ public class SparkAnglePositionSubsystem extends SubsystemBase {
         return true;
     }
 
-    private Command createRecenterCommand(int direction, String directionLabel) {
+    private Command createRecenterCommand(String directionLabel) {
         return new OverrideCommand(this) {
             private boolean finished;
 
             @Override
             public void initialize() {
-                recenterByAbsoluteWrap(direction, directionLabel);
+                recenterFromAbsolute(directionLabel);
                 finished = true;
             }
 
@@ -430,27 +426,19 @@ public class SparkAnglePositionSubsystem extends SubsystemBase {
         };
     }
 
-    private void recenterByAbsoluteWrap(int direction, String directionLabel) {
+    private void recenterFromAbsolute(String directionLabel) {
         double absoluteEncoderRotations = absoluteEncoder.getPosition();
-        double currentMechanismRotations = encoder.getPosition();
-
-        if (!Double.isFinite(absoluteEncoderRotations) || !Double.isFinite(currentMechanismRotations)) {
+        if (!Double.isFinite(absoluteEncoderRotations)) {
             DriverStation.reportError(
                     "[" + motorName + " | CAN " + canID
                             + "] Unable to recenter (" + directionLabel
-                            + "): non-finite encoder reading(s). absolute="
-                            + absoluteEncoderRotations + ", relative=" + currentMechanismRotations,
+                            + "): non-finite absolute encoder reading: "
+                            + absoluteEncoderRotations,
                     false);
             return;
         }
 
-        double currentAbsoluteEquivalent = mechanismToAbsoluteRotations(currentMechanismRotations);
-        long roundedWholeAbsoluteTurnsAway =
-                Math.round(currentAbsoluteEquivalent - absoluteEncoderRotations);
-        long adjustedWholeAbsoluteTurnsAway = roundedWholeAbsoluteTurnsAway + direction;
-
-        double targetAbsoluteRotations = absoluteEncoderRotations + adjustedWholeAbsoluteTurnsAway;
-        double targetMechanismRotations = absoluteToMechanismRotations(targetAbsoluteRotations);
+        double targetMechanismRotations = absoluteToMechanismRotations(absoluteEncoderRotations);
 
         if (targetMechanismRotations < minimumAngleRotations
                 || targetMechanismRotations > maximumAngleRotations) {
@@ -479,10 +467,6 @@ public class SparkAnglePositionSubsystem extends SubsystemBase {
 
     private double absoluteToMechanismRotations(double absoluteRotations) {
         return absoluteRotations * (absoluteEncoderGearRatio / mechanismGearRatio);
-    }
-
-    private double mechanismToAbsoluteRotations(double mechanismRotations) {
-        return mechanismRotations * (mechanismGearRatio / absoluteEncoderGearRatio);
     }
 
     private static boolean isValidCanID(int canID) {

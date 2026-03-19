@@ -225,7 +225,7 @@ public class RobotContainer implements Subsystem {
             MotorData.LEFT_INTAKE_POSITION.name,
             47.0 / 10.0 * 3.0,
             0.603027,
-            0.4, //0.5
+            0.8, //0.5
             40,
             Degrees.of(0.0),
             Degrees.of(110.0),
@@ -237,7 +237,7 @@ public class RobotContainer implements Subsystem {
             MotorData.RIGHT_INTAKE_POSITION.name,
             47.0 / 10.0 * 3.0,
             0.914551,
-            0.4, 
+            0.8,
             40,
             Degrees.of(0.0),
             Degrees.of(110.0),
@@ -318,9 +318,9 @@ public class RobotContainer implements Subsystem {
         kicker.setDefaultCommand(kicker.cmdSetIPSFactor(driversController::getRightTriggerAxis, 712.0));
         backspin.setDefaultCommand(backspin.cmdSetIPSFactor(driversController::getRightTriggerAxis, 712.0));
         leftIntakePosition.setDefaultCommand(
-            leftIntakePosition.cmdSetAngle(() -> Degrees.of(engineersController.a().getAsBoolean() ? 109.0 : 0.0)));
+            leftIntakePosition.cmdSetAngle(() -> Degrees.of(engineersController.a().getAsBoolean() ? 102.5 : 0.0)));
         rightIntakePosition.setDefaultCommand(
-            rightIntakePosition.cmdSetAngle(() -> Degrees.of(engineersController.a().getAsBoolean() ? 109.0 : 0.0)));
+            rightIntakePosition.cmdSetAngle(() -> Degrees.of(engineersController.a().getAsBoolean() ? 97 : 0.0)));
         // 113 too low
 
         intakedrive.setDefaultCommand(intakedrive.cmdSetIPSFactor(engineersController::getLeftTriggerAxis, 600.0));
@@ -364,7 +364,7 @@ public class RobotContainer implements Subsystem {
         driversController.leftBumper().onTrue(drivetrain.runOnce(drivetrain::seedFieldCentric));
 
         horizontalAimSubsystem.setDefaultCommand(
-            horizontalAimSubsystem.cmdSetScaledAngle(() -> (engineersController.getRightX() + 1.0) / 2.0));
+            horizontalAimSubsystem.cmdSetScaledAngle(() -> (engineersController.getLeftX() + 1.0) / 2.0));
 
         drivetrain.registerTelemetry(logger::telemeterize);
     }

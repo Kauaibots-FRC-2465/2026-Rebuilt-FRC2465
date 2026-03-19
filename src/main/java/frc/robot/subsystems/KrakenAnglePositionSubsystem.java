@@ -308,10 +308,7 @@ public class KrakenAnglePositionSubsystem extends SubsystemBase {
             return false;
         }
 
-        double rotorWholeRotations = Math.floor(rotorRotations);
-        if (rotorRotations - rotorWholeRotations > 0.5) {
-            rotorWholeRotations += 1.0;
-        }
+        double rotorWholeRotations = Math.round(rotorRotations);
         initialRotorWholeRotations = rotorWholeRotations;
         lastSetAngleRotations = Double.NaN;
         return true;
