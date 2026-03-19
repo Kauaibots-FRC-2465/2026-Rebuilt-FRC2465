@@ -225,8 +225,9 @@ public class RobotContainer implements Subsystem {
             MotorData.LEFT_INTAKE_POSITION.name,
             47.0 / 10.0 * 3.0,
             0.603027,
-            0.8, //0.5
+            4, //0.5
             40,
+            2.0,
             Degrees.of(0.0),
             Degrees.of(110.0),
             true);
@@ -237,8 +238,9 @@ public class RobotContainer implements Subsystem {
             MotorData.RIGHT_INTAKE_POSITION.name,
             47.0 / 10.0 * 3.0,
             0.914551,
-            0.8,
+            4,
             40,
+            2.0,
             Degrees.of(0.0),
             Degrees.of(110.0),
             false);
@@ -314,18 +316,17 @@ public class RobotContainer implements Subsystem {
             )
         );
 
-        mainShooter.setDefaultCommand(mainShooter.cmdSetIPSFactor(driversController::getRightTriggerAxis, 712.0));
-        kicker.setDefaultCommand(kicker.cmdSetIPSFactor(driversController::getRightTriggerAxis, 712.0));
-        backspin.setDefaultCommand(backspin.cmdSetIPSFactor(driversController::getRightTriggerAxis, 712.0));
+        mainShooter.setDefaultCommand(mainShooter.cmdSetIPSFactor(engineersController::getRightTriggerAxis, 2000.0));
+        kicker.setDefaultCommand(kicker.cmdSetIPSFactor(engineersController::getRightTriggerAxis, -2000.0));
+        backspin.setDefaultCommand(backspin.cmdSetIPSFactor(engineersController::getRightTriggerAxis, 2000.0));
+
         leftIntakePosition.setDefaultCommand(
-            leftIntakePosition.cmdSetAngle(() -> Degrees.of(engineersController.a().getAsBoolean() ? 102.5 : 0.0)));
+            leftIntakePosition.cmdSetAngle(() -> Degrees.of(engineersController.a().getAsBoolean() ? 102.5 : 5.0)));
         rightIntakePosition.setDefaultCommand(
-            rightIntakePosition.cmdSetAngle(() -> Degrees.of(engineersController.a().getAsBoolean() ? 97 : 0.0)));
-        // 113 too low
+            rightIntakePosition.cmdSetAngle(() -> Degrees.of(engineersController.a().getAsBoolean() ? 102.5 : 5.0))); //97?
+        intakedrive.setDefaultCommand(intakedrive.cmdSetIPSFactor(engineersController::getLeftTriggerAxis, engineersController.a().getAsBoolean() ? 125.0 : 0.0)); //600 max
 
-        intakedrive.setDefaultCommand(intakedrive.cmdSetIPSFactor(engineersController::getLeftTriggerAxis, 600.0));
-
-        hood.setDefaultCommand(hood.cmdSetScaledAngle(engineersController::getRightTriggerAxis));
+        hood.setDefaultCommand(hood.cmdSetScaledAngle(engineersController::getLeftTriggerAxis));
         // Idle while the robot is disabled. This ensures the configured
         // neutral mode is applied to the drive motors while disabled.
         final var idle = new SwerveRequest.Idle();

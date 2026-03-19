@@ -80,6 +80,7 @@ public class KrakenAnglePositionSubsystem extends SubsystemBase {
      * @param feedbackRotorOffset rotor-sensor offset applied by the TalonFX, in rotor rotations.
      * @param kP proportional gain for PositionVoltage control, in volts per rotor rotation.
      * @param peakCurrent absolute peak torque current limit in amps.
+     * @param maxPositionVoltage maximum magnitude of applied position-control voltage.
      * @param minimumAngle minimum allowed mechanism angle.
      * @param maximumAngle maximum allowed mechanism angle.
      * @param motorReversed whether the motor output should be inverted.
@@ -92,6 +93,7 @@ public class KrakenAnglePositionSubsystem extends SubsystemBase {
             double feedbackRotorOffset,
             double kP,
             double peakCurrent,
+            double maxPositionVoltage,
             Angle minimumAngle,
             Angle maximumAngle,
             boolean motorReversed) {
@@ -106,6 +108,9 @@ public class KrakenAnglePositionSubsystem extends SubsystemBase {
         }
         if (!(peakCurrent > 0.0)) {
             throw new IllegalArgumentException("ASSERTION FAILED: peakCurrent must be positive.");
+        }
+        if (!(maxPositionVoltage > 0.0) || !Double.isFinite(maxPositionVoltage)) {
+            throw new IllegalArgumentException("ASSERTION FAILED: maxPositionVoltage must be finite and positive.");
         }
         double minimumAngleRotations = minimumAngle.in(Rotations);
         double maximumAngleRotations = maximumAngle.in(Rotations);
@@ -137,6 +142,8 @@ public class KrakenAnglePositionSubsystem extends SubsystemBase {
                 : InvertedValue.CounterClockwise_Positive;
         cfg.Feedback.FeedbackRotorOffset = feedbackRotorOffset;
         cfg.Slot0.kP = kP;
+        cfg.Voltage.PeakForwardVoltage = maxPositionVoltage;
+        cfg.Voltage.PeakReverseVoltage = -maxPositionVoltage;
         cfg.TorqueCurrent.PeakForwardTorqueCurrent = peakCurrent;
         cfg.TorqueCurrent.PeakReverseTorqueCurrent = -peakCurrent;
     }
@@ -286,6 +293,18 @@ public class KrakenAnglePositionSubsystem extends SubsystemBase {
                 kraken.getPosition(),
                 kraken.getRotorPosition(),
                 kraken.getTorqueCurrent());
+
+        StatusCode refreshStatus = BaseStatusSignal.refreshAll(
+                kraken.getPosition(),
+                kraken.getRotorPosition(),
+                kraken.getTorqueCurrent());
+        if (!refreshStatus.isOK()) {
+            DriverStation.reportError(
+                    "[" + motorName + " | CAN " + canID + " | Bus " + canBusName
+                            + "] Failed to refresh TalonFX status signals after config: " + refreshStatus,
+                    false);
+            return false;
+        }
 
         if (!captureInitialRotorWholeRotations()) {
             return false;
