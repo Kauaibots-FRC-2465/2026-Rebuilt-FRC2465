@@ -28,6 +28,7 @@ import edu.wpi.first.wpilibj2.command.sysid.SysIdRoutine.Direction;
 
 import frc.robot.generated.TunerConstants;
 import frc.robot.subsystems.CommandSwerveDrivetrain;
+import frc.robot.subsystems.KrakenAnglePositionSubsystem;
 import frc.robot.subsystems.KrakenFlywheelSubsystem;
 import frc.robot.subsystems.KrakenFollowerSubsystem;
 import frc.robot.subsystems.LimelightSubsystem;
@@ -57,6 +58,8 @@ public class RobotContainer implements Subsystem {
         BACK_FLYWHEEL(44, "Backspin Flywheel Kraken x60"),
         KICKER(40, "Kicker Kraken x60"),
         BACKSPIN(44, "Backspin Kraken x60"),
+        LEFT_INTAKE_POSITION(51, "Left Intake Position Kraken x60"),
+        RIGHT_INTAKE_POSITION(52, "Right Intake Position Kraken x60"),
         INTAKEDRIVE(53, "Intake Drive Kraken x60"),
         HOOD(3, "Hood Neo 550");
 
@@ -101,6 +104,8 @@ public class RobotContainer implements Subsystem {
     public final SparkFollowerSubsystem sparkFollowerSubsystem = new SparkFollowerSubsystem();
 
     public final SparkAnglePositionSubsystem hood;
+    public final KrakenAnglePositionSubsystem leftIntakePosition;
+    public final KrakenAnglePositionSubsystem rightIntakePosition;
 
     public final KrakenFlywheelSubsystem mainShooter;
     public final KrakenFlywheelSubsystem kicker;
@@ -214,6 +219,30 @@ public class RobotContainer implements Subsystem {
             true,
             false);
 
+        leftIntakePosition = new KrakenAnglePositionSubsystem(
+            MotorData.LEFT_INTAKE_POSITION.id,
+            "Default Name",
+            MotorData.LEFT_INTAKE_POSITION.name,
+            47.0 / 10.0 * 3.0,
+            0.603027,
+            0.4, //0.5
+            40,
+            Degrees.of(0.0),
+            Degrees.of(110.0),
+            true);
+
+        rightIntakePosition = new KrakenAnglePositionSubsystem(
+            MotorData.RIGHT_INTAKE_POSITION.id,
+            "Default Name",
+            MotorData.RIGHT_INTAKE_POSITION.name,
+            47.0 / 10.0 * 3.0,
+            0.914551,
+            0.4, 
+            40,
+            Degrees.of(0.0),
+            Degrees.of(110.0),
+            false);
+
 
         mainShooter = new KrakenFlywheelSubsystem(
           MotorData.RIGHT_FLYWHEEL.id,   // | Motor ID
@@ -256,13 +285,13 @@ public class RobotContainer implements Subsystem {
           "Default Name",                // | CANivore bus name
           MotorData.INTAKEDRIVE.name, // | Motor Name
           2.5 * INCHES,                    // | Wheel size
-          34f/44f,                       // | Gear ratio
+          47.0 / 10.0 * 34.0 / 44.0,     // | Gear ratio
           2.3,                        // | kS
           0.013,                       // | kV 
           2,                          // | kP
           40                 // | Peak current
         );
-
+  
         flywheelFollowerSubsystem.addFollower(MotorData.LEFT_FLYWHEEL.id, MotorData.LEFT_FLYWHEEL.name, MotorData.RIGHT_FLYWHEEL.id, 40, MotorAlignmentValue.Opposed, NeutralModeValue.Coast);
 
         configureBindings();
@@ -288,9 +317,13 @@ public class RobotContainer implements Subsystem {
         mainShooter.setDefaultCommand(mainShooter.cmdSetIPSFactor(driversController::getRightTriggerAxis, 712.0));
         kicker.setDefaultCommand(kicker.cmdSetIPSFactor(driversController::getRightTriggerAxis, 712.0));
         backspin.setDefaultCommand(backspin.cmdSetIPSFactor(driversController::getRightTriggerAxis, 712.0));
+        leftIntakePosition.setDefaultCommand(
+            leftIntakePosition.cmdSetAngle(() -> Degrees.of(engineersController.a().getAsBoolean() ? 109.0 : 0.0)));
+        rightIntakePosition.setDefaultCommand(
+            rightIntakePosition.cmdSetAngle(() -> Degrees.of(engineersController.a().getAsBoolean() ? 109.0 : 0.0)));
+        // 113 too low
 
         intakedrive.setDefaultCommand(intakedrive.cmdSetIPSFactor(engineersController::getLeftTriggerAxis, 600.0));
-
 
         hood.setDefaultCommand(hood.cmdSetScaledAngle(engineersController::getRightTriggerAxis));
         // Idle while the robot is disabled. This ensures the configured
