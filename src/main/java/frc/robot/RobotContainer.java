@@ -300,8 +300,6 @@ public class RobotContainer implements Subsystem {
 
     }
 
-
-
     private void configureBindings() {
         
         // Note that X is defined as forward according to WPILib convention,
@@ -316,15 +314,15 @@ public class RobotContainer implements Subsystem {
             )
         );
 
-        mainShooter.setDefaultCommand(mainShooter.cmdSetIPSFactor(engineersController::getRightTriggerAxis, 2000.0));
-        kicker.setDefaultCommand(kicker.cmdSetIPSFactor(engineersController::getRightTriggerAxis, -2000.0));
-        backspin.setDefaultCommand(backspin.cmdSetIPSFactor(engineersController::getRightTriggerAxis, 2000.0));
+        mainShooter.setDefaultCommand(mainShooter.cmdSetIPSFactor(this::getShooterPower, 2000.0));
+        kicker.setDefaultCommand(kicker.cmdSetIPSFactor(this::getShooterPower, -2000.0));
+        backspin.setDefaultCommand(backspin.cmdSetIPSFactor(this::getShooterPower, 2000.0));
 
         leftIntakePosition.setDefaultCommand(
             leftIntakePosition.cmdSetAngle(() -> Degrees.of(engineersController.a().getAsBoolean() ? 102.5 : 5.0)));
         rightIntakePosition.setDefaultCommand(
             rightIntakePosition.cmdSetAngle(() -> Degrees.of(engineersController.a().getAsBoolean() ? 102.5 : 5.0))); //97?
-        intakedrive.setDefaultCommand(intakedrive.cmdSetIPSFactor(engineersController::getLeftTriggerAxis, engineersController.a().getAsBoolean() ? 125.0 : 0.0)); //600 max
+        intakedrive.setDefaultCommand(intakedrive.cmdSetIPS(()->engineersController.a().getAsBoolean() ? 125.0 : 0.0)); //600 max
 
         hood.setDefaultCommand(hood.cmdSetScaledAngle(engineersController::getLeftTriggerAxis));
         // Idle while the robot is disabled. This ensures the configured
@@ -391,5 +389,11 @@ public class RobotContainer implements Subsystem {
 
     private void schedule(Command command) {
         CommandScheduler.getInstance().schedule(command);
+    }
+
+    private double getShooterPower() {
+        final double minPower = 0.25;
+        double shooterPower = engineersController.getRightTriggerAxis();
+        return (shooterPower < 0.005) ? 0.0 : (shooterPower + minPower) / (1.0 + minPower);
     }
 }
