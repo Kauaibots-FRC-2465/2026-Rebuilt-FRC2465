@@ -15,9 +15,18 @@ import com.ctre.phoenix6.signals.NeutralModeValue;
 //import com.revrobotics.spark.SparkLowLevel.MotorType;
 //import com.revrobotics.spark.SparkMax;
 import com.ctre.phoenix6.swerve.SwerveRequest;
+import com.pathplanner.lib.auto.AutoBuilder;
+import com.pathplanner.lib.commands.PathPlannerAuto;
+import com.pathplanner.lib.config.PIDConstants;
+import com.pathplanner.lib.config.RobotConfig;
+import com.pathplanner.lib.controllers.PPHolonomicDriveController;
+import com.pathplanner.lib.util.DriveFeedforwards;
 
+import edu.wpi.first.math.geometry.Pose2d;
 import edu.wpi.first.math.geometry.Rotation2d;
+import edu.wpi.first.math.kinematics.ChassisSpeeds;
 import edu.wpi.first.units.measure.Angle;
+import edu.wpi.first.wpilibj.DriverStation;
 import edu.wpi.first.wpilibj2.command.Command;
 import edu.wpi.first.wpilibj2.command.CommandScheduler;
 import edu.wpi.first.wpilibj2.command.Commands;
@@ -142,7 +151,7 @@ public class RobotContainer implements Subsystem {
     // 3  Neo 550 of Hood Angle
 
     public RobotContainer() {
-        poseEstimatorConfiguration.initialThetaDeviation = 10.0/180.8*3.14159; 
+        poseEstimatorConfiguration.initialThetaDeviation = Math.toRadians(10.0); 
         poseEstimatorConfiguration.initialXDeviation = 1;
         poseEstimatorConfiguration.initialYDeviation = 1;
 
@@ -296,6 +305,39 @@ public class RobotContainer implements Subsystem {
   
         flywheelFollowerSubsystem.addFollower(MotorData.LEFT_FLYWHEEL.id, MotorData.LEFT_FLYWHEEL.name, MotorData.RIGHT_FLYWHEEL.id, 40, MotorAlignmentValue.Opposed, NeutralModeValue.Coast);
 
+        RobotConfig config = null;
+        try{
+        config = RobotConfig.fromGUISettings();
+        } catch (Exception e) {
+        // Handle exception as needed
+        e.printStackTrace();
+        }
+
+        AutoBuilder.configure(
+            poseEstimatorSubsystem.getFusedPoseSupplier(), // Robot pose supplier
+            (Pose2d $) -> {}, // Method to reset odometry (will be called if your auto has a starting pose)
+            () -> {return drivetrain.getState().Speeds;}, // ChassisSpeeds supplier. MUST BE ROBOT RELATIVE
+            (ChassisSpeeds chassisSpeeds, DriveFeedforwards feedforwards) -> drivetrain.applyRequest(() -> new SwerveRequest.FieldCentric().withVelocityX(chassisSpeeds.vxMetersPerSecond).withVelocityY(chassisSpeeds.vyMetersPerSecond)), // Method that will drive the robot given ROBOT RELATIVE ChassisSpeeds. Also optionally outputs individual module feedforwards
+            new PPHolonomicDriveController( // PPHolonomicController is the built in path following controller for holonomic drive trains
+                    new PIDConstants(5.0, 0.0, 0.0), // Translation PID constants
+                    new PIDConstants(5.0, 0.0, 0.0) // Rotation PID constants
+            ),
+            config, // The robot configuration
+            () -> {
+              // Boolean supplier that controls when the path will be mirrored for the red alliance
+              // This will flip the path being followed to the red side of the field.
+              // THE ORIGIN WILL REMAIN ON THE BLUE SIDE
+
+              var alliance = DriverStation.getAlliance();
+              if (alliance.isPresent()) {
+                return alliance.get() == DriverStation.Alliance.Red;
+              }
+              return false;
+            },
+            this // Reference to this subsystem to set requirements
+    );
+
+
         configureBindings();
 
     }
@@ -347,19 +389,7 @@ public class RobotContainer implements Subsystem {
         driversController.start().and(driversController.y()).whileTrue(drivetrain.sysIdQuasistatic(Direction.kForward));
         driversController.start().and(driversController.x()).whileTrue(drivetrain.sysIdQuasistatic(Direction.kReverse));
 
-       //joystick.x().whileTrue(
-       //    Commands.startEnd(
-       //        () -> {
-       //            System.out.println("Flywheel start");
-       //            flywheel.set(-1);
-       //        }, // Run at 40% power
-       //        () -> {
-       //            System.out.println("Flywheel stop");
-       //            flywheel.set(0);
-       //        }
-       //    )
-       //);
-       //// Reset the field-centric heading on left bumper press.
+       //*  Reset the field-centric heading on left bumper press.
         driversController.leftBumper().onTrue(drivetrain.runOnce(drivetrain::seedFieldCentric));
 
         horizontalAimSubsystem.setDefaultCommand(
@@ -369,22 +399,7 @@ public class RobotContainer implements Subsystem {
     }
 
     public Command getAutonomousCommand() {
-        // Simple drive forward auton
-        final var idle = new SwerveRequest.Idle();
-        return Commands.sequence(
-            // Reset our field centric heading to match the robot
-            // facing away from our alliance station wall (0 deg).
-            drivetrain.runOnce(() -> drivetrain.seedFieldCentric(Rotation2d.kZero)),
-            // Then slowly drive forward (away from us) for 5 seconds.
-            drivetrain.applyRequest(() ->
-                drive.withVelocityX(0.5)
-                    .withVelocityY(0)
-                    .withRotationalRate(0)
-            )
-            .withTimeout(5.0),
-            // Finally idle for the rest of auton
-            drivetrain.applyRequest(() -> idle)
-        );
+        return new PathPlannerAuto("Plow");
     }
 
     private void schedule(Command command) {
