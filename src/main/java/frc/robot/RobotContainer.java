@@ -16,6 +16,7 @@ import com.ctre.phoenix6.signals.NeutralModeValue;
 //import com.revrobotics.spark.SparkMax;
 import com.ctre.phoenix6.swerve.SwerveRequest;
 import com.pathplanner.lib.auto.AutoBuilder;
+import com.pathplanner.lib.auto.NamedCommands;
 import com.pathplanner.lib.commands.PathPlannerAuto;
 import com.pathplanner.lib.config.PIDConstants;
 import com.pathplanner.lib.config.RobotConfig;
@@ -30,6 +31,7 @@ import edu.wpi.first.wpilibj.DriverStation;
 import edu.wpi.first.wpilibj2.command.Command;
 import edu.wpi.first.wpilibj2.command.CommandScheduler;
 import edu.wpi.first.wpilibj2.command.Commands;
+import edu.wpi.first.wpilibj2.command.SequentialCommandGroup;
 import edu.wpi.first.wpilibj2.command.Subsystem;
 import edu.wpi.first.wpilibj2.command.button.CommandXboxController;
 import edu.wpi.first.wpilibj2.command.button.RobotModeTriggers;
@@ -214,7 +216,7 @@ public class RobotContainer implements Subsystem {
             IdleMode.kBrake,
             false);
 
-        hood = new SparkAnglePositionSubsystem(MotorData.HOOD.id,
+/*        hood = new SparkAnglePositionSubsystem(MotorData.HOOD.id,
             MotorData.HOOD.name,
             150.0/10.0*22.0/32.0*5.0*5.0,
             5.0*5.0,
@@ -225,6 +227,19 @@ public class RobotContainer implements Subsystem {
             12.0,
             Degrees.of(0.0),
             Degrees.of(48.7409948542),
+            true,
+            false);*/
+        hood = new SparkAnglePositionSubsystem(MotorData.HOOD.id,
+            MotorData.HOOD.name,
+            150.0/10.0*22.0/32.0*5.0*5.0,
+            5.0*5.0,
+            0.06,
+            0.0,
+            10,
+            40,
+            12.0,
+            Degrees.of(0.0),
+            Degrees.of(45),
             true,
             false);
 
@@ -264,7 +279,7 @@ public class RobotContainer implements Subsystem {
           2.3,                        // | kS
           0.14,                       // | kV 
           2,                          // | kP
-          40                 // | Peak current
+          30                 // | Peak current
         );
 
         kicker = new KrakenFlywheelSubsystem(
@@ -276,7 +291,7 @@ public class RobotContainer implements Subsystem {
           2.7,                        // | kS
           0.0095,                       // | kV 
           2,                          // | kP
-          40                 // | Peak current
+          30                 // | Peak current
         );
         
         backspin = new KrakenFlywheelSubsystem(
@@ -288,7 +303,7 @@ public class RobotContainer implements Subsystem {
           2.3,                        // | kS
           0.013,                       // | kV 
           2,                          // | kP
-          40                 // | Peak current
+          30                 // | Peak current
         );
 
         intakedrive = new KrakenFlywheelSubsystem(
@@ -300,7 +315,7 @@ public class RobotContainer implements Subsystem {
           2.3,                        // | kS
           0.013,                       // | kV 
           2,                          // | kP
-          40                 // | Peak current
+          20                 // | Peak current
         );
   
         flywheelFollowerSubsystem.addFollower(MotorData.LEFT_FLYWHEEL.id, MotorData.LEFT_FLYWHEEL.name, MotorData.RIGHT_FLYWHEEL.id, 40, MotorAlignmentValue.Opposed, NeutralModeValue.Coast);
@@ -356,9 +371,9 @@ public class RobotContainer implements Subsystem {
             )
         );
 
-        mainShooter.setDefaultCommand(mainShooter.cmdSetIPSFactor(this::getShooterPower, 2000.0));
-        kicker.setDefaultCommand(kicker.cmdSetIPSFactor(this::getShooterPower, -2000.0));
-        backspin.setDefaultCommand(backspin.cmdSetIPSFactor(this::getShooterPower, 2000.0));
+        mainShooter.setDefaultCommand(mainShooter.cmdSetIPSFactor(this::getShooterPower, 1500.0));
+        kicker.setDefaultCommand(kicker.cmdSetIPSFactor(this::getShooterPower, -1500.0));
+        backspin.setDefaultCommand(backspin.cmdSetIPSFactor(this::getShooterPower, 1500.0));
 
         leftIntakePosition.setDefaultCommand(
             leftIntakePosition.cmdSetAngle(() -> Degrees.of(engineersController.a().getAsBoolean() ? 102.5 : 5.0)));
@@ -399,6 +414,10 @@ public class RobotContainer implements Subsystem {
     }
 
     public Command getAutonomousCommand() {
+        //NamedCommands.registerCommand("spinIntake", new SequentialCommandGroup(mainShooter.cmdSetIPS(()->1000)));
+        //NamedCommands.registerCommand("deployIntake", exampleSubsystem.exampleCommand());
+        //NamedCommands.registerCommand("someOtherCommand", new SomeOtherCommand());
+
         return new PathPlannerAuto("Plow");
     }
 
@@ -407,7 +426,7 @@ public class RobotContainer implements Subsystem {
     }
 
     private double getShooterPower() {
-        final double minPower = 0.25;
+        final double minPower = 0.4;
         double shooterPower = engineersController.getRightTriggerAxis();
         return (shooterPower < 0.005) ? 0.0 : (shooterPower + minPower) / (1.0 + minPower);
     }
