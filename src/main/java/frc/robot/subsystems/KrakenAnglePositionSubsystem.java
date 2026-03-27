@@ -8,6 +8,7 @@ import java.util.function.Supplier;
 
 import com.ctre.phoenix6.SignalLogger;
 import com.ctre.phoenix6.BaseStatusSignal;
+import com.ctre.phoenix6.CANBus;
 import com.ctre.phoenix6.StatusCode;
 import com.ctre.phoenix6.configs.TalonFXConfiguration;
 import com.ctre.phoenix6.controls.NeutralOut;
@@ -135,7 +136,7 @@ public class KrakenAnglePositionSubsystem extends SubsystemBase {
         angleDegreesPublisher = table.getDoubleTopic("AngleDegrees").publish();
         angleRotationsPublisher = table.getDoubleTopic("AngleRotations").publish();
 
-        kraken = new TalonFX(canID, canBusName);
+        kraken = new TalonFX(canID, new CANBus(canBusName));
         cfg.MotorOutput.NeutralMode = NeutralModeValue.Brake;
         cfg.MotorOutput.Inverted = motorReversed
                 ? InvertedValue.Clockwise_Positive

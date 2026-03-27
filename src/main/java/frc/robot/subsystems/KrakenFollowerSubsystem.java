@@ -4,6 +4,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 
+import com.ctre.phoenix6.CANBus;
 import com.ctre.phoenix6.StatusCode;
 import com.ctre.phoenix6.configs.TalonFXConfiguration;
 import com.ctre.phoenix6.controls.Follower;
@@ -158,7 +159,7 @@ public class KrakenFollowerSubsystem extends SubsystemBase {
                             + "] follower CAN ID has already been added.");
         }
 
-        TalonFX followerMotor = new TalonFX(canID, canBusName);
+        TalonFX followerMotor = new TalonFX(canID, new CANBus(canBusName));
 
         FollowerEntry entry = new FollowerEntry(
                 canID,

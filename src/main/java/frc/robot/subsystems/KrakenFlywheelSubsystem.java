@@ -3,6 +3,7 @@ package frc.robot.subsystems;
 import java.util.function.DoubleSupplier;
 
 import com.ctre.phoenix6.BaseStatusSignal;
+import com.ctre.phoenix6.CANBus;
 import com.ctre.phoenix6.StatusCode;
 import com.ctre.phoenix6.configs.TalonFXConfiguration;
 import com.ctre.phoenix6.controls.NeutralOut;
@@ -104,7 +105,7 @@ public class KrakenFlywheelSubsystem extends SubsystemBase {
         this.canID = canID;
         this.canBusName = canBusName;
 
-        kraken=new TalonFX(canID, canBusName);
+        kraken = new TalonFX(canID, new CANBus(canBusName));
         cfg.MotorOutput.NeutralMode = NeutralModeValue.Coast;
         // Slot 0 — VelocityTorqueCurrentFOC gains
         // kS: static friction feedforward (amps)

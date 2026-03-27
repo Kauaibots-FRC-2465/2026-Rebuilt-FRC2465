@@ -7,6 +7,8 @@ package frc.robot;
 
 import static edu.wpi.first.units.Units.*;
 
+import java.io.File;
+
 import com.ctre.phoenix6.swerve.SwerveModule.DriveRequestType;
 import com.revrobotics.spark.SparkLowLevel.MotorType;
 import com.revrobotics.spark.config.SparkBaseConfig.IdleMode;
@@ -31,6 +33,7 @@ import edu.wpi.first.networktables.NetworkTable;
 import edu.wpi.first.networktables.NetworkTableInstance;
 import edu.wpi.first.units.measure.Angle;
 import edu.wpi.first.wpilibj.DriverStation;
+import edu.wpi.first.wpilibj.Filesystem;
 import edu.wpi.first.wpilibj2.command.Command;
 import edu.wpi.first.wpilibj2.command.CommandScheduler;
 import edu.wpi.first.wpilibj2.command.Commands;
@@ -114,8 +117,9 @@ public class RobotContainer implements Subsystem {
     public final CommandSwerveDrivetrain drivetrain = TunerConstants.createDrivetrain();
     
     public final WLEDSubsystem wled = new WLEDSubsystem();
-    private final Command loadLights = wled.loadSingletMarquee(WLEDSubsystem.PATH_1);
-    private final Command loadStatic = wled.loadSingletMarquee(WLEDSubsystem.PATH_2);
+    private final Command showLights = wled.showMarquee( Filesystem.getDeployDirectory().getAbsolutePath() + File.separator + "Sprite-0001.bmp");
+    private final Command showStatic = wled.showMarquee(Filesystem.getDeployDirectory().getAbsolutePath() + File.separator + "Sprite-0002.bmp");
+    private final Command showBamPowZang = wled.showGIF(Filesystem.getDeployDirectory().getAbsolutePath() + File.separator + "bampowzang.gif");
 
     public final PoseEstimatorSubsystem poseEstimatorSubsystem;
     public final PoseEstimatorSubsystem.Configuration poseEstimatorConfiguration = new PoseEstimatorSubsystem.Configuration();
@@ -373,7 +377,8 @@ public class RobotContainer implements Subsystem {
         
         // Note that X is defined as forward according to WPILib convention,
         // and Y is defined as to the left according to WPILib convention.
-        schedule(loadLights);
+        schedule(showLights);
+        //schedule(showBamPowZang);
         drivetrain.setDefaultCommand(
             // Drivetrain will execute this command periodically
             drivetrain.applyRequest(() ->
@@ -415,8 +420,8 @@ public class RobotContainer implements Subsystem {
             point.withModuleDirection(new Rotation2d(-driversController.getLeftY(), -driversController.getLeftX()))
         ));
 
-        driversController.x().onTrue(loadLights);
-        driversController.x().onFalse(loadStatic);
+        driversController.x().onTrue(showLights);
+        driversController.x().onFalse(showStatic);
 
         // Run SysId routines when holding back/start and X/Y.
         // Note that each routine should be run exactly once in a single log.

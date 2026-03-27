@@ -1,339 +1,511 @@
 package frc.robot.subsystems;
 
+import java.awt.AlphaComposite;
+import java.awt.Graphics2D;
+import java.awt.image.BufferedImage;
+import java.io.File;
+import java.io.IOException;
 import java.net.DatagramPacket;
 import java.net.DatagramSocket;
 import java.net.InetAddress;
 import java.net.SocketException;
 import java.net.UnknownHostException;
-import java.util.LinkedList;
-import java.util.List;
+import java.util.Iterator;
 
 import javax.imageio.ImageIO;
+import javax.imageio.ImageReader;
+import javax.imageio.metadata.IIOMetadata;
+import javax.imageio.metadata.IIOMetadataNode;
+import javax.imageio.stream.ImageInputStream;
 
+import edu.wpi.first.wpilibj.DriverStation;
 import edu.wpi.first.wpilibj.Filesystem;
 import edu.wpi.first.wpilibj2.command.Command;
 import edu.wpi.first.wpilibj2.command.CommandScheduler;
 import edu.wpi.first.wpilibj2.command.Subsystem;
-import java.awt.image.BufferedImage;
-import java.io.File;
-import java.io.IOException;
 
 public class WLEDSubsystem implements Subsystem {
-    DatagramSocket socket;
-
     private static final String IP_ADDRESS = "10.24.65.13";
-    private static final int DDP_PORT = 4048,  
-                             WIDTH = 32, 
-                             MAX_HEIGHT = 8, 
-                             HEIGHT = 16, 
-                             CHANNELS = 4;
+    private static final int DDP_PORT = 4048;
+    private static final int WIDTH = 32;
+    private static final int MAX_HEIGHT = 8;
+    private static final int HEIGHT = 16;
+    private static final int CHANNELS = 4;
 
-    private byte[][][][] aniMatrix;
-    private List<DatagramPacket> packets = new LinkedList<>();
+    private final DatagramSocket socket;
 
-    private int frame = 0;
+    private ActivePlayback activePlayback;
 
+    public static final class PreparedPlaybackPackets {
+        private final DatagramPacket[] packets;
+        private final int packetsPerFrame;
 
-    public static final String PATH_1 = Filesystem.getDeployDirectory().getAbsolutePath() + File.separator + "Sprite-0001.bmp";
-    public static final String PATH_2 = Filesystem.getDeployDirectory().getAbsolutePath() + File.separator + "Sprite-0002.bmp";
-    
+        private PreparedPlaybackPackets(DatagramPacket[] packets, int packetsPerFrame) {
+            this.packets = packets;
+            this.packetsPerFrame = packetsPerFrame;
+        }
+
+        public int getPacketCount() {
+            return packets.length;
+        }
+
+        public int getPacketsPerFrame() {
+            return packetsPerFrame;
+        }
+
+        private boolean isEmpty() {
+            return packets.length == 0 || packetsPerFrame <= 0;
+        }
+    }
+
+    private static final class ActivePlayback {
+        private final PreparedPlaybackPackets playback;
+        private int nextPacketIndex;
+
+        private ActivePlayback(PreparedPlaybackPackets playback) {
+            this.playback = playback;
+            this.nextPacketIndex = 0;
+        }
+    }
+
+    private static final class GifFrameMetadata {
+        private final int left;
+        private final int top;
+        private final int width;
+        private final int height;
+        private final String disposalMethod;
+
+        private GifFrameMetadata(int left, int top, int width, int height, String disposalMethod) {
+            this.left = left;
+            this.top = top;
+            this.width = width;
+            this.height = height;
+            this.disposalMethod = disposalMethod;
+        }
+    }
+
+    private static final class GifCompositeState {
+        private final BufferedImage canvas = new BufferedImage(WIDTH, HEIGHT, BufferedImage.TYPE_INT_ARGB);
+        private GifFrameMetadata previousFrameMetadata;
+        private BufferedImage restoreToPreviousSnapshot;
+    }
 
     public WLEDSubsystem() {
-        System.out.println("Initializing...");
         CommandScheduler.getInstance().registerSubsystem(this);
+
+        DatagramSocket createdSocket = null;
         try {
-            socket = new DatagramSocket();
+            createdSocket = new DatagramSocket();
         } catch (SocketException e) {
-            // TODO Auto-generated catch block
-            e.printStackTrace();
+            DriverStation.reportError("WLED socket initialization failed: " + e.getMessage(), false);
         }
+        socket = createdSocket;
+        activePlayback = null;
     }
-    
-    private boolean isFirstRun = true;
+
     @Override
     public void periodic() {
-        if(isFirstRun) {
-            try {
-                packets = loadMarquee(PATH_1);
-                System.out.println("Loaded image");
-            } catch (BadImageFormatException | IOException e) {
-                System.out.println("Unable to load");
-            }
-            isFirstRun = false;
+        if (socket == null || activePlayback == null || activePlayback.playback.isEmpty()) {
+            return;
         }
-        if (packets.size() > 0) {
-            frame++;
-            frame = frame % packets.size();
+
+        for (int sent = 0; sent < activePlayback.playback.getPacketsPerFrame(); sent++) {
+            DatagramPacket packet = activePlayback.playback.packets[activePlayback.nextPacketIndex];
             try {
-                this.socket.send(packets.get(frame));
+                socket.send(packet);
             } catch (IOException e) {
-                // TODO Auto-generated catch block
+                DriverStation.reportError("WLED packet send failed: " + e.getMessage(), false);
+                return;
+            }
+
+            activePlayback.nextPacketIndex++;
+            if (activePlayback.nextPacketIndex >= activePlayback.playback.packets.length) {
+                activePlayback.nextPacketIndex = 0;
             }
         }
     }
 
-    public Command loadSingletMarquee(String path) {
-        List<DatagramPacket> datagramPackets = new LinkedList<>();
+    public PreparedPlaybackPackets prepareMarquee(String path) {
         try {
-            datagramPackets = loadMarquee(path);
+            BufferedImage image = readImage(path);
+            byte[][][] imageData = getImageData(image);
+            int frameCount = image.getWidth();
+            return buildPlaybackPackets(frameCount, frameIndex -> extractWrappedFrame(imageData, frameIndex));
         } catch (BadImageFormatException | IOException e) {
-            // TODO Auto-generated catch block
-            e.printStackTrace();
+            return reportPreparationFailure("marquee", path, e);
         }
-        final List<DatagramPacket> finalPackets = datagramPackets;
-        return runOnce(() -> {
-            packets = finalPackets;
-            System.out.println("Loaded singlet marquee");
-        });
     }
 
-    public Command loadSingletAnimation(String path) {
-        List<DatagramPacket> datagramPackets = new LinkedList<>();
+    public PreparedPlaybackPackets prepareHorizontalAnimationStrip(String path) {
         try {
-            datagramPackets = loadAnimation(path);
+            BufferedImage image = readImage(path);
+            int realWidth = image.getWidth();
+            if (realWidth % WIDTH != 0) {
+                throw new BadImageFormatException(
+                        "Animation width must be an integer multiple of " + WIDTH + " pixels.");
+            }
+            byte[][][] imageData = getImageData(image);
+            int frameCount = realWidth / WIDTH;
+            return buildPlaybackPackets(frameCount, frameIndex -> extractClippedFrame(imageData, frameIndex * WIDTH));
         } catch (BadImageFormatException | IOException e) {
-            // TODO Auto-generated catch block
-            e.printStackTrace();
+            return reportPreparationFailure("animation", path, e);
         }
-        final List<DatagramPacket> finalPackets = datagramPackets;
-        return runOnce(() -> {
-            packets = finalPackets;
-            System.out.println("Loaded singlet animation");
-        });
     }
 
-    public Command loadSingletImage(String path) {
-        List<DatagramPacket> datagramPackets = new LinkedList<>();
+    public PreparedPlaybackPackets prepareImage(String path) {
         try {
-            datagramPackets = loadIcon(path);
-        } catch (IOException | BadImageFormatException e) {
-            // TODO Auto-generated catch block
-            e.printStackTrace();
+            BufferedImage image = readImage(path);
+            byte[][][] imageData = getImageData(image);
+            DatagramPacket[] packets = buildPacketsForFrame(extractClippedFrame(imageData, 0));
+            return new PreparedPlaybackPackets(packets, packets.length);
+        } catch (BadImageFormatException | IOException e) {
+            return reportPreparationFailure("image", path, e);
         }
-        final List<DatagramPacket> finalPackets = datagramPackets;
-        return runOnce(() -> {
-            packets = finalPackets;
-            System.out.println("Loaded singlet image");
-        });
     }
 
-    private List<DatagramPacket> loadMarquee(String path) throws BadImageFormatException, IOException {
-        BufferedImage image = ImageIO.read(new File(path));
-        if (image == null) {
-            throw new BadImageFormatException("Error: Unsupported image format or file not found.");
-        }
-
-       
-        int realWidth = image.getWidth();
-        int width = WIDTH;
-        int height = 16;
-        byte[][][] imageData = getImageData(image);
-        /*
-        byte[][][][] tempAnim = new byte[realWidth][height][width][4];
-       
-        for (int widthOffset = 0; widthOffset < realWidth; ++widthOffset) {
-            for (int heightOffset = 0; heightOffset < height; ++heightOffset) {
-                for (int dualOffset = 0; dualOffset < width; ++dualOffset) {
-                    //System.out.println(widthOffset);
-                    //System.out.println(heightOffset);
-                    //System.out.println(dualOffset);
-                    //System.out.println(realWidth);
-                    tempAnim[widthOffset][heightOffset][dualOffset][0] = imageData[heightOffset][(widthOffset + dualOffset) % realWidth][0];
-                    tempAnim[widthOffset][heightOffset][dualOffset][1] = imageData[heightOffset][(widthOffset + dualOffset) % realWidth][1];
-                    tempAnim[widthOffset][heightOffset][dualOffset][2] = imageData[heightOffset][(widthOffset + dualOffset) % realWidth][2];
-                    tempAnim[widthOffset][heightOffset][dualOffset][3] = imageData[heightOffset][(widthOffset + dualOffset) % realWidth][3];
-                }
+    public PreparedPlaybackPackets prepareGIF(String path) {
+        File gifFile = new File(path);
+        try (ImageInputStream imageInputStream = ImageIO.createImageInputStream(gifFile)) {
+            if (imageInputStream == null) {
+                throw new BadImageFormatException("GIF file could not be opened.");
             }
-        }
 
-         */
-        aniMatrix = getAnim(realWidth, height, width, imageData, 1);
-        
-        List<DatagramPacket> thesePackets = new LinkedList<>();
-        for (byte[][][] frame: aniMatrix) {
-            thesePackets.addAll(loadMatrixData(frame));
-        }
-        return thesePackets;
-    }
-
-    private List<DatagramPacket> loadAnimation(String path) throws BadImageFormatException, IOException {
-        BufferedImage image = ImageIO.read(new File(path));
-        if (image == null) {
-            throw new BadImageFormatException("Error: Unsupported image format or file not found.");
-        }
-
-       
-        int realWidth = image.getWidth();
-        int width = WIDTH;
-        assert realWidth % width == 0: "[AT WLEDSubsystem.loadAnimation(236:13)] Not of correct width. Please load an image which is an integer multiple of the current device's width.";
-        int height = 16;
-        byte[][][] imageData = getImageData(image);
-        /*
-        byte[][][][] tempAnim = new byte[realWidth][height][width][4];
-       
-        for (int widthOffset = 0; widthOffset < realWidth; widthOffset += realWidth) {
-            for (int heightOffset = 0; heightOffset < height; ++heightOffset){
-                for (int channelOffset = 0; channelOffset < width; ++channelOffset) {
-                    tempAnim[widthOffset][heightOffset][channelOffset][0] = imageData[heightOffset][(widthOffset + channelOffset) % realWidth][0];
-                    tempAnim[widthOffset][heightOffset][channelOffset][1] = imageData[heightOffset][(widthOffset + channelOffset) % realWidth][1];
-                    tempAnim[widthOffset][heightOffset][channelOffset][2] = imageData[heightOffset][(widthOffset + channelOffset) % realWidth][2];
-                    tempAnim[widthOffset][heightOffset][channelOffset][3] = imageData[heightOffset][(widthOffset + channelOffset) % realWidth][3];
-                }
+            Iterator<ImageReader> imageReaders = ImageIO.getImageReaders(imageInputStream);
+            if (!imageReaders.hasNext()) {
+                throw new BadImageFormatException("No GIF reader is available for this file.");
             }
-        }
-            
-         */
 
-        aniMatrix = getAnim(realWidth/width, height, width, imageData, realWidth);
+            ImageReader imageReader = imageReaders.next();
+            try {
+                imageReader.setInput(imageInputStream, false, false);
+                validateGifCanvasDimensions(imageReader);
+                int frameCount = imageReader.getNumImages(true);
+                if (frameCount <= 0) {
+                    throw new BadImageFormatException("GIF contains no frames.");
+                }
 
-        List<DatagramPacket> thesePackets = new LinkedList<>();
-        for (byte[][][] frame: aniMatrix) {
-            thesePackets.addAll(loadMatrixData(frame));
+                GifCompositeState compositeState = new GifCompositeState();
+                return buildPlaybackPackets(
+                        frameCount,
+                        frameIndex -> buildCompositedGifFrame(imageReader, frameIndex, compositeState));
+            } finally {
+                imageReader.dispose();
+            }
+        } catch (BadImageFormatException | IOException e) {
+            return reportPreparationFailure("gif", path, e);
         }
-        return thesePackets;
     }
-    
-    private List<DatagramPacket> loadMatrixData(byte[][][] matrix) throws UnknownHostException {
-        int superOffset = 0;
-        List<DatagramPacket> matrixData = new LinkedList<>();
-        while (WIDTH * MAX_HEIGHT * superOffset < WIDTH * HEIGHT){
-            InetAddress address = InetAddress.getByName(IP_ADDRESS);
-            // Header: Flags (0x41), Count, Offset, etc.
-            // For a 16x16 WRGB matrix, data length is 16*16*4 = 1024 bytes
+
+    public Command showMarquee(String path) {
+        PreparedPlaybackPackets playbackPackets = prepareMarquee(path);
+        return runOnce(() -> setActivePlayback(playbackPackets));
+    }
+
+    public Command showHorizontalAnimationStrip(String path) {
+        PreparedPlaybackPackets playbackPackets = prepareHorizontalAnimationStrip(path);
+        return runOnce(() -> setActivePlayback(playbackPackets));
+    }
+
+    public Command showImage(String path) {
+        PreparedPlaybackPackets playbackPackets = prepareImage(path);
+        return runOnce(() -> setActivePlayback(playbackPackets));
+    }
+
+    public Command showGIF(String path) {
+        PreparedPlaybackPackets playbackPackets = prepareGIF(path);
+        return runOnce(() -> setActivePlayback(playbackPackets));
+    }
+
+    public void setActivePlayback(PreparedPlaybackPackets playbackPackets) {
+        if (playbackPackets == null || playbackPackets.isEmpty()) {
+            activePlayback = null;
+            return;
+        }
+
+        activePlayback = new ActivePlayback(playbackPackets);
+    }
+
+    private PreparedPlaybackPackets buildPlaybackPackets(int frameCount, FrameBuilder frameBuilder)
+            throws IOException, BadImageFormatException {
+        if (frameCount <= 0) {
+            return new PreparedPlaybackPackets(new DatagramPacket[0], 0);
+        }
+
+        DatagramPacket[] firstFramePackets = buildPacketsForFrame(frameBuilder.buildFrame(0));
+        int packetsPerFrame = firstFramePackets.length;
+        DatagramPacket[] packets = new DatagramPacket[frameCount * packetsPerFrame];
+        System.arraycopy(firstFramePackets, 0, packets, 0, packetsPerFrame);
+
+        int packetIndex = packetsPerFrame;
+        for (int frameIndex = 1; frameIndex < frameCount; frameIndex++) {
+            DatagramPacket[] framePackets = buildPacketsForFrame(frameBuilder.buildFrame(frameIndex));
+            System.arraycopy(framePackets, 0, packets, packetIndex, packetsPerFrame);
+            packetIndex += packetsPerFrame;
+        }
+
+        return new PreparedPlaybackPackets(packets, packetsPerFrame);
+    }
+
+    private DatagramPacket[] buildPacketsForFrame(byte[][][] matrix) throws UnknownHostException {
+        int packetsPerFrame = (matrix.length + MAX_HEIGHT - 1) / MAX_HEIGHT;
+        DatagramPacket[] packets = new DatagramPacket[packetsPerFrame];
+        InetAddress address = InetAddress.getByName(IP_ADDRESS);
+
+        for (int packetIndex = 0; packetIndex < packetsPerFrame; packetIndex++) {
             byte[] payload = new byte[10 + (WIDTH * MAX_HEIGHT * CHANNELS)];
-            // DDP Header payload[0] = 0x41;
             payload[0] = 0b01000001;
-            // Flags: Version 1, Push enabled
             payload[1] = 0b00000001;
-            // Sequence (optional)
             payload[2] = 0b00011011;
-            // Data Type: RGB or WRGB (Depending on WLED config)
             payload[3] = 0b00000001;
-            // Destination ID
-            // Offset (4-7) and Length (8-9) - simplified for small matrices
-            int offset = WIDTH * MAX_HEIGHT * CHANNELS * superOffset;
-            payload[4] = (byte) ((offset >> 24) & 0xFF); // High byte
-            payload[5] = (byte) ((offset >> 16) & 0xFF);        // Low byte
-            payload[6] = (byte) ((offset >> 8) & 0xFF); // High byte
-            payload[7] = (byte) ((offset >> 0) & 0xFF);        // Low byte
+
+            int offset = WIDTH * MAX_HEIGHT * CHANNELS * packetIndex;
+            payload[4] = (byte) ((offset >> 24) & 0xFF);
+            payload[5] = (byte) ((offset >> 16) & 0xFF);
+            payload[6] = (byte) ((offset >> 8) & 0xFF);
+            payload[7] = (byte) (offset & 0xFF);
+
             int dataLength = WIDTH * MAX_HEIGHT * CHANNELS;
-            payload[8] = (byte) ((dataLength >> 8) & 0xFF); // High byte
-            payload[9] = (byte) (dataLength & 0xFF);        // Low byte
+            payload[8] = (byte) ((dataLength >> 8) & 0xFF);
+            payload[9] = (byte) (dataLength & 0xFF);
+
             int bufferOffset = 9;
             for (int y = 0; y < MAX_HEIGHT; y++) {
                 for (int x = 0; x < WIDTH; x++) {
-                    // Accessing your data: matrix[y][x] = {W, R, G, B};
-                    int sourceY = y + (superOffset * MAX_HEIGHT);
-                    if (sourceY < HEIGHT && x < WIDTH) { // Safety check
-                        //System.out.println(bufferOffset + "," + sourceY + ", " + x);
-                        payload[++bufferOffset] = (byte) (matrix[sourceY][x][1]);
-                        payload[++bufferOffset] = (byte) (matrix[sourceY][x][2]);
-                        payload[++bufferOffset] = (byte) (matrix[sourceY][x][3]);
-                        payload[++bufferOffset] = (byte) (matrix[sourceY][x][0]);
+                    int sourceY = y + (packetIndex * MAX_HEIGHT);
+                    if (sourceY < matrix.length) {
+                        payload[++bufferOffset] = matrix[sourceY][x][1];
+                        payload[++bufferOffset] = matrix[sourceY][x][2];
+                        payload[++bufferOffset] = matrix[sourceY][x][3];
+                        payload[++bufferOffset] = matrix[sourceY][x][0];
                     }
                 }
             }
-            DatagramPacket packet = new DatagramPacket(payload, payload.length, address, DDP_PORT);
-            //System.out.println(packet);
-            //System.out.println(payload);
-            //System.out.println(payload.length);
-            matrixData.add(packet);
-            superOffset ++;
+
+            packets[packetIndex] = new DatagramPacket(payload, payload.length, address, DDP_PORT);
         }
-        return matrixData;
+
+        return packets;
     }
 
-    
-    private byte[][][] getImageData(BufferedImage image) {
-        int realWidth = image.getWidth();
-        System.out.println(realWidth);
-        int height = 16;
-        byte[][][] buffer = new byte[height][realWidth][4];
-
-        for (int w = 0; w < realWidth; ++w) {
-            for (int h = 0; h < height; ++h) {
-                int hexcode = image.getRGB(w % realWidth, h);
-                int red   = (hexcode >> 16) & 0xFF;
-                int green = (hexcode >> 8) & 0xFF;
-                int blue  = (hexcode & 0xFF);
-                int white = Math.min(Math.min(red, green), blue);
-        
-                red   -= white;
-                green -= white;
-                blue  -= white;
-
-                byte[] partial = {(byte) (white & 0xFF), (byte) (red & 0xFF), (byte) (green & 0xFF), (byte) (blue & 0xFF)};
-                
-                buffer[h][w] = partial;
-            }
-        }
-        return buffer;
-    }
-
-    
-    private byte[][][] getClippedImageData(BufferedImage image, int clipLength) {
-        int realWidth = image.getWidth();
-        System.out.println(realWidth);
-        int height = 16;
-        byte[][][] buffer = new byte[height][realWidth][4];
-
-        for (int w = 0; w < clipLength; ++w) {
-            for (int h = 0; h < height; ++h) {
-                int hexcode = image.getRGB(w % realWidth, h);
-                int red   = (hexcode >> 16) & 0xFF;
-                int green = (hexcode >> 8) & 0xFF;
-                int blue  = (hexcode & 0xFF);
-                int white = Math.min(Math.min(red, green), blue);
-        
-                red   -= white;
-                green -= white;
-                blue  -= white;
-
-                byte[] partial = {(byte) (white & 0xFF), (byte) (red & 0xFF), (byte) (green & 0xFF), (byte) (blue & 0xFF)};
-                
-                buffer[h][w] = partial;
-            }
-        }
-        return buffer;
-    }
-
-    
-    private List<DatagramPacket> loadIcon(String path) throws IOException, BadImageFormatException {
+    private BufferedImage readImage(String path) throws IOException, BadImageFormatException {
         BufferedImage image = ImageIO.read(new File(path));
         if (image == null) {
-            throw new BadImageFormatException("Error: Unsupported image format or file not found.");
+            throw new BadImageFormatException("Unsupported image format or file not found.");
         }
-        byte[][][] buffer = getClippedImageData(image, WIDTH);
-        return loadMatrixData(buffer);
+        if (image.getHeight() < HEIGHT) {
+            throw new BadImageFormatException("Image height must be at least " + HEIGHT + " pixels.");
+        }
+        return image;
     }
 
-    /*
-     * Calculates the animation based on imageData and stride
-     * @return A byte[][][][] of form byte[frames][height][width][channels]
-     */
-    private byte[][][][] getAnim(int frames, int height, int width, byte[][][] imageData, int stride) {
-        byte[][][][] tempAnim = new byte[frames][height][width][4];
-       
-        for (int widthOffset = 0; widthOffset < frames; widthOffset += stride) {
-            for (int heightOffset = 0; heightOffset < height; ++heightOffset){
-                for (int channelOffset = 0; channelOffset < width; ++channelOffset) {
-                    tempAnim[widthOffset][heightOffset][channelOffset][0] = imageData[heightOffset][(widthOffset + channelOffset) % frames][0];
-                    tempAnim[widthOffset][heightOffset][channelOffset][1] = imageData[heightOffset][(widthOffset + channelOffset) % frames][1];
-                    tempAnim[widthOffset][heightOffset][channelOffset][2] = imageData[heightOffset][(widthOffset + channelOffset) % frames][2];
-                    tempAnim[widthOffset][heightOffset][channelOffset][3] = imageData[heightOffset][(widthOffset + channelOffset) % frames][3];
+    private void validateGifCanvasDimensions(ImageReader imageReader) throws IOException, BadImageFormatException {
+        IIOMetadata streamMetadata = imageReader.getStreamMetadata();
+        if (streamMetadata == null) {
+            throw new BadImageFormatException("GIF stream metadata is unavailable.");
+        }
+
+        IIOMetadataNode root = (IIOMetadataNode) streamMetadata.getAsTree(streamMetadata.getNativeMetadataFormatName());
+        IIOMetadataNode logicalScreenDescriptor = getRequiredChild(root, "LogicalScreenDescriptor");
+
+        int logicalScreenWidth = Integer.parseInt(logicalScreenDescriptor.getAttribute("logicalScreenWidth"));
+        int logicalScreenHeight = Integer.parseInt(logicalScreenDescriptor.getAttribute("logicalScreenHeight"));
+        if (logicalScreenWidth != WIDTH || logicalScreenHeight != HEIGHT) {
+            throw new BadImageFormatException(
+                    "GIF logical screen must be exactly " + WIDTH + "x" + HEIGHT + " pixels.");
+        }
+    }
+
+    private byte[][][] buildCompositedGifFrame(
+            ImageReader imageReader,
+            int frameIndex,
+            GifCompositeState compositeState)
+            throws IOException, BadImageFormatException {
+        applyGifDisposal(compositeState);
+
+        BufferedImage frame = imageReader.read(frameIndex);
+        GifFrameMetadata metadata = readGifFrameMetadata(imageReader.getImageMetadata(frameIndex));
+        validateGifFrameBounds(frame, metadata, frameIndex);
+
+        if ("restoreToPrevious".equals(metadata.disposalMethod)) {
+            compositeState.restoreToPreviousSnapshot = copyImage(compositeState.canvas);
+        } else {
+            compositeState.restoreToPreviousSnapshot = null;
+        }
+
+        Graphics2D graphics = compositeState.canvas.createGraphics();
+        try {
+            graphics.setComposite(AlphaComposite.SrcOver);
+            graphics.drawImage(frame, metadata.left, metadata.top, null);
+        } finally {
+            graphics.dispose();
+        }
+
+        compositeState.previousFrameMetadata = metadata;
+        return getImageData(compositeState.canvas);
+    }
+
+    private void applyGifDisposal(GifCompositeState compositeState) {
+        if (compositeState.previousFrameMetadata == null) {
+            return;
+        }
+
+        String disposalMethod = compositeState.previousFrameMetadata.disposalMethod;
+        if ("restoreToBackgroundColor".equals(disposalMethod)) {
+            clearRect(
+                    compositeState.canvas,
+                    compositeState.previousFrameMetadata.left,
+                    compositeState.previousFrameMetadata.top,
+                    compositeState.previousFrameMetadata.width,
+                    compositeState.previousFrameMetadata.height);
+        } else if ("restoreToPrevious".equals(disposalMethod) && compositeState.restoreToPreviousSnapshot != null) {
+            Graphics2D graphics = compositeState.canvas.createGraphics();
+            try {
+                graphics.setComposite(AlphaComposite.Src);
+                graphics.drawImage(compositeState.restoreToPreviousSnapshot, 0, 0, null);
+            } finally {
+                graphics.dispose();
+            }
+        }
+    }
+
+    private GifFrameMetadata readGifFrameMetadata(IIOMetadata metadata) throws BadImageFormatException {
+        IIOMetadataNode root = (IIOMetadataNode) metadata.getAsTree(metadata.getNativeMetadataFormatName());
+        IIOMetadataNode imageDescriptor = getRequiredChild(root, "ImageDescriptor");
+        IIOMetadataNode graphicControlExtension = getRequiredChild(root, "GraphicControlExtension");
+
+        return new GifFrameMetadata(
+                Integer.parseInt(imageDescriptor.getAttribute("imageLeftPosition")),
+                Integer.parseInt(imageDescriptor.getAttribute("imageTopPosition")),
+                Integer.parseInt(imageDescriptor.getAttribute("imageWidth")),
+                Integer.parseInt(imageDescriptor.getAttribute("imageHeight")),
+                graphicControlExtension.getAttribute("disposalMethod"));
+    }
+
+    private void validateGifFrameBounds(BufferedImage frame, GifFrameMetadata metadata, int frameIndex)
+            throws BadImageFormatException {
+        if (frame.getWidth() != metadata.width || frame.getHeight() != metadata.height) {
+            throw new BadImageFormatException(
+                    "GIF frame " + frameIndex + " data size does not match its metadata descriptor.");
+        }
+        if (metadata.left < 0
+                || metadata.top < 0
+                || metadata.left + metadata.width > WIDTH
+                || metadata.top + metadata.height > HEIGHT) {
+            throw new BadImageFormatException(
+                    "GIF frame " + frameIndex + " extends outside the " + WIDTH + "x" + HEIGHT + " canvas.");
+        }
+    }
+
+    private void clearRect(BufferedImage image, int x, int y, int width, int height) {
+        Graphics2D graphics = image.createGraphics();
+        try {
+            graphics.setComposite(AlphaComposite.Clear);
+            graphics.fillRect(x, y, width, height);
+        } finally {
+            graphics.dispose();
+        }
+    }
+
+    private BufferedImage copyImage(BufferedImage source) {
+        BufferedImage copy = new BufferedImage(source.getWidth(), source.getHeight(), BufferedImage.TYPE_INT_ARGB);
+        Graphics2D graphics = copy.createGraphics();
+        try {
+            graphics.setComposite(AlphaComposite.Src);
+            graphics.drawImage(source, 0, 0, null);
+        } finally {
+            graphics.dispose();
+        }
+        return copy;
+    }
+
+    private IIOMetadataNode getRequiredChild(IIOMetadataNode root, String childName) throws BadImageFormatException {
+        for (int i = 0; i < root.getLength(); i++) {
+            if (root.item(i) instanceof IIOMetadataNode child && childName.equals(child.getNodeName())) {
+                return child;
+            }
+        }
+        throw new BadImageFormatException("Missing GIF metadata node: " + childName);
+    }
+
+    private byte[][][] getImageData(BufferedImage image) {
+        int realWidth = image.getWidth();
+        byte[][][] buffer = new byte[HEIGHT][realWidth][CHANNELS];
+
+        for (int w = 0; w < realWidth; ++w) {
+            for (int h = 0; h < HEIGHT; ++h) {
+                int hexcode = image.getRGB(w, h);
+                int red = (hexcode >> 16) & 0xFF;
+                int green = (hexcode >> 8) & 0xFF;
+                int blue = hexcode & 0xFF;
+                int white = Math.min(Math.min(red, green), blue);
+
+                red -= white;
+                green -= white;
+                blue -= white;
+
+                buffer[h][w][0] = (byte) (white & 0xFF);
+                buffer[h][w][1] = (byte) (red & 0xFF);
+                buffer[h][w][2] = (byte) (green & 0xFF);
+                buffer[h][w][3] = (byte) (blue & 0xFF);
+            }
+        }
+        return buffer;
+    }
+
+    private byte[][][] extractWrappedFrame(byte[][][] imageData, int startX) {
+        int realWidth = imageData[0].length;
+        byte[][][] frame = new byte[HEIGHT][WIDTH][CHANNELS];
+
+        for (int y = 0; y < HEIGHT; y++) {
+            for (int x = 0; x < WIDTH; x++) {
+                int sourceX = (startX + x) % realWidth;
+                copyPixel(imageData, frame, y, sourceX, x);
+            }
+        }
+
+        return frame;
+    }
+
+    private byte[][][] extractClippedFrame(byte[][][] imageData, int startX) {
+        int realWidth = imageData[0].length;
+        byte[][][] frame = new byte[HEIGHT][WIDTH][CHANNELS];
+
+        for (int y = 0; y < HEIGHT; y++) {
+            for (int x = 0; x < WIDTH; x++) {
+                int sourceX = startX + x;
+                if (sourceX < realWidth) {
+                    copyPixel(imageData, frame, y, sourceX, x);
                 }
             }
         }
-        return tempAnim;
+
+        return frame;
     }
-   
-    private class BadImageFormatException extends Exception {
-        protected BadImageFormatException(String message){
+
+    private void copyPixel(byte[][][] source, byte[][][] destination, int y, int sourceX, int destinationX) {
+        destination[y][destinationX][0] = source[y][sourceX][0];
+        destination[y][destinationX][1] = source[y][sourceX][1];
+        destination[y][destinationX][2] = source[y][sourceX][2];
+        destination[y][destinationX][3] = source[y][sourceX][3];
+    }
+
+    private PreparedPlaybackPackets reportPreparationFailure(String mode, String path, Exception exception) {
+        DriverStation.reportError(
+                "WLED " + mode + " preparation failed for " + path + ": " + exception.getMessage(),
+                false);
+        return new PreparedPlaybackPackets(new DatagramPacket[0], 0);
+    }
+
+    @FunctionalInterface
+    private interface FrameBuilder {
+        byte[][][] buildFrame(int frameIndex) throws IOException, BadImageFormatException;
+    }
+
+    private static class BadImageFormatException extends Exception {
+        private static final long serialVersionUID = 1L;
+
+        private BadImageFormatException(String message) {
             super(message);
         }
     }
-
-
-} 
-// 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17
-//                    
+}
