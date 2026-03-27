@@ -26,6 +26,9 @@ import com.pathplanner.lib.util.DriveFeedforwards;
 import edu.wpi.first.math.geometry.Pose2d;
 import edu.wpi.first.math.geometry.Rotation2d;
 import edu.wpi.first.math.kinematics.ChassisSpeeds;
+import edu.wpi.first.networktables.DoublePublisher;
+import edu.wpi.first.networktables.NetworkTable;
+import edu.wpi.first.networktables.NetworkTableInstance;
 import edu.wpi.first.units.measure.Angle;
 import edu.wpi.first.wpilibj.DriverStation;
 import edu.wpi.first.wpilibj2.command.Command;
@@ -62,6 +65,9 @@ public class RobotContainer implements Subsystem {
     private final static float REMEMBER_TO_TUNE_CURRENTLY_1 = 1f;
     
     private final static int INCHES = 1;
+    private static final double MAX_HOOD_TUNE_ANGLE_DEGREES = 50.0;
+    private static final double HOOD_TUNE_ANGLE_STEP_DEGREES = 5.0;
+    private static final double SHOOTER_TUNE_SPEED_STEP_IPS = 40;
 
     private static enum MotorData {
         RIGHT_FLYWHEEL(42, "Right Flywheel Kraken x60"),
@@ -96,6 +102,11 @@ public class RobotContainer implements Subsystem {
     private final SwerveRequest.PointWheelsAt point = new SwerveRequest.PointWheelsAt();
 
     private final Telemetry logger = new Telemetry(MaxSpeed);
+    private final NetworkTable tuningTable = NetworkTableInstance.getDefault().getTable("Tuning");
+    private final DoublePublisher hoodTuneAnglePublisher = tuningTable.getDoubleTopic("HoodTuneAngleDegrees").publish();
+    private final DoublePublisher shooterTuneSpeedPublisher = tuningTable.getDoubleTopic("ShooterTuneSpeedIps").publish();
+    private final DoublePublisher mainFlywheelMeasuredSpeedPublisher =
+            tuningTable.getDoubleTopic("MainFlywheelMeasuredSpeedIps").publish();
 
     private final CommandXboxController driversController = new CommandXboxController(0);
     private final CommandXboxController engineersController = new CommandXboxController(1);
@@ -239,7 +250,7 @@ public class RobotContainer implements Subsystem {
             40,
             12.0,
             Degrees.of(0.0),
-            Degrees.of(45),
+            Degrees.of(MAX_HOOD_TUNE_ANGLE_DEGREES),
             true,
             false);
 
@@ -275,9 +286,9 @@ public class RobotContainer implements Subsystem {
           "Default Name",                // | CANivore bus name
           MotorData.RIGHT_FLYWHEEL.name, // | Motor Name
           4 * INCHES,                    // | Wheel size
-          16f/24f,                       // | Gear ratio
+          24f/16f,                       // | Gear ratio
           2.3,                        // | kS
-          0.14,                       // | kV 
+          0,                       // | kV 0.14
           2,                          // | kP
           30                 // | Peak current
         );
@@ -287,7 +298,7 @@ public class RobotContainer implements Subsystem {
           "Default Name",                // | CANivore bus name
           MotorData.KICKER.name, // | Motor Name
           3 * INCHES,                    // | Wheel size
-          16f/24f,                       // | Gear ratio
+          24f/16f,                       // | Gear ratio
           2.7,                        // | kS
           0.0095,                       // | kV 
           2,                          // | kP
@@ -299,7 +310,7 @@ public class RobotContainer implements Subsystem {
           "Default Name",                // | CANivore bus name
           MotorData.BACKSPIN.name, // | Motor Name
           2 * INCHES,                    // | Wheel size
-          16f/24f,                       // | Gear ratio
+          24f/16f,                       // | Gear ratio
           2.3,                        // | kS
           0.013,                       // | kV 
           2,                          // | kP
@@ -311,7 +322,7 @@ public class RobotContainer implements Subsystem {
           "Default Name",                // | CANivore bus name
           MotorData.INTAKEDRIVE.name, // | Motor Name
           2.5 * INCHES,                    // | Wheel size
-          47.0 / 10.0 * 34.0 / 44.0,     // | Gear ratio
+          47.0 / 44.0,     // | Gear ratio 44 intake, 66 idler, 47 motor
           2.3,                        // | kS
           0.013,                       // | kV 
           2,                          // | kP
@@ -354,6 +365,7 @@ public class RobotContainer implements Subsystem {
 
 
         configureBindings();
+        publishTuningTelemetry();
 
     }
 
@@ -371,9 +383,13 @@ public class RobotContainer implements Subsystem {
             )
         );
 
-        mainShooter.setDefaultCommand(mainShooter.cmdSetIPSFactor(this::getShooterPower, 1500.0));
-        kicker.setDefaultCommand(kicker.cmdSetIPSFactor(this::getShooterPower, -1500.0));
-        backspin.setDefaultCommand(backspin.cmdSetIPSFactor(this::getShooterPower, 1500.0));
+        //mainShooter.setDefaultCommand(mainShooter.cmdSetIPSFactor(this::getShooterPower, 1500.0));
+        //kicker.setDefaultCommand(kicker.cmdSetIPSFactor(this::getShooterPower, -1500.0));
+        //backspin.setDefaultCommand(backspin.cmdSetIPSFactor(this::getShooterPower, 1500.0));
+
+        mainShooter.setDefaultCommand(mainShooter.cmdSetIPS(this::getTuningShooterPower));
+        kicker.setDefaultCommand(kicker.cmdSetIPS(this::getTuningShooterPowerNeg));
+        backspin.setDefaultCommand(backspin.cmdSetIPS(this::getTuningShooterPower));
 
         leftIntakePosition.setDefaultCommand(
             leftIntakePosition.cmdSetAngle(() -> Degrees.of(engineersController.a().getAsBoolean() ? 102.5 : 5.0)));
@@ -381,7 +397,12 @@ public class RobotContainer implements Subsystem {
             rightIntakePosition.cmdSetAngle(() -> Degrees.of(engineersController.a().getAsBoolean() ? 102.5 : 5.0))); //97?
         intakedrive.setDefaultCommand(intakedrive.cmdSetIPS(()->engineersController.a().getAsBoolean() ? 125.0 : 0.0)); //600 max
 
-        hood.setDefaultCommand(hood.cmdSetScaledAngle(engineersController::getLeftTriggerAxis));
+        //hood.setDefaultCommand(hood.cmdSetScaledAngle(engineersController::getLeftTriggerAxis));
+        hood.setDefaultCommand(hood.cmdSetAngle(this::getHoodTuningAngle));
+        engineersController.povUp().onTrue(Commands.runOnce(() -> adjustHoodTuneAngle(HOOD_TUNE_ANGLE_STEP_DEGREES)));
+        engineersController.povDown().onTrue(Commands.runOnce(() -> adjustHoodTuneAngle(-HOOD_TUNE_ANGLE_STEP_DEGREES)));
+        engineersController.povRight().onTrue(Commands.runOnce(() -> adjustShooterTuneSpeed(SHOOTER_TUNE_SPEED_STEP_IPS)));
+        engineersController.povLeft().onTrue(Commands.runOnce(() -> adjustShooterTuneSpeed(-SHOOTER_TUNE_SPEED_STEP_IPS)));
         // Idle while the robot is disabled. This ensures the configured
         // neutral mode is applied to the drive motors while disabled.
         final var idle = new SwerveRequest.Idle();
@@ -430,4 +451,38 @@ public class RobotContainer implements Subsystem {
         double shooterPower = engineersController.getRightTriggerAxis();
         return (shooterPower < 0.005) ? 0.0 : (shooterPower + minPower) / (1.0 + minPower);
     }
+
+    double shooterTuneSpeed = 0;
+
+    private double getTuningShooterPower() {
+        return shooterTuneSpeed;
+    }
+
+    private double getTuningShooterPowerNeg() {
+        return -shooterTuneSpeed;
+    }
+
+    double hoodTuneAngle = 0;
+
+
+    private Angle getHoodTuningAngle() {
+        return Degrees.of(hoodTuneAngle);
+    }
+
+    private void adjustHoodTuneAngle(double deltaDegrees) {
+        hoodTuneAngle = Math.max(0.0, Math.min(MAX_HOOD_TUNE_ANGLE_DEGREES, hoodTuneAngle + deltaDegrees));
+        hoodTuneAnglePublisher.set(hoodTuneAngle);
+    }
+
+    private void adjustShooterTuneSpeed(double deltaIps) {
+        shooterTuneSpeed += deltaIps;
+        shooterTuneSpeedPublisher.set(shooterTuneSpeed);
+    }
+
+    public void publishTuningTelemetry() {
+        hoodTuneAnglePublisher.set(hoodTuneAngle);
+        shooterTuneSpeedPublisher.set(shooterTuneSpeed);
+        mainFlywheelMeasuredSpeedPublisher.set(mainShooter.getSpeedIPS());
+    }
+
 }

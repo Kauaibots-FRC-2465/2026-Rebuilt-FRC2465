@@ -157,6 +157,7 @@ public class KrakenFlywheelSubsystem extends SubsystemBase {
         // Optimize CAN bus utilization — only update these signals at the given frequency
         BaseStatusSignal.setUpdateFrequencyForAll(
                 500,
+                kraken.getVelocity(),
                 kraken.getTorqueCurrent()
         );
         // Reduce all other signals to 6hz
@@ -228,6 +229,20 @@ public class KrakenFlywheelSubsystem extends SubsystemBase {
 
     public Command cmdSetIPSFactor(DoubleSupplier ips, Double factor) {
         return cmdSetRPS(() -> ips.getAsDouble() / Math.PI / flywheelDiameterInches * factor);
+    }
+
+    /**
+     * Returns the measured flywheel speed in mechanism rotations per second.
+     */
+    public double getSpeedRPS() {
+        return kraken.getVelocity().getValueAsDouble() / gearRatio;
+    }
+
+    /**
+     * Returns the measured flywheel surface speed in inches per second.
+     */
+    public double getSpeedIPS() {
+        return getSpeedRPS() * Math.PI * flywheelDiameterInches;
     }
 
     private static boolean isValidCanID(int canID) {
