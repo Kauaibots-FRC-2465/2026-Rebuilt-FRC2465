@@ -377,8 +377,8 @@ public class RobotContainer implements Subsystem {
         
         // Note that X is defined as forward according to WPILib convention,
         // and Y is defined as to the left according to WPILib convention.
-        schedule(showLights);
-        //schedule(showBamPowZang);
+        //schedule(showLights);
+        schedule(showBamPowZang);
         drivetrain.setDefaultCommand(
             // Drivetrain will execute this command periodically
             drivetrain.applyRequest(() ->

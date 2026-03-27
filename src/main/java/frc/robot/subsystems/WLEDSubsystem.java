@@ -20,6 +20,7 @@ import javax.imageio.stream.ImageInputStream;
 
 import edu.wpi.first.wpilibj.DriverStation;
 import edu.wpi.first.wpilibj.Filesystem;
+import edu.wpi.first.wpilibj.Timer;
 import edu.wpi.first.wpilibj2.command.Command;
 import edu.wpi.first.wpilibj2.command.CommandScheduler;
 import edu.wpi.first.wpilibj2.command.Subsystem;
@@ -39,10 +40,15 @@ public class WLEDSubsystem implements Subsystem {
     public static final class PreparedPlaybackPackets {
         private final DatagramPacket[] packets;
         private final int packetsPerFrame;
+        private final double[] frameDisplayDurationsSeconds;
 
-        private PreparedPlaybackPackets(DatagramPacket[] packets, int packetsPerFrame) {
+        private PreparedPlaybackPackets(
+                DatagramPacket[] packets,
+                int packetsPerFrame,
+                double[] frameDisplayDurationsSeconds) {
             this.packets = packets;
             this.packetsPerFrame = packetsPerFrame;
+            this.frameDisplayDurationsSeconds = frameDisplayDurationsSeconds;
         }
 
         public int getPacketCount() {
@@ -53,18 +59,34 @@ public class WLEDSubsystem implements Subsystem {
             return packetsPerFrame;
         }
 
+        public int getFrameCount() {
+            if (packetsPerFrame <= 0) {
+                return 0;
+            }
+            return packets.length / packetsPerFrame;
+        }
+
+        public double getFrameDisplayDurationSeconds(int frameIndex) {
+            return frameDisplayDurationsSeconds[frameIndex];
+        }
+
         private boolean isEmpty() {
-            return packets.length == 0 || packetsPerFrame <= 0;
+            return packets.length == 0
+                    || packetsPerFrame <= 0
+                    || frameDisplayDurationsSeconds.length == 0;
         }
     }
 
     private static final class ActivePlayback {
         private final PreparedPlaybackPackets playback;
-        private int nextPacketIndex;
+        private final Timer frameTimer = new Timer();
+        private int currentFrameIndex;
 
         private ActivePlayback(PreparedPlaybackPackets playback) {
             this.playback = playback;
-            this.nextPacketIndex = 0;
+            this.currentFrameIndex = 0;
+            this.frameTimer.start();
+            this.frameTimer.reset();
         }
     }
 
@@ -74,13 +96,31 @@ public class WLEDSubsystem implements Subsystem {
         private final int width;
         private final int height;
         private final String disposalMethod;
+        private final double displayDurationSeconds;
 
-        private GifFrameMetadata(int left, int top, int width, int height, String disposalMethod) {
+        private GifFrameMetadata(
+                int left,
+                int top,
+                int width,
+                int height,
+                String disposalMethod,
+                double displayDurationSeconds) {
             this.left = left;
             this.top = top;
             this.width = width;
             this.height = height;
             this.disposalMethod = disposalMethod;
+            this.displayDurationSeconds = displayDurationSeconds;
+        }
+    }
+
+    private static final class FrameData {
+        private final byte[][][] pixels;
+        private final double displayDurationSeconds;
+
+        private FrameData(byte[][][] pixels, double displayDurationSeconds) {
+            this.pixels = pixels;
+            this.displayDurationSeconds = displayDurationSeconds;
         }
     }
 
@@ -109,19 +149,26 @@ public class WLEDSubsystem implements Subsystem {
             return;
         }
 
-        for (int sent = 0; sent < activePlayback.playback.getPacketsPerFrame(); sent++) {
-            DatagramPacket packet = activePlayback.playback.packets[activePlayback.nextPacketIndex];
+        int packetsPerFrame = activePlayback.playback.getPacketsPerFrame();
+        int frameStartPacketIndex = activePlayback.currentFrameIndex * packetsPerFrame;
+        for (int packetOffset = 0; packetOffset < packetsPerFrame; packetOffset++) {
+            DatagramPacket packet = activePlayback.playback.packets[frameStartPacketIndex + packetOffset];
             try {
                 socket.send(packet);
             } catch (IOException e) {
                 DriverStation.reportError("WLED packet send failed: " + e.getMessage(), false);
                 return;
             }
+        }
 
-            activePlayback.nextPacketIndex++;
-            if (activePlayback.nextPacketIndex >= activePlayback.playback.packets.length) {
-                activePlayback.nextPacketIndex = 0;
+        double frameDurationSeconds =
+                activePlayback.playback.getFrameDisplayDurationSeconds(activePlayback.currentFrameIndex);
+        if (frameDurationSeconds <= 0.0 || activePlayback.frameTimer.hasElapsed(frameDurationSeconds)) {
+            activePlayback.currentFrameIndex++;
+            if (activePlayback.currentFrameIndex >= activePlayback.playback.getFrameCount()) {
+                activePlayback.currentFrameIndex = 0;
             }
+            activePlayback.frameTimer.restart();
         }
     }
 
@@ -130,7 +177,9 @@ public class WLEDSubsystem implements Subsystem {
             BufferedImage image = readImage(path);
             byte[][][] imageData = getImageData(image);
             int frameCount = image.getWidth();
-            return buildPlaybackPackets(frameCount, frameIndex -> extractWrappedFrame(imageData, frameIndex));
+            return buildPlaybackPackets(
+                    frameCount,
+                    frameIndex -> new FrameData(extractWrappedFrame(imageData, frameIndex), 0.0));
         } catch (BadImageFormatException | IOException e) {
             return reportPreparationFailure("marquee", path, e);
         }
@@ -146,7 +195,9 @@ public class WLEDSubsystem implements Subsystem {
             }
             byte[][][] imageData = getImageData(image);
             int frameCount = realWidth / WIDTH;
-            return buildPlaybackPackets(frameCount, frameIndex -> extractClippedFrame(imageData, frameIndex * WIDTH));
+            return buildPlaybackPackets(
+                    frameCount,
+                    frameIndex -> new FrameData(extractClippedFrame(imageData, frameIndex * WIDTH), 0.0));
         } catch (BadImageFormatException | IOException e) {
             return reportPreparationFailure("animation", path, e);
         }
@@ -157,7 +208,7 @@ public class WLEDSubsystem implements Subsystem {
             BufferedImage image = readImage(path);
             byte[][][] imageData = getImageData(image);
             DatagramPacket[] packets = buildPacketsForFrame(extractClippedFrame(imageData, 0));
-            return new PreparedPlaybackPackets(packets, packets.length);
+            return new PreparedPlaybackPackets(packets, packets.length, new double[] {0.0});
         } catch (BadImageFormatException | IOException e) {
             return reportPreparationFailure("image", path, e);
         }
@@ -198,22 +249,22 @@ public class WLEDSubsystem implements Subsystem {
 
     public Command showMarquee(String path) {
         PreparedPlaybackPackets playbackPackets = prepareMarquee(path);
-        return runOnce(() -> setActivePlayback(playbackPackets));
+        return runOnce(() -> setActivePlayback(playbackPackets)).ignoringDisable(true);
     }
 
     public Command showHorizontalAnimationStrip(String path) {
         PreparedPlaybackPackets playbackPackets = prepareHorizontalAnimationStrip(path);
-        return runOnce(() -> setActivePlayback(playbackPackets));
+        return runOnce(() -> setActivePlayback(playbackPackets)).ignoringDisable(true);
     }
 
     public Command showImage(String path) {
         PreparedPlaybackPackets playbackPackets = prepareImage(path);
-        return runOnce(() -> setActivePlayback(playbackPackets));
+        return runOnce(() -> setActivePlayback(playbackPackets)).ignoringDisable(true);
     }
 
     public Command showGIF(String path) {
         PreparedPlaybackPackets playbackPackets = prepareGIF(path);
-        return runOnce(() -> setActivePlayback(playbackPackets));
+        return runOnce(() -> setActivePlayback(playbackPackets)).ignoringDisable(true);
     }
 
     public void setActivePlayback(PreparedPlaybackPackets playbackPackets) {
@@ -228,22 +279,27 @@ public class WLEDSubsystem implements Subsystem {
     private PreparedPlaybackPackets buildPlaybackPackets(int frameCount, FrameBuilder frameBuilder)
             throws IOException, BadImageFormatException {
         if (frameCount <= 0) {
-            return new PreparedPlaybackPackets(new DatagramPacket[0], 0);
+            return new PreparedPlaybackPackets(new DatagramPacket[0], 0, new double[0]);
         }
 
-        DatagramPacket[] firstFramePackets = buildPacketsForFrame(frameBuilder.buildFrame(0));
+        FrameData firstFrameData = frameBuilder.buildFrame(0);
+        DatagramPacket[] firstFramePackets = buildPacketsForFrame(firstFrameData.pixels);
         int packetsPerFrame = firstFramePackets.length;
         DatagramPacket[] packets = new DatagramPacket[frameCount * packetsPerFrame];
+        double[] frameDisplayDurationsSeconds = new double[frameCount];
         System.arraycopy(firstFramePackets, 0, packets, 0, packetsPerFrame);
+        frameDisplayDurationsSeconds[0] = firstFrameData.displayDurationSeconds;
 
         int packetIndex = packetsPerFrame;
         for (int frameIndex = 1; frameIndex < frameCount; frameIndex++) {
-            DatagramPacket[] framePackets = buildPacketsForFrame(frameBuilder.buildFrame(frameIndex));
+            FrameData frameData = frameBuilder.buildFrame(frameIndex);
+            DatagramPacket[] framePackets = buildPacketsForFrame(frameData.pixels);
             System.arraycopy(framePackets, 0, packets, packetIndex, packetsPerFrame);
+            frameDisplayDurationsSeconds[frameIndex] = frameData.displayDurationSeconds;
             packetIndex += packetsPerFrame;
         }
 
-        return new PreparedPlaybackPackets(packets, packetsPerFrame);
+        return new PreparedPlaybackPackets(packets, packetsPerFrame, frameDisplayDurationsSeconds);
     }
 
     private DatagramPacket[] buildPacketsForFrame(byte[][][] matrix) throws UnknownHostException {
@@ -315,7 +371,7 @@ public class WLEDSubsystem implements Subsystem {
         }
     }
 
-    private byte[][][] buildCompositedGifFrame(
+    private FrameData buildCompositedGifFrame(
             ImageReader imageReader,
             int frameIndex,
             GifCompositeState compositeState)
@@ -341,7 +397,7 @@ public class WLEDSubsystem implements Subsystem {
         }
 
         compositeState.previousFrameMetadata = metadata;
-        return getImageData(compositeState.canvas);
+        return new FrameData(getImageData(compositeState.canvas), metadata.displayDurationSeconds);
     }
 
     private void applyGifDisposal(GifCompositeState compositeState) {
@@ -378,7 +434,8 @@ public class WLEDSubsystem implements Subsystem {
                 Integer.parseInt(imageDescriptor.getAttribute("imageTopPosition")),
                 Integer.parseInt(imageDescriptor.getAttribute("imageWidth")),
                 Integer.parseInt(imageDescriptor.getAttribute("imageHeight")),
-                graphicControlExtension.getAttribute("disposalMethod"));
+                graphicControlExtension.getAttribute("disposalMethod"),
+                Integer.parseInt(graphicControlExtension.getAttribute("delayTime")) / 100.0);
     }
 
     private void validateGifFrameBounds(BufferedImage frame, GifFrameMetadata metadata, int frameIndex)
@@ -493,12 +550,12 @@ public class WLEDSubsystem implements Subsystem {
         DriverStation.reportError(
                 "WLED " + mode + " preparation failed for " + path + ": " + exception.getMessage(),
                 false);
-        return new PreparedPlaybackPackets(new DatagramPacket[0], 0);
+        return new PreparedPlaybackPackets(new DatagramPacket[0], 0, new double[0]);
     }
 
     @FunctionalInterface
     private interface FrameBuilder {
-        byte[][][] buildFrame(int frameIndex) throws IOException, BadImageFormatException;
+        FrameData buildFrame(int frameIndex) throws IOException, BadImageFormatException;
     }
 
     private static class BadImageFormatException extends Exception {
