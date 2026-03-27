@@ -45,7 +45,7 @@ import edu.wpi.first.wpilibj2.command.sysid.SysIdRoutine.Direction;
 
 import frc.robot.generated.TunerConstants;
 import frc.robot.subsystems.CommandSwerveDrivetrain;
-import frc.robot.subsystems.KrakenAnglePositionSubsystem;
+import frc.robot.subsystems.IntakeAimSubsystem;
 import frc.robot.subsystems.KrakenFlywheelSubsystem;
 import frc.robot.subsystems.KrakenFollowerSubsystem;
 import frc.robot.subsystems.LimelightSubsystem;
@@ -131,8 +131,7 @@ public class RobotContainer implements Subsystem {
     public final SparkFollowerSubsystem sparkFollowerSubsystem = new SparkFollowerSubsystem();
 
     public final SparkAnglePositionSubsystem hood;
-    public final KrakenAnglePositionSubsystem leftIntakePosition;
-    public final KrakenAnglePositionSubsystem rightIntakePosition;
+    public final IntakeAimSubsystem intakeAim;
 
     public final KrakenFlywheelSubsystem mainShooter;
     public final KrakenFlywheelSubsystem kicker;
@@ -259,31 +258,22 @@ public class RobotContainer implements Subsystem {
             true,
             false);
 
-        leftIntakePosition = new KrakenAnglePositionSubsystem(
+        intakeAim = new IntakeAimSubsystem(
             MotorData.LEFT_INTAKE_POSITION.id,
-            "Default Name",
             MotorData.LEFT_INTAKE_POSITION.name,
-            47.0 / 10.0 * 3.0,
             0.603027,
-            4, //0.5
-            40,
-            2.0,
-            Degrees.of(0.0),
-            Degrees.of(110.0),
-            true);
-
-        rightIntakePosition = new KrakenAnglePositionSubsystem(
+            true,
             MotorData.RIGHT_INTAKE_POSITION.id,
-            "Default Name",
             MotorData.RIGHT_INTAKE_POSITION.name,
-            47.0 / 10.0 * 3.0,
             0.914551,
+            false,
+            "Default Name",
+            47.0 / 10.0 * 3.0,
             4,
             40,
             2.0,
             Degrees.of(0.0),
-            Degrees.of(110.0),
-            false);
+            Degrees.of(110.0));
 
 
         mainShooter = new KrakenFlywheelSubsystem(
@@ -398,10 +388,8 @@ public class RobotContainer implements Subsystem {
         kicker.setDefaultCommand(kicker.cmdSetIPS(this::getTuningShooterPowerNeg));
         backspin.setDefaultCommand(backspin.cmdSetIPS(this::getTuningShooterPower));
 
-        leftIntakePosition.setDefaultCommand(
-            leftIntakePosition.cmdSetAngle(() -> Degrees.of(engineersController.a().getAsBoolean() ? 102.5 : 5.0)));
-        rightIntakePosition.setDefaultCommand(
-            rightIntakePosition.cmdSetAngle(() -> Degrees.of(engineersController.a().getAsBoolean() ? 102.5 : 5.0))); //97?
+        intakeAim.setDefaultCommand(
+            intakeAim.cmdSetAngle(() -> Degrees.of(engineersController.a().getAsBoolean() ? 102.5 : 5.0)));
         intakedrive.setDefaultCommand(intakedrive.cmdSetIPS(()->engineersController.a().getAsBoolean() ? 125.0 : 0.0)); //600 max
 
         //hood.setDefaultCommand(hood.cmdSetScaledAngle(engineersController::getLeftTriggerAxis));
