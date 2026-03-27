@@ -183,6 +183,40 @@ public class KrakenAnglePositionSubsystem extends SubsystemBase {
      * configured limits, then converted to rotor rotations before being sent to
      * the TalonFX.
      */
+    public void setAngle(Angle angle) {
+        double requestedAngleRotations = angle.in(Rotations);
+        double clippedAngleRotations = Math.max(
+                minimumAngleRotations,
+                Math.min(maximumAngleRotations, requestedAngleRotations));
+        if (requestedAngleRotations != clippedAngleRotations) {
+            outOfRangePrint.error(
+                    "[" + motorName + " | CAN " + canID
+                            + "] Requested angle " + requestedAngleRotations
+                            + " rotations is outside configured range ["
+                            + minimumAngleRotations + ", " + maximumAngleRotations
+                            + "]. Clipping command.");
+        }
+        if (Double.isNaN(lastSetAngleRotations)
+                || Math.abs(lastSetAngleRotations - clippedAngleRotations)
+                        > ANGLE_CHANGE_THRESHOLD_ROTATIONS) {
+            lastSetAngleRotations = clippedAngleRotations;
+            double rotorSetpointRotations =
+                    initialRotorWholeRotations + clippedAngleRotations * mechanismGearRatio;
+            StatusCode status = kraken.setControl(positionRequest.withPosition(rotorSetpointRotations));
+            if (!status.isOK()) {
+                DriverStation.reportError(
+                        "[" + motorName + " | CAN " + canID
+                                + " | Bus " + canBusName + "] Failed to set angle setpoint: " + status,
+                        false);
+            }
+        }
+    }
+
+    /**
+     * Commands mechanism angle using WPILib angle units.
+     *
+     * <p>This command factory delegates to {@link #setAngle(Angle)} each scheduler cycle.
+     */
     public Command cmdSetAngle(Supplier<Angle> angle) {
         return new OverrideCommand(this) {
             @Override
@@ -193,32 +227,7 @@ public class KrakenAnglePositionSubsystem extends SubsystemBase {
 
             @Override
             public void execute() {
-                double requestedAngleRotations = desiredAngleSupplier.get().in(Rotations);
-                double clippedAngleRotations = Math.max(
-                        minimumAngleRotations,
-                        Math.min(maximumAngleRotations, requestedAngleRotations));
-                if (requestedAngleRotations != clippedAngleRotations) {
-                    outOfRangePrint.error(
-                            "[" + motorName + " | CAN " + canID
-                                    + "] Requested angle " + requestedAngleRotations
-                                    + " rotations is outside configured range ["
-                                    + minimumAngleRotations + ", " + maximumAngleRotations
-                                    + "]. Clipping command.");
-                }
-                if (Double.isNaN(lastSetAngleRotations)
-                        || Math.abs(lastSetAngleRotations - clippedAngleRotations)
-                                > ANGLE_CHANGE_THRESHOLD_ROTATIONS) {
-                    lastSetAngleRotations = clippedAngleRotations;
-                    double rotorSetpointRotations =
-                            initialRotorWholeRotations + clippedAngleRotations * mechanismGearRatio;
-                    StatusCode status = kraken.setControl(positionRequest.withPosition(rotorSetpointRotations));
-                    if (!status.isOK()) {
-                        DriverStation.reportError(
-                                "[" + motorName + " | CAN " + canID
-                                        + " | Bus " + canBusName + "] Failed to set angle setpoint: " + status,
-                                false);
-                    }
-                }
+                setAngle(desiredAngleSupplier.get());
             }
         };
     }

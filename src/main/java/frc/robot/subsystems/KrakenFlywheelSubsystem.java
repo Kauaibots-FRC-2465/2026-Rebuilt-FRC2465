@@ -183,7 +183,20 @@ public class KrakenFlywheelSubsystem extends SubsystemBase {
 
     /**
      * Sets the flywheel speed in Rotations Per Second (RPS).
-     * * @param rps A {@link DoubleSupplier} providing the desired speed in RPS.
+     *
+     * @param rps desired mechanism speed in RPS.
+     */
+    public void setRPS(double rps) {
+        if (Double.isNaN(desiredRPS) || Math.abs(desiredRPS - rps) > .001) {
+            desiredRPS = rps;
+            kraken.setControl(velocityRequest.withVelocity(desiredRPS * gearRatio));
+        }
+    }
+
+    /**
+     * Sets the flywheel speed in Rotations Per Second (RPS).
+     *
+     * @param rps A {@link DoubleSupplier} providing the desired speed in RPS.
      * @return A command to maintain the specified RPS.
      */
     public Command cmdSetRPS(DoubleSupplier rps) {
@@ -196,11 +209,7 @@ public class KrakenFlywheelSubsystem extends SubsystemBase {
 
             @Override
             public void execute() {
-                double newDesiredRPS = desiredRPSSupplier.getAsDouble();
-                if(Double.isNaN(desiredRPS) || Math.abs(desiredRPS-newDesiredRPS)>.001) { // Only change speeds if > .001 RPS change is detected
-                    desiredRPS=newDesiredRPS;
-                    kraken.setControl(velocityRequest.withVelocity(desiredRPS * gearRatio));
-                }
+                setRPS(desiredRPSSupplier.getAsDouble());
             }
         };
     }

@@ -249,6 +249,42 @@ public class SparkAnglePositionSubsystem extends SubsystemBase {
      * internally before being sent to the SparkMax position controller.
      * Requested angles are clipped to configured min/max limits.
      *
+     * @param angle desired mechanism angle.
+     */
+    public void setAngle(Angle angle) {
+        double requestedAngleRotations = angle.in(Rotations);
+        double newClippedAngleRotations = Math.max(
+                minimumAngleRotations,
+                Math.min(maximumAngleRotations, requestedAngleRotations));
+        if (requestedAngleRotations != newClippedAngleRotations) {
+            outOfRangePrint.error(
+                    "[" + motorName + " | CAN " + canID
+                            + "] Requested angle " + requestedAngleRotations
+                            + " rotations is outside configured range ["
+                            + minimumAngleRotations + ", " + maximumAngleRotations
+                            + "]. Clipping command.");
+        }
+        if (Double.isNaN(lastSetAngleRotations)
+                || Math.abs(lastSetAngleRotations - newClippedAngleRotations)
+                        > ANGLE_CHANGE_THRESHOLD_ROTATIONS) {
+            lastSetAngleRotations = newClippedAngleRotations;
+            REVLibError status = closedLoopController.setSetpoint(
+                    lastSetAngleRotations,
+                    ControlType.kPosition);
+            if (status != REVLibError.kOk) {
+                DriverStation.reportError(
+                        "[" + motorName + " | CAN " + canID
+                                + "] Failed to set angle setpoint: " + status,
+                        false);
+            }
+        }
+    }
+
+    /**
+     * Commands mechanism angle using WPILib units.
+     *
+     * <p>This command factory delegates to {@link #setAngle(Angle)} each scheduler cycle.
+     *
      * @param angle supplier for desired mechanism angle.
      * @return command that holds the desired angle.
      */
@@ -262,33 +298,7 @@ public class SparkAnglePositionSubsystem extends SubsystemBase {
 
             @Override
             public void execute() {
-
-                double requestedAngleRotations = desiredAngleSupplier.get().in(Rotations);
-                double newClippedAngleRotations = Math.max(
-                        minimumAngleRotations,
-                        Math.min(maximumAngleRotations, requestedAngleRotations));
-                if (requestedAngleRotations != newClippedAngleRotations) {
-                    outOfRangePrint.error(
-                            "[" + motorName + " | CAN " + canID
-                                    + "] Requested angle " + requestedAngleRotations
-                                    + " rotations is outside configured range ["
-                                    + minimumAngleRotations + ", " + maximumAngleRotations
-                                    + "]. Clipping command.");
-                }
-                if (Double.isNaN(lastSetAngleRotations)
-                        || Math.abs(lastSetAngleRotations - newClippedAngleRotations)
-                                > ANGLE_CHANGE_THRESHOLD_ROTATIONS) {
-                    lastSetAngleRotations = newClippedAngleRotations;
-                    REVLibError status = closedLoopController.setSetpoint(
-                            lastSetAngleRotations,
-                            ControlType.kPosition);
-                    if (status != REVLibError.kOk) {
-                        DriverStation.reportError(
-                                "[" + motorName + " | CAN " + canID
-                                        + "] Failed to set angle setpoint: " + status,
-                                false);
-                    }
-                }
+                setAngle(desiredAngleSupplier.get());
             }
         };
     }
