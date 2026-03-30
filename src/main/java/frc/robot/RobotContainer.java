@@ -43,14 +43,16 @@ import edu.wpi.first.wpilibj2.command.button.CommandXboxController;
 import edu.wpi.first.wpilibj2.command.button.RobotModeTriggers;
 import edu.wpi.first.wpilibj2.command.sysid.SysIdRoutine.Direction;
 
+import frc.robot.Commands.SnowblowToAlliance;
 import frc.robot.generated.TunerConstants;
 import frc.robot.subsystems.CommandSwerveDrivetrain;
-import frc.robot.subsystems.IntakeAimSubsystem;
+import frc.robot.subsystems.IntakePositionSubsystem;
 import frc.robot.subsystems.KrakenFlywheelSubsystem;
 import frc.robot.subsystems.KrakenFollowerSubsystem;
 import frc.robot.subsystems.LimelightSubsystem;
 import frc.robot.subsystems.PinpointSubsystem;
 import frc.robot.subsystems.PoseEstimatorSubsystem;
+import frc.robot.subsystems.ShooterSubsystem;
 import frc.robot.subsystems.SparkAnglePositionSubsystem;
 import frc.robot.subsystems.SparkFollowerSubsystem;
 import frc.robot.subsystems.WLEDSubsystem;
@@ -127,15 +129,13 @@ public class RobotContainer implements Subsystem {
 
     public final SwerveDrivetrainSubsystem encapsulatedDrivetrain;
 
-    public final SparkAnglePositionSubsystem horizontalAimSubsystem;
+    public final SparkAnglePositionSubsystem horizontalAim;
     public final SparkFollowerSubsystem sparkFollowerSubsystem = new SparkFollowerSubsystem();
 
-    public final SparkAnglePositionSubsystem hood;
-    public final IntakeAimSubsystem intakeAim;
+    public final SparkAnglePositionSubsystem verticalAim;
+    public final IntakePositionSubsystem intakePosition;
 
-    public final KrakenFlywheelSubsystem mainShooter;
-    public final KrakenFlywheelSubsystem kicker;
-    public final KrakenFlywheelSubsystem backspin;
+    public final ShooterSubsystem shooter;
     public final KrakenFlywheelSubsystem intakedrive;
 
 
@@ -206,7 +206,7 @@ public class RobotContainer implements Subsystem {
         poseEstimatorSubsystem = new PoseEstimatorSubsystem(poseEstimatorConfiguration);
         encapsulatedDrivetrain = new SwerveDrivetrainSubsystem(drivetrain, poseEstimatorSubsystem); 
 
-        horizontalAimSubsystem = new SparkAnglePositionSubsystem(
+        horizontalAim = new SparkAnglePositionSubsystem(
             2,
             "Right Horizontal Aim Neo 550",
             233.0/12.0*5.0, // Positioning gear plate hsa 233 teeth, pinions have 12
@@ -244,7 +244,7 @@ public class RobotContainer implements Subsystem {
             Degrees.of(48.7409948542),
             true,
             false);*/
-        hood = new SparkAnglePositionSubsystem(MotorData.HOOD.id,
+        verticalAim = new SparkAnglePositionSubsystem(MotorData.HOOD.id,
             MotorData.HOOD.name,
             150.0/10.0*22.0/32.0*5.0*5.0,
             5.0*5.0,
@@ -258,7 +258,7 @@ public class RobotContainer implements Subsystem {
             true,
             false);
 
-        intakeAim = new IntakeAimSubsystem(
+        intakePosition = new IntakePositionSubsystem(
             MotorData.LEFT_INTAKE_POSITION.id,
             MotorData.LEFT_INTAKE_POSITION.name,
             0.603027,
@@ -276,40 +276,35 @@ public class RobotContainer implements Subsystem {
             Degrees.of(110.0));
 
 
-        mainShooter = new KrakenFlywheelSubsystem(
-          MotorData.RIGHT_FLYWHEEL.id,   // | Motor ID
-          "Default Name",                // | CANivore bus name
-          MotorData.RIGHT_FLYWHEEL.name, // | Motor Name
-          4 * INCHES,                    // | Wheel size
-          24f/16f,                       // | Gear ratio
-          2.3,                        // | kS
-          0,                       // | kV 0.14
-          2,                          // | kP
-          30                 // | Peak current
-        );
-
-        kicker = new KrakenFlywheelSubsystem(
-          MotorData.KICKER.id,   // | Motor ID
-          "Default Name",                // | CANivore bus name
-          MotorData.KICKER.name, // | Motor Name
-          3 * INCHES,                    // | Wheel size
-          24f/16f,                       // | Gear ratio
-          2.7,                        // | kS
-          0.0095,                       // | kV 
-          2,                          // | kP
-          30                 // | Peak current
-        );
-        
-        backspin = new KrakenFlywheelSubsystem(
-          MotorData.BACKSPIN.id,   // | Motor ID
-          "Default Name",                // | CANivore bus name
-          MotorData.BACKSPIN.name, // | Motor Name
-          2 * INCHES,                    // | Wheel size
-          24f/16f,                       // | Gear ratio
-          2.3,                        // | kS
-          0.013,                       // | kV 
-          2,                          // | kP
-          30                 // | Peak current
+        shooter = new ShooterSubsystem(
+          "Default Name",
+          new ShooterSubsystem.FlywheelConfig(
+            MotorData.RIGHT_FLYWHEEL.id,
+            MotorData.RIGHT_FLYWHEEL.name,
+            4 * INCHES,
+            24f/16f,
+            2.3,
+            0,
+            2,
+            30),
+          new ShooterSubsystem.FlywheelConfig(
+            MotorData.KICKER.id,
+            MotorData.KICKER.name,
+            3 * INCHES,
+            24f/16f,
+            2.7,
+            0.0095,
+            2,
+            30),
+          new ShooterSubsystem.FlywheelConfig(
+            MotorData.BACKSPIN.id,
+            MotorData.BACKSPIN.name,
+            2 * INCHES,
+            24f/16f,
+            2.3,
+            0.013,
+            2,
+            30)
         );
 
         intakedrive = new KrakenFlywheelSubsystem(
@@ -373,27 +368,18 @@ public class RobotContainer implements Subsystem {
         //schedule(show2465);
         drivetrain.setDefaultCommand(
             // Drivetrain will execute this command periodically
-            drivetrain.applyRequest(() ->
-                drive.withVelocityX(-driversController.getLeftY() /* Math.abs(joystick.getLeftY())*/ * MaxSpeed) // Drive forward with negative Y (forward)
-                    .withVelocityY(-driversController.getLeftX() /* Math.abs(joystick.getLeftX())*/ * MaxSpeed) // Drive left with negative X (left)
-                    .withRotationalRate(-driversController.getRightX() /* Math.abs(joystick.getRightX())*/ * MaxAngularRate) // Drive counterclockwise with negative X (left)
-            )
+            drivetrain.applyRequest(this::getDriverDriveRequest)
         );
 
-        //mainShooter.setDefaultCommand(mainShooter.cmdSetIPSFactor(this::getShooterPower, 1500.0));
-        //kicker.setDefaultCommand(kicker.cmdSetIPSFactor(this::getShooterPower, -1500.0));
-        //backspin.setDefaultCommand(backspin.cmdSetIPSFactor(this::getShooterPower, 1500.0));
+        //shooter.setDefaultCommand(shooter.cmdSetCoupledIPSFactor(this::getShooterPower, 1500.0));
+        shooter.setDefaultCommand(shooter.cmdSetCoupledIPS(this::getTuningShooterPower));
 
-        mainShooter.setDefaultCommand(mainShooter.cmdSetIPS(this::getTuningShooterPower));
-        kicker.setDefaultCommand(kicker.cmdSetIPS(this::getTuningShooterPowerNeg));
-        backspin.setDefaultCommand(backspin.cmdSetIPS(this::getTuningShooterPower));
-
-        intakeAim.setDefaultCommand(
-            intakeAim.cmdSetAngle(() -> Degrees.of(engineersController.a().getAsBoolean() ? 102.5 : 5.0)));
-        intakedrive.setDefaultCommand(intakedrive.cmdSetIPS(()->engineersController.a().getAsBoolean() ? 125.0 : 0.0)); //600 max
+        intakePosition.setDefaultCommand(
+            intakePosition.cmdSetAngle(() -> Degrees.of(engineersController.a().getAsBoolean() ? 106 : 5.0)));
+        intakedrive.setDefaultCommand(intakedrive.cmdSetIPS(()->engineersController.a().getAsBoolean() ? 300.0 : 0.0)); //600 max
 
         //hood.setDefaultCommand(hood.cmdSetScaledAngle(engineersController::getLeftTriggerAxis));
-        hood.setDefaultCommand(hood.cmdSetAngle(this::getHoodTuningAngle));
+        verticalAim.setDefaultCommand(verticalAim.cmdSetAngle(this::getHoodTuningAngle));
         engineersController.povUp().onTrue(Commands.runOnce(() -> adjustHoodTuneAngle(HOOD_TUNE_ANGLE_STEP_DEGREES)));
         engineersController.povDown().onTrue(Commands.runOnce(() -> adjustHoodTuneAngle(-HOOD_TUNE_ANGLE_STEP_DEGREES)));
         engineersController.povRight().onTrue(Commands.runOnce(() -> adjustShooterTuneSpeed(SHOOTER_TUNE_SPEED_STEP_IPS)));
@@ -412,6 +398,14 @@ public class RobotContainer implements Subsystem {
 
         driversController.x().onTrue(showLights);
         driversController.x().onFalse(showStatic);
+        driversController.rightTrigger().whileTrue(
+            new SnowblowToAlliance(
+                drivetrain,
+                intakePosition,
+                verticalAim,
+                shooter,
+                this::getDriverDriveRequest)
+        );
 
         // Run SysId routines when holding back/start and X/Y.
         // Note that each routine should be run exactly once in a single log.
@@ -423,14 +417,14 @@ public class RobotContainer implements Subsystem {
        //*  Reset the field-centric heading on left bumper press.
         driversController.leftBumper().onTrue(drivetrain.runOnce(drivetrain::seedFieldCentric));
 
-        horizontalAimSubsystem.setDefaultCommand(
-            horizontalAimSubsystem.cmdSetScaledAngle(() -> (engineersController.getLeftX() + 1.0) / 2.0));
+        horizontalAim.setDefaultCommand(
+            horizontalAim.cmdSetScaledAngle(() -> (engineersController.getLeftX() + 1.0) / 2.0));
 
         drivetrain.registerTelemetry(logger::telemeterize);
     }
 
     public Command getAutonomousCommand() {
-        //NamedCommands.registerCommand("spinIntake", new SequentialCommandGroup(mainShooter.cmdSetIPS(()->1000)));
+        //NamedCommands.registerCommand("spinIntake", new SequentialCommandGroup(shooter.cmdSetCoupledIPS(() -> 1000)));
         //NamedCommands.registerCommand("deployIntake", exampleSubsystem.exampleCommand());
         //NamedCommands.registerCommand("someOtherCommand", new SomeOtherCommand());
 
@@ -447,14 +441,16 @@ public class RobotContainer implements Subsystem {
         return (shooterPower < 0.005) ? 0.0 : (shooterPower + minPower) / (1.0 + minPower);
     }
 
+    private SwerveRequest getDriverDriveRequest() {
+        return drive.withVelocityX(-driversController.getLeftY() * MaxSpeed)
+                .withVelocityY(-driversController.getLeftX() * MaxSpeed)
+                .withRotationalRate(-driversController.getRightX() * MaxAngularRate);
+    }
+
     double shooterTuneSpeed = 0;
 
     private double getTuningShooterPower() {
         return shooterTuneSpeed;
-    }
-
-    private double getTuningShooterPowerNeg() {
-        return -shooterTuneSpeed;
     }
 
     double hoodTuneAngle = 0;
@@ -477,7 +473,7 @@ public class RobotContainer implements Subsystem {
     public void publishTuningTelemetry() {
         hoodTuneAnglePublisher.set(hoodTuneAngle);
         shooterTuneSpeedPublisher.set(shooterTuneSpeed);
-        mainFlywheelMeasuredSpeedPublisher.set(mainShooter.getSpeedIPS());
+        mainFlywheelMeasuredSpeedPublisher.set(shooter.getMainFlywheelSpeedIPS());
     }
 
 }

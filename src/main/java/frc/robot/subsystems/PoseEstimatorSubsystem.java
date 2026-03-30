@@ -1,5 +1,7 @@
 package frc.robot.subsystems;
 
+import static edu.wpi.first.units.Units.Microseconds;
+
 import java.util.function.BooleanSupplier;
 import java.util.function.DoubleSupplier;
 import java.util.function.Supplier;
@@ -16,6 +18,7 @@ import edu.wpi.first.networktables.NetworkTable;
 import edu.wpi.first.networktables.NetworkTableInstance;
 import edu.wpi.first.networktables.StringPublisher;
 import edu.wpi.first.networktables.StructPublisher;
+import edu.wpi.first.units.measure.Time;
 import edu.wpi.first.wpilibj.RobotController;
 import edu.wpi.first.wpilibj2.command.SubsystemBase;
 import frc.robot.utility.RingBuffer;
@@ -175,7 +178,7 @@ public class PoseEstimatorSubsystem extends SubsystemBase {
 
     public static class Configuration {
         public Supplier<Pose2d> odometryPose;
-        public Supplier<Long> odometryTimestamp;
+        public Supplier<Time> odometryTimestamp;
         public BooleanSupplier odometryValid;
         public double odoLongitudinalDeviationPerDistance;
         public double odoLateralDeviationPerDistance;
@@ -184,7 +187,7 @@ public class PoseEstimatorSubsystem extends SubsystemBase {
         public double odoLateralDeviationPerRadian;
         public double odoHeadingDeviationPerRadian;
         public Supplier<Pose2d> visionPose;
-        public Supplier<Long> visionTimestamp;
+        public Supplier<Time> visionTimestamp;
         public BooleanSupplier visionIsValid;
         public DoubleSupplier visionXDeviation;
         public DoubleSupplier visionYDeviation;
@@ -220,7 +223,7 @@ public class PoseEstimatorSubsystem extends SubsystemBase {
     Pose2d fusedAnchor;
 
     private final Supplier<Pose2d> odometryPoseSupplier;
-    private final Supplier<Long> odometryTimestampSupplier;
+    private final Supplier<Time> odometryTimestampSupplier;
     private final BooleanSupplier odometryIsValidSupplier;
     private final double odoLongitudinalDeviationPerDistance;
     private final double odoLateralDeviationPerDistance;
@@ -232,7 +235,7 @@ public class PoseEstimatorSubsystem extends SubsystemBase {
     private final DoubleSupplier visionYDeviationSupplier;
     private final DoubleSupplier visionThetaDeviationSupplier;
     private Supplier<Pose2d> visionPoseSupplier;
-    private Supplier<Long> visionTimestampSupplier;
+    private Supplier<Time> visionTimestampSupplier;
     private BooleanSupplier visionIsValidSupplier;
     private Long lastFusedVisionTimestamp;
 
@@ -299,7 +302,8 @@ public class PoseEstimatorSubsystem extends SubsystemBase {
     private void fuseVision() {
         OdometryData newerOdometryData = null;
         OdometryData olderOdometryData = null;
-        Long visionTimestamp = visionTimestampSupplier.get();
+        OdometryData exactOdometryData = null;
+        Long visionTimestamp = toMicroseconds(visionTimestampSupplier.get());
         if (visionTimestamp.equals(lastFusedVisionTimestamp)) {
             return;
         }
@@ -312,6 +316,10 @@ public class PoseEstimatorSubsystem extends SubsystemBase {
             return;
         for (int index = 0; index < odometryHistory.size(); ++index) {
             Long odometryTimestamp = odometryHistory.get(index).timestamp;
+            if (odometryTimestamp.equals(visionTimestamp)) {
+                exactOdometryData = odometryHistory.get(index);
+                break;
+            }
             if (odometryTimestamp >= visionTimestamp) {
                 newerOdometryData = odometryHistory.get(index);
             }
@@ -319,6 +327,10 @@ public class PoseEstimatorSubsystem extends SubsystemBase {
                 olderOdometryData = odometryHistory.get(index);
                 break;
             }
+        }
+        if (exactOdometryData != null) {
+            newerOdometryData = exactOdometryData;
+            olderOdometryData = exactOdometryData;
         }
         // Odometry is much faster than vision, which should never be newer
         // The apriltag reading must exist inside our odometry history
@@ -328,17 +340,22 @@ public class PoseEstimatorSubsystem extends SubsystemBase {
         long dt = newerOdometryData.timestamp - olderOdometryData.timestamp;
         dtPublisher.set(dt);
         SignalLogger.writeInteger("PoseEstimator/Debug/dt from before to after odometry record", dt);
-        if (dt <= 0) {
+        if (dt < 0) {
             throw new IllegalStateException(
                     "CRITICAL: Odometry timestamps are non-monotonic or duplicate. dt=" +
                             dt +
                             ". Fix upstream sensor/loop timing.");
         }
-        double alpha = (double) (visionTimestamp - olderOdometryData.timestamp) / dt;
         Pose2d visionPose = visionPoseSupplier.get();
         visionPosePublisher.publish(visionPose, "PoseEstimator/Debug/visionPose");
         Pose2d previousOdometryAnchor = odometryAnchor;
-        Pose2d visionTimeOdometryAnchor = olderOdometryData.pose.interpolate(newerOdometryData.pose, alpha);
+        Pose2d visionTimeOdometryAnchor;
+        if (dt == 0) {
+            visionTimeOdometryAnchor = olderOdometryData.pose;
+        } else {
+            double alpha = (double) (visionTimestamp - olderOdometryData.timestamp) / dt;
+            visionTimeOdometryAnchor = olderOdometryData.pose.interpolate(newerOdometryData.pose, alpha);
+        }
         odometryAnchorPublisher.publish(visionTimeOdometryAnchor, "PoseEstimator/Debug/odometryAnchor");
         double xDeviationSupplier = Math.max(0.005, visionXDeviationSupplier.getAsDouble()); // No better than .5 cm
         double xVarianceVision = xDeviationSupplier * xDeviationSupplier;
@@ -424,7 +441,7 @@ public class PoseEstimatorSubsystem extends SubsystemBase {
         Rotation2d newHeading = newPose.getRotation();
 
         odometryHistory.getScratchpad().pose = newPose;
-        odometryHistory.getScratchpad().timestamp = odometryTimestampSupplier.get();
+        odometryHistory.getScratchpad().timestamp = toMicroseconds(odometryTimestampSupplier.get());
         newOdometryPoseTimestampPublisher.set(odometryHistory.getScratchpad().timestamp);
         SignalLogger.writeInteger(
                 "PoseEstimator/Debug/NewOdometryPoseTimestamp",
@@ -606,7 +623,11 @@ public class PoseEstimatorSubsystem extends SubsystemBase {
         return () -> Math.sqrt(thetaVarianceOdometry);
     }
     
-    public Supplier<Long> getTimestampSupplier() {
+    public Supplier<Time> getTimestampSupplier() {
         return odometryTimestampSupplier; 
+    }
+
+    private static long toMicroseconds(Time timestamp) {
+        return Math.round(timestamp.in(Microseconds));
     }
 }

@@ -1,10 +1,13 @@
 package frc.robot.subsystems;
 
+import static edu.wpi.first.units.Units.Seconds;
+
 import java.util.function.BooleanSupplier;
 import java.util.function.DoubleSupplier;
 import java.util.function.Supplier;
 
 import edu.wpi.first.math.geometry.Pose2d;
+import edu.wpi.first.units.measure.Time;
 import edu.wpi.first.wpilibj2.command.SubsystemBase;
 import frc.robot.LimelightHelpers;
 import frc.robot.LimelightHelpers.PoseEstimate;
@@ -27,9 +30,9 @@ public class LimelightSubsystem extends SubsystemBase {
         };
     }
 
-    public Supplier<Long> getPose2dTimestampSupplier() {
+    public Supplier<Time> getPose2dTimestampSupplier() {
         return ()-> {
-            return (long)(currentPoseEstimate.timestampSeconds*1000000.0);
+            return Seconds.of(currentPoseEstimate.timestampSeconds);
         };
     }
     

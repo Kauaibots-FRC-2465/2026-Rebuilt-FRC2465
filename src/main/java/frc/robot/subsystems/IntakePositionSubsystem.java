@@ -16,7 +16,7 @@ import frc.robot.OverrideCommand;
  * <p>This subsystem owns the two underlying TalonFX angle subsystems so intake
  * aim can be scheduled as one coordinated mechanism.
  */
-public class IntakeAimSubsystem extends SubsystemBase {
+public class IntakePositionSubsystem extends SubsystemBase {
     private final KrakenAnglePositionSubsystem leftIntakePosition;
     private final KrakenAnglePositionSubsystem rightIntakePosition;
 
@@ -26,7 +26,7 @@ public class IntakeAimSubsystem extends SubsystemBase {
      * <p>The shared motion parameters are applied to both sides while each side
      * retains its own CAN identity, offset, and inversion.
      */
-    public IntakeAimSubsystem(
+    public IntakePositionSubsystem(
             int leftCanId,
             String leftMotorName,
             double leftFeedbackRotorOffset,

@@ -5,6 +5,7 @@ import java.util.function.Supplier;
 import com.ctre.phoenix6.swerve.SwerveRequest;
 
 import edu.wpi.first.math.geometry.Pose2d;
+import edu.wpi.first.units.measure.Time;
 import edu.wpi.first.wpilibj2.command.CommandScheduler;
 import edu.wpi.first.wpilibj2.command.Subsystem;
 import frc.robot.utility.ThrottlePrint;
@@ -12,7 +13,7 @@ import frc.robot.utility.ThrottlePrint;
 public class SwerveDrivetrainSubsystem implements Subsystem {
     CommandSwerveDrivetrain encapsulatedDrivetrain;
     Supplier<Pose2d> poseSupplier;
-    Supplier<Long> timestampSupplier;
+    Supplier<Time> timestampSupplier;
 
     public SwerveDrivetrainSubsystem(CommandSwerveDrivetrain encapsulate, PoseEstimatorSubsystem poseEstimator) {
         encapsulatedDrivetrain = encapsulate;

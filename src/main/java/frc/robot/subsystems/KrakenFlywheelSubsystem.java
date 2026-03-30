@@ -118,7 +118,6 @@ public class KrakenFlywheelSubsystem extends SubsystemBase {
         cfg.TorqueCurrent.PeakForwardTorqueCurrent  =  peakCurrent; // amps
         cfg.TorqueCurrent.PeakReverseTorqueCurrent  = -peakCurrent; // amps
    
-        setDefaultCommand(cmdCoast());
     }
 
     @Override
@@ -192,6 +191,15 @@ public class KrakenFlywheelSubsystem extends SubsystemBase {
             desiredRPS = rps;
             kraken.setControl(velocityRequest.withVelocity(desiredRPS * gearRatio));
         }
+    }
+
+    /**
+     * Sets the flywheel surface speed in Inches Per Second (IPS).
+     *
+     * @param ips desired surface speed in inches per second.
+     */
+    public void setIPS(double ips) {
+        setRPS(ips / Math.PI / flywheelDiameterInches);
     }
 
     /**

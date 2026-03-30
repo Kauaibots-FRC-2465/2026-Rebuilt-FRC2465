@@ -1,0 +1,4 @@
+TODO
+
+- Change drivetrain drive request from `OpenLoopVoltage` to `Velocity` and use FOC closed-loop output for the drive motors.
+- Replace flywheel follower with independent control and a 20 ms velocity window.

@@ -5,12 +5,17 @@
 package frc.robot.subsystems;
 
 import static edu.wpi.first.units.Units.Inch;
+import static edu.wpi.first.units.Units.Microseconds;
 
 import java.util.function.BooleanSupplier;
 import java.util.function.DoubleSupplier;
 import java.util.function.Supplier;
 
 import edu.wpi.first.math.geometry.Pose2d;
+import edu.wpi.first.networktables.NetworkTable;
+import edu.wpi.first.networktables.NetworkTableInstance;
+import edu.wpi.first.networktables.StringPublisher;
+import edu.wpi.first.units.measure.Time;
 import edu.wpi.first.wpilibj2.command.SubsystemBase;
 import frc.robot.utility.ThrottlePrint;
 import edu.wpi.first.units.AngleUnit;
@@ -25,6 +30,8 @@ public class PinpointSubsystem extends SubsystemBase {
     private final GoBildaPinpointFRCDriver.GoBildaOdometryPods odometryPod;
     private final GoBildaPinpointFRCDriver.EncoderDirection xPodDirection;
     private final GoBildaPinpointFRCDriver.EncoderDirection yPodDirection;
+    private final StringPublisher pinpointStatusPublisher;
+    private GoBildaPinpointFRCDriver.DeviceStatus lastPublishedPinpointStatus = null;
     private boolean configurationSent = false;
 
     public PinpointSubsystem(
@@ -41,6 +48,8 @@ public class PinpointSubsystem extends SubsystemBase {
         this.odometryPod = odometryPod;
         this.xPodDirection = xPodDirection;
         this.yPodDirection = yPodDirection;
+        NetworkTable subsystemStatusTable = NetworkTableInstance.getDefault().getTable("SubsystemStatus");
+        pinpointStatusPublisher = subsystemStatusTable.getStringTopic("PinpontStatus").publish();
         pinpoint.setBulkReadScope(
             pinpoint.DEVICE_STATUS,
             pinpoint.LOOP_TIME,
@@ -60,7 +69,12 @@ public class PinpointSubsystem extends SubsystemBase {
     @Override
     public void periodic() {
         pinpoint.update();
-        if(pinpoint.getDeviceStatus() != GoBildaPinpointFRCDriver.DeviceStatus.READY) return;
+        GoBildaPinpointFRCDriver.DeviceStatus currentPinpointStatus = pinpoint.getDeviceStatus();
+        if (currentPinpointStatus != lastPublishedPinpointStatus) {
+            pinpointStatusPublisher.set(describeDeviceStatus(currentPinpointStatus));
+            lastPublishedPinpointStatus = currentPinpointStatus;
+        }
+        if(currentPinpointStatus != GoBildaPinpointFRCDriver.DeviceStatus.READY) return;
         if (!configurationSent) {
             pinpoint.setOffsets(xPodOffset, yPodOffset, distanceUnit);
             pinpoint.setEncoderDirections(xPodDirection, yPodDirection);
@@ -73,12 +87,12 @@ public class PinpointSubsystem extends SubsystemBase {
         return () -> {return pinpoint.getDeviceStatus()==GoBildaPinpointFRCDriver.DeviceStatus.READY;};
     } 
 
-    public Supplier<Long> getTimestampSupplier() {
-        return () -> {return pinpoint.getFpgaBulkReadTimestamp();};
+    public Supplier<Time> getTimestampSupplier() {
+        return () -> Microseconds.of(pinpoint.getFpgaBulkReadTimestamp());
     }
 
-    public Supplier<Long> getLatencySupplier() {
-        return () -> {return pinpoint.getFpgaBulkReadLatency();};
+    public Supplier<Time> getLatencySupplier() {
+        return () -> Microseconds.of(pinpoint.getFpgaBulkReadLatency());
     }
 
     public Supplier<Pose2d> getPose2dSupplier() {
@@ -87,5 +101,19 @@ public class PinpointSubsystem extends SubsystemBase {
 
     public DoubleSupplier getHeadingSupplier(AngleUnit angleUnit) {
         return () -> pinpoint.getHeading(angleUnit);
+    }
+
+    private static String describeDeviceStatus(GoBildaPinpointFRCDriver.DeviceStatus status) {
+        return switch (status) {
+            case NOT_READY -> "Pinpoint is powering up and not ready yet.";
+            case READY -> "Pinpoint is ready.";
+            case CALIBRATING -> "Pinpoint is calibrating its IMU.";
+            case FAULT_X_POD_NOT_DETECTED -> "Forward/backward odometry pod not detected.";
+            case FAULT_Y_POD_NOT_DETECTED -> "Strafe odometry pod not detected.";
+            case FAULT_NO_PODS_DETECTED -> "No odometry pods detected.";
+            case FAULT_IMU_RUNAWAY -> "Pinpoint IMU runaway fault detected.";
+            case FAULT_BAD_WRITE_CRC -> "Pinpoint reported a bad write CRC fault.";
+            case FAULT_BAD_READ -> "Pinpoint reported a bad read fault.";
+        };
     }
 }

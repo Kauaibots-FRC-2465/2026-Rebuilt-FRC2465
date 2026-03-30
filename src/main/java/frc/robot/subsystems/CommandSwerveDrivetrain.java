@@ -1,5 +1,7 @@
 package frc.robot.subsystems;
 
+import static edu.wpi.first.units.Units.Microseconds;
+import static edu.wpi.first.units.Units.Seconds;
 import static edu.wpi.first.units.Units.*;
 
 import java.util.Optional;
@@ -16,6 +18,7 @@ import edu.wpi.first.math.geometry.Pose2d;
 import edu.wpi.first.math.geometry.Rotation2d;
 import edu.wpi.first.math.numbers.N1;
 import edu.wpi.first.math.numbers.N3;
+import edu.wpi.first.units.measure.Time;
 import edu.wpi.first.wpilibj.DriverStation;
 import edu.wpi.first.wpilibj.DriverStation.Alliance;
 import edu.wpi.first.wpilibj.Notifier;
@@ -115,6 +118,14 @@ public class CommandSwerveDrivetrain extends TunerSwerveDrivetrain implements Su
 
     /* The SysId routine to test */
     private SysIdRoutine m_sysIdRoutineToApply = m_sysIdRoutineTranslation;
+
+    private static double fpgaMicrosecondsToSeconds(double fpgaTimestampMicroseconds) {
+        return Seconds.convertFrom(fpgaTimestampMicroseconds, Microseconds);
+    }
+
+    private static double fpgaTimestampToCurrentTime(Time fpgaTimestamp) {
+        return Utils.fpgaToCurrentTime(fpgaTimestamp.in(Seconds));
+    }
 
     /**
      * Constructs a CTRE SwerveDrivetrain using the specified constants.
@@ -269,7 +280,13 @@ public class CommandSwerveDrivetrain extends TunerSwerveDrivetrain implements Su
      */
     @Override
     public void addVisionMeasurement(Pose2d visionRobotPoseMeters, double timestampSeconds) {
-        super.addVisionMeasurement(visionRobotPoseMeters, Utils.fpgaToCurrentTime(timestampSeconds));
+        super.addVisionMeasurement(
+                visionRobotPoseMeters,
+                Utils.fpgaToCurrentTime(fpgaMicrosecondsToSeconds(timestampSeconds)));
+    }
+
+    public void addVisionMeasurement(Pose2d visionRobotPoseMeters, Time fpgaTimestamp) {
+        super.addVisionMeasurement(visionRobotPoseMeters, fpgaTimestampToCurrentTime(fpgaTimestamp));
     }
 
     /**
@@ -291,7 +308,21 @@ public class CommandSwerveDrivetrain extends TunerSwerveDrivetrain implements Su
         double timestampSeconds,
         Matrix<N3, N1> visionMeasurementStdDevs
     ) {
-        super.addVisionMeasurement(visionRobotPoseMeters, Utils.fpgaToCurrentTime(timestampSeconds), visionMeasurementStdDevs);
+        super.addVisionMeasurement(
+                visionRobotPoseMeters,
+                Utils.fpgaToCurrentTime(fpgaMicrosecondsToSeconds(timestampSeconds)),
+                visionMeasurementStdDevs);
+    }
+
+    public void addVisionMeasurement(
+        Pose2d visionRobotPoseMeters,
+        Time fpgaTimestamp,
+        Matrix<N3, N1> visionMeasurementStdDevs
+    ) {
+        super.addVisionMeasurement(
+                visionRobotPoseMeters,
+                fpgaTimestampToCurrentTime(fpgaTimestamp),
+                visionMeasurementStdDevs);
     }
 
     /**
@@ -302,6 +333,10 @@ public class CommandSwerveDrivetrain extends TunerSwerveDrivetrain implements Su
      */
     @Override
     public Optional<Pose2d> samplePoseAt(double timestampSeconds) {
-        return super.samplePoseAt(Utils.fpgaToCurrentTime(timestampSeconds));
+        return super.samplePoseAt(Utils.fpgaToCurrentTime(fpgaMicrosecondsToSeconds(timestampSeconds)));
+    }
+
+    public Optional<Pose2d> samplePoseAt(Time fpgaTimestamp) {
+        return super.samplePoseAt(fpgaTimestampToCurrentTime(fpgaTimestamp));
     }
 }
