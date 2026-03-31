@@ -9,6 +9,7 @@ import com.ctre.phoenix6.configs.TalonFXConfiguration;
 import com.ctre.phoenix6.controls.NeutralOut;
 import com.ctre.phoenix6.controls.VelocityTorqueCurrentFOC;
 import com.ctre.phoenix6.hardware.TalonFX;
+import com.ctre.phoenix6.signals.InvertedValue;
 import com.ctre.phoenix6.signals.NeutralModeValue;
 
 import edu.wpi.first.wpilibj.DriverStation;
@@ -36,6 +37,8 @@ public class KrakenFlywheelSubsystem extends SubsystemBase {
     private final int canID;
     private final String canBusName;
     private final String motorName;
+    private final boolean motorReversed;
+    private final double velocityFilterTimeConstantSeconds;
 
     // Mechanism model
     private final double flywheelDiameterInches;
@@ -83,7 +86,67 @@ public class KrakenFlywheelSubsystem extends SubsystemBase {
      * @throws IllegalArgumentException if {@code gearRatio <= 0.0}
      * @throws IllegalArgumentException if {@code peakCurrent <= 0.0}
      */
-    public KrakenFlywheelSubsystem(int canID, String canBusName, String motorName, double flywheelDiameterInches, double gearRatio, double kS, double kV, double kP, double peakCurrent) {
+    public KrakenFlywheelSubsystem(
+            int canID,
+            String canBusName,
+            String motorName,
+            double flywheelDiameterInches,
+            double gearRatio,
+            double kS,
+            double kV,
+            double kP,
+            double peakCurrent) {
+        this(
+                canID,
+                canBusName,
+                motorName,
+                flywheelDiameterInches,
+                gearRatio,
+                kS,
+                kV,
+                kP,
+                peakCurrent,
+                false,
+                Double.NaN);
+    }
+
+    public KrakenFlywheelSubsystem(
+            int canID,
+            String canBusName,
+            String motorName,
+            double flywheelDiameterInches,
+            double gearRatio,
+            double kS,
+            double kV,
+            double kP,
+            double peakCurrent,
+            boolean motorReversed) {
+        this(
+                canID,
+                canBusName,
+                motorName,
+                flywheelDiameterInches,
+                gearRatio,
+                kS,
+                kV,
+                kP,
+                peakCurrent,
+                motorReversed,
+                Double.NaN);
+    }
+
+    public KrakenFlywheelSubsystem(
+            int canID,
+            String canBusName,
+            String motorName,
+            double flywheelDiameterInches,
+            double gearRatio,
+            double kS,
+            double kV,
+            double kP,
+            double peakCurrent,
+            boolean motorReversed,
+            double velocityFilterTimeConstantSeconds) {
         if (!isValidCanID(canID)) {
             throw new IllegalArgumentException("ASSERTION FAILED: canID must be in range [0, 62].");
         }
@@ -104,9 +167,17 @@ public class KrakenFlywheelSubsystem extends SubsystemBase {
         this.gearRatio = gearRatio;
         this.canID = canID;
         this.canBusName = canBusName;
+        this.motorReversed = motorReversed;
+        this.velocityFilterTimeConstantSeconds = velocityFilterTimeConstantSeconds;
 
         kraken = new TalonFX(canID, new CANBus(canBusName));
         cfg.MotorOutput.NeutralMode = NeutralModeValue.Coast;
+        cfg.MotorOutput.Inverted = this.motorReversed
+                ? InvertedValue.Clockwise_Positive
+                : InvertedValue.CounterClockwise_Positive;
+        if (Double.isFinite(this.velocityFilterTimeConstantSeconds)) {
+            cfg.Feedback.VelocityFilterTimeConstant = this.velocityFilterTimeConstantSeconds;
+        }
         // Slot 0 — VelocityTorqueCurrentFOC gains
         // kS: static friction feedforward (amps)
         // kV: velocity feedforward (amps per mechanism RPS)

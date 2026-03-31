@@ -12,8 +12,6 @@ import java.io.File;
 import com.ctre.phoenix6.swerve.SwerveModule.DriveRequestType;
 import com.revrobotics.spark.SparkLowLevel.MotorType;
 import com.revrobotics.spark.config.SparkBaseConfig.IdleMode;
-import com.ctre.phoenix6.signals.MotorAlignmentValue;
-import com.ctre.phoenix6.signals.NeutralModeValue;
 //import com.revrobotics.spark.SparkLowLevel.MotorType;
 //import com.revrobotics.spark.SparkMax;
 import com.ctre.phoenix6.swerve.SwerveRequest;
@@ -48,7 +46,6 @@ import frc.robot.generated.TunerConstants;
 import frc.robot.subsystems.CommandSwerveDrivetrain;
 import frc.robot.subsystems.IntakePositionSubsystem;
 import frc.robot.subsystems.KrakenFlywheelSubsystem;
-import frc.robot.subsystems.KrakenFollowerSubsystem;
 import frc.robot.subsystems.LimelightSubsystem;
 import frc.robot.subsystems.PinpointSubsystem;
 import frc.robot.subsystems.PoseEstimatorSubsystem;
@@ -60,7 +57,7 @@ import frc.robot.subsystems.SwerveDrivetrainSubsystem;
 
 // For tuning see https://phoenixpro-documentation--161.org.readthedocs.build/en/161/docs/application-notes/manual-pid-tuning.html
 // Clockwise positive on Left flywheel
-// Right flywheel (42) set to follow left, Opposed, ID 41
+// Main flywheels are commanded independently; left is inverted relative to right
 // kp=6
 // ks=2.2
 // kv=0.01
@@ -75,6 +72,7 @@ public class RobotContainer implements Subsystem {
     private static final double MAX_HOOD_ANGLE_DEGREES = HOOD_ANGLE_AT_MECHANISM_ZERO_DEGREES;
     private static final double HOOD_TUNE_ANGLE_STEP_DEGREES = 5.0;
     private static final double SHOOTER_TUNE_SPEED_STEP_IPS = 40;
+    private static final double MAIN_FLYWHEEL_VELOCITY_SAMPLE_WINDOW_SECONDS = 0.010;
 
     private static enum MotorData {
         RIGHT_FLYWHEEL(42, "Right Flywheel Kraken x60"),
@@ -139,9 +137,6 @@ public class RobotContainer implements Subsystem {
 
     public final ShooterSubsystem shooter;
     public final KrakenFlywheelSubsystem intakedrive;
-
-
-    public final KrakenFollowerSubsystem flywheelFollowerSubsystem = new KrakenFollowerSubsystem("Default Name");
     // CTRE CAN MAP
     // 11 Encoder for Front Left Swerve
     // 12 Encoder for Back Left Swerve
@@ -290,7 +285,20 @@ public class RobotContainer implements Subsystem {
             2.3,
             0,
             2,
-            30),
+            30,
+            false,
+            MAIN_FLYWHEEL_VELOCITY_SAMPLE_WINDOW_SECONDS),
+          new ShooterSubsystem.FlywheelConfig(
+            MotorData.LEFT_FLYWHEEL.id,
+            MotorData.LEFT_FLYWHEEL.name,
+            4 * INCHES,
+            24f/16f,
+            2.3,
+            0,
+            2,
+            30,
+            true,
+            MAIN_FLYWHEEL_VELOCITY_SAMPLE_WINDOW_SECONDS),
           new ShooterSubsystem.FlywheelConfig(
             MotorData.KICKER.id,
             MotorData.KICKER.name,
@@ -322,9 +330,6 @@ public class RobotContainer implements Subsystem {
           2,                          // | kP
           20                 // | Peak current
         );
-  
-        flywheelFollowerSubsystem.addFollower(MotorData.LEFT_FLYWHEEL.id, MotorData.LEFT_FLYWHEEL.name, MotorData.RIGHT_FLYWHEEL.id, 40, MotorAlignmentValue.Opposed, NeutralModeValue.Coast);
-
         RobotConfig config = null;
         try{
         config = RobotConfig.fromGUISettings();

@@ -10,8 +10,8 @@ import frc.robot.OverrideCommand;
 /**
  * Aggregate subsystem for the coordinated shooter flywheels.
  *
- * <p>This subsystem owns the main flywheel, kicker, and backspin flywheel so
- * they can be scheduled as a single unit.
+ * <p>This subsystem owns the paired main flywheels, kicker, and backspin flywheel
+ * so they can be scheduled as a single unit.
  */
 public class ShooterSubsystem extends SubsystemBase {
     /**
@@ -26,6 +26,8 @@ public class ShooterSubsystem extends SubsystemBase {
         final double kV;
         final double kP;
         final double peakCurrent;
+        final boolean motorReversed;
+        final double velocityFilterTimeConstantSeconds;
 
         public FlywheelConfig(
                 int canId,
@@ -36,6 +38,53 @@ public class ShooterSubsystem extends SubsystemBase {
                 double kV,
                 double kP,
                 double peakCurrent) {
+            this(
+                    canId,
+                    motorName,
+                    flywheelDiameterInches,
+                    gearRatio,
+                    kS,
+                    kV,
+                    kP,
+                    peakCurrent,
+                    false,
+                    Double.NaN);
+        }
+
+        public FlywheelConfig(
+                int canId,
+                String motorName,
+                double flywheelDiameterInches,
+                double gearRatio,
+                double kS,
+                double kV,
+                double kP,
+                double peakCurrent,
+                boolean motorReversed) {
+            this(
+                    canId,
+                    motorName,
+                    flywheelDiameterInches,
+                    gearRatio,
+                    kS,
+                    kV,
+                    kP,
+                    peakCurrent,
+                    motorReversed,
+                    Double.NaN);
+        }
+
+        public FlywheelConfig(
+                int canId,
+                String motorName,
+                double flywheelDiameterInches,
+                double gearRatio,
+                double kS,
+                double kV,
+                double kP,
+                double peakCurrent,
+                boolean motorReversed,
+                double velocityFilterTimeConstantSeconds) {
             this.canId = canId;
             this.motorName = Objects.requireNonNull(motorName, "motorName must not be null");
             this.flywheelDiameterInches = flywheelDiameterInches;
@@ -44,24 +93,30 @@ public class ShooterSubsystem extends SubsystemBase {
             this.kV = kV;
             this.kP = kP;
             this.peakCurrent = peakCurrent;
+            this.motorReversed = motorReversed;
+            this.velocityFilterTimeConstantSeconds = velocityFilterTimeConstantSeconds;
         }
     }
 
     private final KrakenFlywheelSubsystem mainFlywheel;
+    private final KrakenFlywheelSubsystem mirroredMainFlywheel;
     private final KrakenFlywheelSubsystem kicker;
     private final KrakenFlywheelSubsystem backspinFlywheel;
 
     public ShooterSubsystem(
             String canBusName,
             FlywheelConfig mainFlywheelConfig,
+            FlywheelConfig mirroredMainFlywheelConfig,
             FlywheelConfig kickerConfig,
             FlywheelConfig backspinConfig) {
         Objects.requireNonNull(canBusName, "canBusName must not be null");
         Objects.requireNonNull(mainFlywheelConfig, "mainFlywheelConfig must not be null");
+        Objects.requireNonNull(mirroredMainFlywheelConfig, "mirroredMainFlywheelConfig must not be null");
         Objects.requireNonNull(kickerConfig, "kickerConfig must not be null");
         Objects.requireNonNull(backspinConfig, "backspinConfig must not be null");
 
         mainFlywheel = createFlywheel(canBusName, mainFlywheelConfig);
+        mirroredMainFlywheel = createFlywheel(canBusName, mirroredMainFlywheelConfig);
         kicker = createFlywheel(canBusName, kickerConfig);
         backspinFlywheel = createFlywheel(canBusName, backspinConfig);
     }
@@ -71,6 +126,7 @@ public class ShooterSubsystem extends SubsystemBase {
      */
     public void setIPS(double mainFlywheelIps, double kickerIps, double backspinIps) {
         mainFlywheel.setIPS(mainFlywheelIps);
+        mirroredMainFlywheel.setIPS(mainFlywheelIps);
         kicker.setIPS(kickerIps);
         backspinFlywheel.setIPS(backspinIps);
     }
@@ -137,6 +193,10 @@ public class ShooterSubsystem extends SubsystemBase {
         return kicker.getSpeedIPS();
     }
 
+    public double getMirroredMainFlywheelSpeedIPS() {
+        return mirroredMainFlywheel.getSpeedIPS();
+    }
+
     public double getBackspinFlywheelSpeedIPS() {
         return backspinFlywheel.getSpeedIPS();
     }
@@ -151,6 +211,8 @@ public class ShooterSubsystem extends SubsystemBase {
                 config.kS,
                 config.kV,
                 config.kP,
-                config.peakCurrent);
+                config.peakCurrent,
+                config.motorReversed,
+                config.velocityFilterTimeConstantSeconds);
     }
 }
