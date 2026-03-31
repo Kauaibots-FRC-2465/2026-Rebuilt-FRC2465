@@ -6,6 +6,13 @@
   "configurations": [
     {
       "type": "java",
+      "name": "ShooterInterpolator",
+      "request": "launch",
+      "mainClass": "frc.robot.Commands.ShooterInterpolator",
+      "projectName": "Roborio Code"
+    },
+    {
+      "type": "java",
       "name": "Main",
       "request": "launch",
       "mainClass": "frc.robot.Main",

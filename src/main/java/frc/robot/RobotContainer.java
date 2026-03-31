@@ -401,7 +401,6 @@ public class RobotContainer implements Subsystem {
         driversController.rightTrigger().whileTrue(
             new SnowblowToAlliance(
                 drivetrain,
-                intakePosition,
                 verticalAim,
                 shooter,
                 this::getDriverDriveRequest)
