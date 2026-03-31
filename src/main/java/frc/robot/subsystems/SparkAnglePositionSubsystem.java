@@ -61,6 +61,10 @@ public class SparkAnglePositionSubsystem extends SubsystemBase {
     // Mechanism model
     private final double mechanismGearRatio;
     private final double absoluteEncoderGearRatio;
+    private final double referenceAngleAtMechanismZeroRotations;
+    private final double publicToMechanismSlope;
+    private final double minimumPublicAngleRotations;
+    private final double maximumPublicAngleRotations;
     private final double minimumAngleRotations;
     private final double maximumAngleRotations;
     private final boolean motorReversed;
@@ -103,8 +107,8 @@ public class SparkAnglePositionSubsystem extends SubsystemBase {
      * @param maxVoltageRequired nominal voltage used for voltage compensation.
      *     This should be the maximum voltage you expect to command from this
      *     mechanism.
-     * @param minimumAngle minimum allowed mechanism angle.
-     * @param maximumAngle maximum allowed mechanism angle.
+     * @param minimumAngle minimum allowed public angle.
+     * @param maximumAngle maximum allowed public angle.
      * @param motorReversed whether positive commanded motor output is inverted.
      * @param absoluteEncoderReversed whether the Spark absolute encoder
      *     direction is inverted (used for absolute readings and relative
@@ -136,6 +140,48 @@ public class SparkAnglePositionSubsystem extends SubsystemBase {
             Angle maximumAngle,
             boolean motorReversed,
             boolean absoluteEncoderReversed) {
+        this(
+                canID,
+                motorName,
+                mechanismGearRatio,
+                absoluteEncoderGearRatio,
+                kP,
+                kD,
+                stallCurrentLimitAmps,
+                freeCurrentLimitAmps,
+                maxVoltageRequired,
+                minimumAngle,
+                maximumAngle,
+                Rotations.of(0.0),
+                true,
+                motorReversed,
+                absoluteEncoderReversed);
+    }
+
+    /**
+     * Constructs a new SparkAnglePositionSubsystem with a calibrated public-angle reference.
+     *
+     * @param referenceAngleAtMechanismZero public angle that corresponds to a
+     *     mechanism angle of zero.
+     * @param publicAngleIncreasesWithMechanism whether positive public-angle
+     *     changes match positive mechanism-angle changes.
+     */
+    public SparkAnglePositionSubsystem(
+            int canID,
+            String motorName,
+            double mechanismGearRatio,
+            double absoluteEncoderGearRatio,
+            double kP,
+            double kD,
+            int stallCurrentLimitAmps,
+            int freeCurrentLimitAmps,
+            double maxVoltageRequired,
+            Angle minimumAngle,
+            Angle maximumAngle,
+            Angle referenceAngleAtMechanismZero,
+            boolean publicAngleIncreasesWithMechanism,
+            boolean motorReversed,
+            boolean absoluteEncoderReversed) {
         System.out.println("Attempting to add SparkAnglePositionSubsystem for " + motorName);
         if (!isValidCanID(canID)) {
             throw new IllegalArgumentException("ASSERTION FAILED: canID must be in range [0, 62].");
@@ -155,12 +201,15 @@ public class SparkAnglePositionSubsystem extends SubsystemBase {
         if (!(maxVoltageRequired > 0.0)) {
             throw new IllegalArgumentException("ASSERTION FAILED: maxVoltageRequired must be positive.");
         }
-        double minimumAngleRotations = minimumAngle.in(Rotations);
-        double maximumAngleRotations = maximumAngle.in(Rotations);
-        if (!Double.isFinite(minimumAngleRotations) || !Double.isFinite(maximumAngleRotations)) {
+        double minimumPublicAngleRotations = minimumAngle.in(Rotations);
+        double maximumPublicAngleRotations = maximumAngle.in(Rotations);
+        double referenceAngleAtMechanismZeroRotations = referenceAngleAtMechanismZero.in(Rotations);
+        if (!Double.isFinite(minimumPublicAngleRotations)
+                || !Double.isFinite(maximumPublicAngleRotations)
+                || !Double.isFinite(referenceAngleAtMechanismZeroRotations)) {
             throw new IllegalArgumentException("ASSERTION FAILED: min/max angle must be finite.");
         }
-        if (minimumAngleRotations > maximumAngleRotations) {
+        if (minimumPublicAngleRotations > maximumPublicAngleRotations) {
             throw new IllegalArgumentException(
                     "ASSERTION FAILED: minimumAngleRotations must be <= maximumAngleRotations.");
         }
@@ -169,8 +218,14 @@ public class SparkAnglePositionSubsystem extends SubsystemBase {
         this.motorName = motorName;
         this.mechanismGearRatio = mechanismGearRatio;
         this.absoluteEncoderGearRatio = absoluteEncoderGearRatio;
-        this.minimumAngleRotations = minimumAngleRotations;
-        this.maximumAngleRotations = maximumAngleRotations;
+        this.referenceAngleAtMechanismZeroRotations = referenceAngleAtMechanismZeroRotations;
+        this.publicToMechanismSlope = publicAngleIncreasesWithMechanism ? 1.0 : -1.0;
+        this.minimumPublicAngleRotations = minimumPublicAngleRotations;
+        this.maximumPublicAngleRotations = maximumPublicAngleRotations;
+        double minimumMechanismAngleRotations = publicToMechanismRotations(minimumPublicAngleRotations);
+        double maximumMechanismAngleRotations = publicToMechanismRotations(maximumPublicAngleRotations);
+        this.minimumAngleRotations = Math.min(minimumMechanismAngleRotations, maximumMechanismAngleRotations);
+        this.maximumAngleRotations = Math.max(minimumMechanismAngleRotations, maximumMechanismAngleRotations);
         this.motorReversed = motorReversed;
         this.absoluteEncoderReversed = absoluteEncoderReversed;
 
@@ -243,27 +298,28 @@ public class SparkAnglePositionSubsystem extends SubsystemBase {
     }
 
     /**
-     * Commands mechanism angle using WPILib units.
+     * Commands public angle using WPILib units.
      *
-     * <p>Setpoints are interpreted as mechanism angle and converted to rotations
+     * <p>Setpoints are interpreted as public angle and converted to mechanism rotations
      * internally before being sent to the SparkMax position controller.
      * Requested angles are clipped to configured min/max limits.
      *
-     * @param angle desired mechanism angle.
+     * @param angle desired public angle.
      */
     public void setAngle(Angle angle) {
-        double requestedAngleRotations = angle.in(Rotations);
-        double newClippedAngleRotations = Math.max(
-                minimumAngleRotations,
-                Math.min(maximumAngleRotations, requestedAngleRotations));
-        if (requestedAngleRotations != newClippedAngleRotations) {
+        double requestedPublicAngleRotations = angle.in(Rotations);
+        double clippedPublicAngleRotations = Math.max(
+                minimumPublicAngleRotations,
+                Math.min(maximumPublicAngleRotations, requestedPublicAngleRotations));
+        if (requestedPublicAngleRotations != clippedPublicAngleRotations) {
             outOfRangePrint.error(
                     "[" + motorName + " | CAN " + canID
-                            + "] Requested angle " + requestedAngleRotations
+                            + "] Requested angle " + requestedPublicAngleRotations
                             + " rotations is outside configured range ["
-                            + minimumAngleRotations + ", " + maximumAngleRotations
+                            + minimumPublicAngleRotations + ", " + maximumPublicAngleRotations
                             + "]. Clipping command.");
         }
+        double newClippedAngleRotations = publicToMechanismRotations(clippedPublicAngleRotations);
         if (Double.isNaN(lastSetAngleRotations)
                 || Math.abs(lastSetAngleRotations - newClippedAngleRotations)
                         > ANGLE_CHANGE_THRESHOLD_ROTATIONS) {
@@ -285,7 +341,7 @@ public class SparkAnglePositionSubsystem extends SubsystemBase {
      *
      * <p>This command factory delegates to {@link #setAngle(Angle)} each scheduler cycle.
      *
-     * @param angle supplier for desired mechanism angle.
+     * @param angle supplier for desired public angle.
      * @return command that holds the desired angle.
      */
     public Command cmdSetAngle(Supplier<Angle> angle) {
@@ -304,7 +360,7 @@ public class SparkAnglePositionSubsystem extends SubsystemBase {
     }
 
     /**
-     * Commands mechanism angle from a scaled angle input in the range [0, 1].
+     * Commands public angle from a scaled angle input in the range [0, 1].
      *
      * <p>The scaled input is linearly mapped so:
      * 0.0 maps to minimum configured angle and 1.0 maps to maximum configured angle.
@@ -318,8 +374,8 @@ public class SparkAnglePositionSubsystem extends SubsystemBase {
     public Command cmdSetScaledAngle(DoubleSupplier scaledAngle) {
         return cmdSetAngle(() -> {
             double normalized = Math.max(0.0, Math.min(1.0, scaledAngle.getAsDouble()));
-            double angleRotations = minimumAngleRotations
-                    + normalized * (maximumAngleRotations - minimumAngleRotations);
+            double angleRotations = minimumPublicAngleRotations
+                    + normalized * (maximumPublicAngleRotations - minimumPublicAngleRotations);
             return Rotations.of(angleRotations);
         });
     }
@@ -371,12 +427,12 @@ public class SparkAnglePositionSubsystem extends SubsystemBase {
     }
 
     /**
-     * Returns current mechanism angle.
+     * Returns current public angle.
      *
-     * @return mechanism angle as a WPILib {@link Angle}.
+     * @return current public angle as a WPILib {@link Angle}.
      */
     public Angle getAngle() {
-        return Rotations.of(encoder.getPosition());
+        return Rotations.of(mechanismToPublicRotations(encoder.getPosition()));
     }
 
     private boolean configureMotor() {
@@ -477,6 +533,16 @@ public class SparkAnglePositionSubsystem extends SubsystemBase {
 
     private double absoluteToMechanismRotations(double absoluteRotations) {
         return absoluteRotations * (absoluteEncoderGearRatio / mechanismGearRatio);
+    }
+
+    private double publicToMechanismRotations(double publicAngleRotations) {
+        return publicToMechanismSlope
+                * (publicAngleRotations - referenceAngleAtMechanismZeroRotations);
+    }
+
+    private double mechanismToPublicRotations(double mechanismAngleRotations) {
+        return referenceAngleAtMechanismZeroRotations
+                + publicToMechanismSlope * mechanismAngleRotations;
     }
 
     private static boolean isValidCanID(int canID) {

@@ -70,7 +70,9 @@ public class RobotContainer implements Subsystem {
     private final static float REMEMBER_TO_TUNE_CURRENTLY_1 = 1f;
     
     private final static int INCHES = 1;
-    private static final double MAX_HOOD_TUNE_ANGLE_DEGREES = 50.0;
+    private static final double HOOD_ANGLE_AT_MECHANISM_ZERO_DEGREES = 76.9;
+    private static final double MIN_HOOD_ANGLE_DEGREES = HOOD_ANGLE_AT_MECHANISM_ZERO_DEGREES - 50.0;
+    private static final double MAX_HOOD_ANGLE_DEGREES = HOOD_ANGLE_AT_MECHANISM_ZERO_DEGREES;
     private static final double HOOD_TUNE_ANGLE_STEP_DEGREES = 5.0;
     private static final double SHOOTER_TUNE_SPEED_STEP_IPS = 40;
 
@@ -253,8 +255,10 @@ public class RobotContainer implements Subsystem {
             10,
             40,
             12.0,
-            Degrees.of(0.0),
-            Degrees.of(MAX_HOOD_TUNE_ANGLE_DEGREES),
+            Degrees.of(MIN_HOOD_ANGLE_DEGREES),
+            Degrees.of(MAX_HOOD_ANGLE_DEGREES),
+            Degrees.of(HOOD_ANGLE_AT_MECHANISM_ZERO_DEGREES),
+            false,
             true,
             false);
 
@@ -380,8 +384,8 @@ public class RobotContainer implements Subsystem {
 
         //hood.setDefaultCommand(hood.cmdSetScaledAngle(engineersController::getLeftTriggerAxis));
         verticalAim.setDefaultCommand(verticalAim.cmdSetAngle(this::getHoodTuningAngle));
-        engineersController.povUp().onTrue(Commands.runOnce(() -> adjustHoodTuneAngle(HOOD_TUNE_ANGLE_STEP_DEGREES)));
-        engineersController.povDown().onTrue(Commands.runOnce(() -> adjustHoodTuneAngle(-HOOD_TUNE_ANGLE_STEP_DEGREES)));
+        engineersController.povUp().onTrue(Commands.runOnce(() -> adjustHoodTuneAngle(-HOOD_TUNE_ANGLE_STEP_DEGREES)));
+        engineersController.povDown().onTrue(Commands.runOnce(() -> adjustHoodTuneAngle(HOOD_TUNE_ANGLE_STEP_DEGREES)));
         engineersController.povRight().onTrue(Commands.runOnce(() -> adjustShooterTuneSpeed(SHOOTER_TUNE_SPEED_STEP_IPS)));
         engineersController.povLeft().onTrue(Commands.runOnce(() -> adjustShooterTuneSpeed(-SHOOTER_TUNE_SPEED_STEP_IPS)));
         // Idle while the robot is disabled. This ensures the configured
@@ -452,7 +456,7 @@ public class RobotContainer implements Subsystem {
         return shooterTuneSpeed;
     }
 
-    double hoodTuneAngle = 0;
+    double hoodTuneAngle = MAX_HOOD_ANGLE_DEGREES;
 
 
     private Angle getHoodTuningAngle() {
@@ -460,7 +464,9 @@ public class RobotContainer implements Subsystem {
     }
 
     private void adjustHoodTuneAngle(double deltaDegrees) {
-        hoodTuneAngle = Math.max(0.0, Math.min(MAX_HOOD_TUNE_ANGLE_DEGREES, hoodTuneAngle + deltaDegrees));
+        hoodTuneAngle = Math.max(
+                MIN_HOOD_ANGLE_DEGREES,
+                Math.min(MAX_HOOD_ANGLE_DEGREES, hoodTuneAngle + deltaDegrees));
         hoodTuneAnglePublisher.set(hoodTuneAngle);
     }
 

@@ -5,14 +5,25 @@ import java.io.PrintWriter;
 
 public class ShooterInterpolator {
     private static final double ANGLE_EPSILON = 1e-9;
+    private static final double HOOD_ANGLE_AT_MECHANISM_ZERO_DEGREES = 76.9;
 
     // --- 1. EMPIRICAL DATA ---
-    //private static final double[] ANGLES = {76.9,71.9,66.9,61.9,56.9,51.9,46.9,41.9,36.9,31.9}; 
-    private static final double[] ANGLES =   { 0.0, 5.0,10.0,15.0,20.0,25.0,30.0,35.0,40.0,45.0}; 
+    private static final double[] ANGLES = {
+        HOOD_ANGLE_AT_MECHANISM_ZERO_DEGREES - 0.0,
+        HOOD_ANGLE_AT_MECHANISM_ZERO_DEGREES - 5.0,
+        HOOD_ANGLE_AT_MECHANISM_ZERO_DEGREES - 10.0,
+        HOOD_ANGLE_AT_MECHANISM_ZERO_DEGREES - 15.0,
+        HOOD_ANGLE_AT_MECHANISM_ZERO_DEGREES - 20.0,
+        HOOD_ANGLE_AT_MECHANISM_ZERO_DEGREES - 25.0,
+        HOOD_ANGLE_AT_MECHANISM_ZERO_DEGREES - 30.0,
+        HOOD_ANGLE_AT_MECHANISM_ZERO_DEGREES - 35.0,
+        HOOD_ANGLE_AT_MECHANISM_ZERO_DEGREES - 40.0,
+        HOOD_ANGLE_AT_MECHANISM_ZERO_DEGREES - 45.0
+    };
     private static final double[] SPEEDS = {200, 240, 280, 320, 360, 400, 440, 480, 520, 560, 600, 640, 680, 720}; 
     
     private static final double[][] DISTANCE_GRID = {
-        // 0   5  10  15  20  25  30  35  40  45
+        // 76.9 71.9 66.9 61.9 56.9 51.9 46.9 41.9 36.9 31.9
         {  8, 18, 29, 40, 46, 55, 61, 63, 68, 70}, //200
         { 21, 35, 51, 66, 75, 85, 97,100,102,103}, //240
         { 47, 64, 90,108,122,134,150,153,157,159}, //280
