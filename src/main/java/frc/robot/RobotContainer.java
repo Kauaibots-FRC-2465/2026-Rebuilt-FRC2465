@@ -124,6 +124,20 @@ public class RobotContainer implements Subsystem {
     private final Command show2465 = wled.showMarquee(Filesystem.getDeployDirectory().getAbsolutePath() + File.separator + "2465.bmp");
     private final Command showBamPowZang = wled.showGIF(Filesystem.getDeployDirectory().getAbsolutePath() + File.separator + "bampowzang5.gif");
 
+    private final Command showRedAlliance = wled.showMarquee(
+    Filesystem.getDeployDirectory().getAbsolutePath() + File.separator + "red.bmp");
+    private final Command showBlueAlliance = wled.showMarquee(
+    Filesystem.getDeployDirectory().getAbsolutePath() + File.separator + "blue.bmp");
+    private Command showAllianceMarquee() {
+    return Commands.either(
+        showRedAlliance,
+        showBlueAlliance,
+        () -> DriverStation.getAlliance().orElse(DriverStation.Alliance.Blue)
+                == DriverStation.Alliance.Red
+    );
+}
+
+
     public final PoseEstimatorSubsystem poseEstimatorSubsystem;
     public final PoseEstimatorSubsystem.Configuration poseEstimatorConfiguration = new PoseEstimatorSubsystem.Configuration();
 
@@ -373,7 +387,7 @@ public class RobotContainer implements Subsystem {
         // Note that X is defined as forward according to WPILib convention,
         // and Y is defined as to the left according to WPILib convention.
         //schedule(showLights);
-        schedule(showBamPowZang);
+        schedule(showAllianceMarquee());
         //schedule(show2465);
         drivetrain.setDefaultCommand(
             // Drivetrain will execute this command periodically

@@ -36,16 +36,21 @@ public final class ShooterConstants {
         CALIBRATED_HOOD_ANGLE_AT_MECHANISM_ZERO_DEGREES - 45.0
     };
 
+    static final double[] COMMAND_ANGLE_EXIT_SCALES = {
+        1.25, 1.25, 1.25, 1.25, 1.25,
+        1.25, 1.254489, 1.266515, 1.276971, 1.295353
+    };
+
     static final double[] FLYWHEEL_SET_IPS = {
         200.0, 240.0, 280.0, 320.0, 360.0, 400.0, 440.0, 480.0,
         520.0, 560.0, 600.0, 640.0, 680.0, 720.0, 760.0, 800.0
     };
 
     static final double[] BALL_EXIT_IPS = {
-        143.7223601, 176.6259052, 216.1407088, 272.4331199,
-        317.9685292, 355.4835685, 370.3047542, 392.1787301,
-        408.0032517, 423.5261656, 438.1693087, 451.8488867,
-        469.9891753, 483.3837431, 492.3584267, 507.7218
+        148.0973601, 188.1884052, 241.7657088, 286.4956199,
+        319.2185292, 345.4835685, 367.4922542, 384.3662301,
+        397.3782517, 411.0261656, 422.2318087, 437.7863867,
+        456.2391753, 470.8837431, 492.3584267, 507.7218
     };
 
     static final double[] COMMAND_SPEEDS_IPS = Arrays.copyOf(FLYWHEEL_SET_IPS, 14);
@@ -71,6 +76,9 @@ public final class ShooterConstants {
     static {
         if (RAW_TABLE_ANGLES_DEGREES.length != CALIBRATED_ANGLES_DEGREES.length) {
             throw new IllegalStateException("Angle tables must have matching lengths.");
+        }
+        if (COMMAND_ANGLE_EXIT_SCALES.length != CALIBRATED_ANGLES_DEGREES.length) {
+            throw new IllegalStateException("Angle exit scale table must match calibrated angle count.");
         }
         if (DISTANCE_GRID_INCHES.length != COMMAND_SPEEDS_IPS.length) {
             throw new IllegalStateException("Distance grid row count must match command speed count.");
