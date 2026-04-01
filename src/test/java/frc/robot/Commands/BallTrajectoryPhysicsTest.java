@@ -18,6 +18,9 @@ class BallTrajectoryPhysicsTest {
     private static final double LANDING_DISTANCE_TOLERANCE_INCHES = 0.01;
     private static final int SHORT_RANGE_THRESHOLD_INCHES = 150;
     private static final int MAX_REPORTED_ERRORS = 10;
+    private static final double VELOCITY_STEP_IPS = 36.0;
+    private static final double MAX_TEST_VELOCITY_IPS = 180.0;
+    private static final double MONOTONIC_EPSILON_IPS = 0.25;
 
     private record SampleError(
             double angleDegrees,
@@ -26,6 +29,19 @@ class BallTrajectoryPhysicsTest {
             double measuredDistanceInches,
             double predictedDistanceInches,
             double errorInches) {
+    }
+
+    private record MonotonicityViolation(
+            double targetDistanceInches,
+            double targetElevationInches,
+            double robotVxIps,
+            double robotVyIps,
+            double previousAngleDegrees,
+            double currentAngleDegrees,
+            double previousRequiredExitIps,
+            double currentRequiredExitIps,
+            int expectedDirectionSign,
+            int observedDirectionSign) {
     }
 
     @Test
@@ -109,6 +125,112 @@ class BallTrajectoryPhysicsTest {
                 "Expected short-range worst error to stay near the fitted ~5.9 in");
         assertTrue(Math.abs(worstOverall.errorInches()) < 6.1,
                 "Expected overall worst error to stay near the fitted ~5.9 in");
+    }
+
+    @Test
+    void compensatedRequiredExitSpeedIsMonotonicAcrossHoodAngle() {
+        List<MonotonicityViolation> violations = new ArrayList<>();
+
+        for (int targetDistanceInches = 0;
+                targetDistanceInches <= BallTrajectoryPhysics.LUT_MAX_TARGET_DISTANCE_INCHES;
+                targetDistanceInches += 50) {
+            for (int elevationFeet = 0;
+                    elevationFeet <= BallTrajectoryPhysics.LUT_MAX_TARGET_ELEVATION_FEET;
+                    elevationFeet++) {
+                double targetElevationInches = elevationFeet * BallTrajectoryPhysics.LUT_ELEVATION_STEP_INCHES;
+
+                for (double robotVxIps = -MAX_TEST_VELOCITY_IPS;
+                        robotVxIps <= MAX_TEST_VELOCITY_IPS + 1e-9;
+                        robotVxIps += VELOCITY_STEP_IPS) {
+                    for (double robotVyIps = -MAX_TEST_VELOCITY_IPS;
+                            robotVyIps <= MAX_TEST_VELOCITY_IPS + 1e-9;
+                            robotVyIps += VELOCITY_STEP_IPS) {
+                        double previousRequiredExitIps = Double.NaN;
+                        double previousAngleDegrees = Double.NaN;
+                        int monotonicDirectionSign = 0;
+
+                        for (int angleIndex = 0;
+                                angleIndex < BallTrajectoryPhysics.LUT_HOOD_ANGLE_BIN_COUNT;
+                                angleIndex++) {
+                            double angleDegrees = BallTrajectoryPhysics.LUT_MIN_HOOD_ANGLE_DEGREES
+                                    + angleIndex * BallTrajectoryPhysics.LUT_HOOD_ANGLE_STEP_DEGREES;
+                            double requiredFieldExitIps = BallTrajectoryPhysics.getRequiredExitVelocityIps(
+                                    angleDegrees,
+                                    targetDistanceInches,
+                                    targetElevationInches);
+                            if (!Double.isFinite(requiredFieldExitIps)) {
+                                continue;
+                            }
+
+                            double angleRadians = Math.toRadians(angleDegrees);
+                            double requiredHorizontalExitIps = requiredFieldExitIps * Math.cos(angleRadians);
+                            double requiredVerticalExitIps = requiredFieldExitIps * Math.sin(angleRadians);
+                            double launcherRelativeVxIps = requiredHorizontalExitIps - robotVxIps;
+                            double launcherRelativeVyIps = -robotVyIps;
+                            double requiredLauncherExitIps = Math.hypot(
+                                    requiredVerticalExitIps,
+                                    Math.hypot(launcherRelativeVxIps, launcherRelativeVyIps));
+
+                            if (Double.isFinite(previousRequiredExitIps)) {
+                                double deltaIps = requiredLauncherExitIps - previousRequiredExitIps;
+                                int observedDirectionSign = getDirectionSign(deltaIps);
+
+                                if (observedDirectionSign != 0 && monotonicDirectionSign == 0) {
+                                    monotonicDirectionSign = observedDirectionSign;
+                                } else if (observedDirectionSign != 0
+                                        && monotonicDirectionSign != 0
+                                        && observedDirectionSign != monotonicDirectionSign) {
+                                    violations.add(new MonotonicityViolation(
+                                            targetDistanceInches,
+                                            targetElevationInches,
+                                            robotVxIps,
+                                            robotVyIps,
+                                            previousAngleDegrees,
+                                            angleDegrees,
+                                            previousRequiredExitIps,
+                                            requiredLauncherExitIps,
+                                            monotonicDirectionSign,
+                                            observedDirectionSign));
+                                }
+                            }
+
+                            previousRequiredExitIps = requiredLauncherExitIps;
+                            previousAngleDegrees = angleDegrees;
+                        }
+                    }
+                }
+            }
+        }
+
+        System.out.printf(
+                "Monotonicity sweep completed. Violations found: %d%n",
+                violations.size());
+        for (int i = 0; i < Math.min(MAX_REPORTED_ERRORS, violations.size()); i++) {
+            MonotonicityViolation violation = violations.get(i);
+            System.out.printf(
+                    "  target %.0f in @ %.0f in | robotV=(%+.0f,%+.0f) ips | angle %.1f -> %.1f deg | exit %.3f -> %.3f ips%n",
+                    violation.targetDistanceInches(),
+                    violation.targetElevationInches(),
+                    violation.robotVxIps(),
+                    violation.robotVyIps(),
+                    violation.previousAngleDegrees(),
+                    violation.currentAngleDegrees(),
+                    violation.previousRequiredExitIps(),
+                    violation.currentRequiredExitIps());
+        }
+
+        assertTrue(violations.isEmpty(),
+                "Expected compensated required exit speed to remain monotonic over hood angle.");
+    }
+
+    private static int getDirectionSign(double deltaIps) {
+        if (deltaIps > MONOTONIC_EPSILON_IPS) {
+            return 1;
+        }
+        if (deltaIps < -MONOTONIC_EPSILON_IPS) {
+            return -1;
+        }
+        return 0;
     }
 
     private static double findLandingDistanceInches(double hoodAngleDegrees, double exitVelocityIps) {

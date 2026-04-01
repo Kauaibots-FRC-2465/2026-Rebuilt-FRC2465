@@ -9,6 +9,7 @@ import java.nio.file.Path;
 import edu.wpi.first.wpilibj.Filesystem;
 
 public final class BallTrajectoryPhysics {
+    private static final String LUT_PATH_OVERRIDE_PROPERTY = "frc.ballTrajectoryLutPath";
     private static final int LUT_FILE_MAGIC = 0x42544C54; // "BTLT"
     private static final double GRAVITY_IPS2 = 386.08858267716535;
     private static final double LINEAR_DRAG_PER_SECOND = ShooterConstants.TRAJECTORY_LINEAR_DRAG_PER_SECOND;
@@ -55,14 +56,14 @@ public final class BallTrajectoryPhysics {
             return Double.NaN;
         }
 
-        if (isCoveredByLookupTable(hoodAngleDegrees, targetRadialDistanceInches, targetElevationInches)) {
-            return lookupRequiredExitVelocityIps(
-                    hoodAngleDegrees,
-                    targetRadialDistanceInches,
-                    targetElevationInches);
+        if (!isCoveredByLookupTable(
+                hoodAngleDegrees,
+                targetRadialDistanceInches,
+                targetElevationInches)) {
+            return Double.NaN;
         }
 
-        return solveRequiredExitVelocityIpsExact(
+        return lookupRequiredExitVelocityIps(
                 hoodAngleDegrees,
                 targetRadialDistanceInches,
                 targetElevationInches);
@@ -239,19 +240,60 @@ public final class BallTrajectoryPhysics {
             double hoodAngleDegrees,
             double targetRadialDistanceInches,
             double targetElevationInches) {
-        int angleIndex = clampIndex((int) Math.round(
-                (hoodAngleDegrees - LUT_MIN_HOOD_ANGLE_DEGREES) / LUT_HOOD_ANGLE_STEP_DEGREES),
-                LUT_HOOD_ANGLE_BIN_COUNT);
-        int distanceIndex = clampIndex((int) Math.round(targetRadialDistanceInches),
-                LUT_DISTANCE_BIN_COUNT);
-        int elevationIndex = clampIndex((int) Math.round(targetElevationInches / LUT_ELEVATION_STEP_INCHES),
-                LUT_ELEVATION_BIN_COUNT);
+        float[] lut = getRequiredExitVelocityLut();
 
-        return getRequiredExitVelocityLut()[toLutIndex(angleIndex, distanceIndex, elevationIndex)];
+        double anglePosition =
+                (hoodAngleDegrees - LUT_MIN_HOOD_ANGLE_DEGREES) / LUT_HOOD_ANGLE_STEP_DEGREES;
+        int lowerAngleIndex = clampIndex((int) Math.floor(anglePosition), LUT_HOOD_ANGLE_BIN_COUNT);
+        int upperAngleIndex = clampIndex(lowerAngleIndex + 1, LUT_HOOD_ANGLE_BIN_COUNT);
+        double angleFraction = clampFraction(anglePosition - lowerAngleIndex);
+
+        double distancePosition = targetRadialDistanceInches;
+        int lowerDistanceIndex = clampIndex((int) Math.floor(distancePosition), LUT_DISTANCE_BIN_COUNT);
+        int upperDistanceIndex = clampIndex(lowerDistanceIndex + 1, LUT_DISTANCE_BIN_COUNT);
+        double distanceFraction = clampFraction(distancePosition - lowerDistanceIndex);
+
+        double elevationPosition = targetElevationInches / LUT_ELEVATION_STEP_INCHES;
+        int lowerElevationIndex = clampIndex((int) Math.floor(elevationPosition), LUT_ELEVATION_BIN_COUNT);
+        int upperElevationIndex = clampIndex(lowerElevationIndex + 1, LUT_ELEVATION_BIN_COUNT);
+        double elevationFraction = clampFraction(elevationPosition - lowerElevationIndex);
+
+        double value000 = getLutValue(lut, lowerAngleIndex, lowerDistanceIndex, lowerElevationIndex);
+        double value100 = getLutValue(lut, upperAngleIndex, lowerDistanceIndex, lowerElevationIndex);
+        double value010 = getLutValue(lut, lowerAngleIndex, upperDistanceIndex, lowerElevationIndex);
+        double value110 = getLutValue(lut, upperAngleIndex, upperDistanceIndex, lowerElevationIndex);
+        double value001 = getLutValue(lut, lowerAngleIndex, lowerDistanceIndex, upperElevationIndex);
+        double value101 = getLutValue(lut, upperAngleIndex, lowerDistanceIndex, upperElevationIndex);
+        double value011 = getLutValue(lut, lowerAngleIndex, upperDistanceIndex, upperElevationIndex);
+        double value111 = getLutValue(lut, upperAngleIndex, upperDistanceIndex, upperElevationIndex);
+
+        double value00 = lerp(value000, value100, angleFraction);
+        double value10 = lerp(value010, value110, angleFraction);
+        double value01 = lerp(value001, value101, angleFraction);
+        double value11 = lerp(value011, value111, angleFraction);
+        double value0 = lerp(value00, value10, distanceFraction);
+        double value1 = lerp(value01, value11, distanceFraction);
+        return lerp(value0, value1, elevationFraction);
     }
 
     private static int clampIndex(int index, int exclusiveUpperBound) {
         return Math.max(0, Math.min(exclusiveUpperBound - 1, index));
+    }
+
+    private static double clampFraction(double fraction) {
+        return Math.max(0.0, Math.min(1.0, fraction));
+    }
+
+    private static double getLutValue(
+            float[] lut,
+            int angleIndex,
+            int distanceIndex,
+            int elevationIndex) {
+        return lut[toLutIndex(angleIndex, distanceIndex, elevationIndex)];
+    }
+
+    private static double lerp(double start, double end, double fraction) {
+        return start + (end - start) * fraction;
     }
 
     static int toLutIndex(int angleIndex, int distanceIndex, int elevationIndex) {
@@ -296,8 +338,11 @@ public final class BallTrajectoryPhysics {
     }
 
     private static float[] loadRequiredExitVelocityLutFromDeploy() {
-        Path lutPath = Filesystem.getDeployDirectory().toPath()
-                .resolve(ShooterConstants.BALL_TRAJECTORY_LUT_FILENAME);
+        String overridePath = System.getProperty(LUT_PATH_OVERRIDE_PROPERTY);
+        Path lutPath = overridePath == null || overridePath.isBlank()
+                ? Filesystem.getDeployDirectory().toPath()
+                        .resolve(ShooterConstants.BALL_TRAJECTORY_LUT_FILENAME)
+                : Path.of(overridePath);
 
         try (DataInputStream input = new DataInputStream(
                 new BufferedInputStream(Files.newInputStream(lutPath)))) {
