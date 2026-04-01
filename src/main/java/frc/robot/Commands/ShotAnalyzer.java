@@ -7,31 +7,32 @@ import java.util.List;
 
 public final class ShotAnalyzer {
     private static final double HOOD_ANGLE_AT_MECHANISM_ZERO_DEGREES =
-            ShooterConstants.HOOD_ANGLE_AT_MECHANISM_ZERO_DEGREES;
+            ShooterConstants.MEASURED_HOOD_ANGLE_AT_MECHANISM_ZERO_DEGREES;
     private static final double BACKSPIN_CANCEL_LIMIT_COMMAND_IPS =
-            ShooterConstants.BACKSPIN_CANCEL_LIMIT_COMMAND_IPS;
+            ShooterConstants.MEASURED_BACKSPIN_CANCEL_LIMIT_COMMAND_IPS;
     private static final double GRAVITY_IPS2 = 386.08858267716535;
-    private static final double INITIAL_X_OFFSET_INCHES = ShooterConstants.INITIAL_X_OFFSET_INCHES;
-    private static final double INITIAL_Z_BASE_INCHES = ShooterConstants.INITIAL_Z_BASE_INCHES;
-    private static final double BALL_CENTER_OFFSET_INCHES = ShooterConstants.BALL_CENTER_OFFSET_INCHES;
+    private static final double INITIAL_X_OFFSET_INCHES = ShooterConstants.MEASURED_INITIAL_X_OFFSET_INCHES;
+    private static final double INITIAL_Z_BASE_INCHES = ShooterConstants.MEASURED_INITIAL_Z_BASE_INCHES;
+    private static final double BALL_CENTER_OFFSET_INCHES = ShooterConstants.MEASURED_BALL_CENTER_OFFSET_INCHES;
     private static final double SIMULATION_DT_SECONDS = 0.002;
     private static final double MAX_SIMULATION_TIME_SECONDS = 5.0;
     private static final double NO_HIT_PENALTY_INCHES = 1000.0;
     private static final double FIT_MOVE_FRACTION = 0.10;
     private static final int FIT_PASS_COUNT = 100;
     private static final double FIXED_LINEAR_DRAG_PER_SECOND = 0.0;
-    private static final double DRAG_LOG_REFERENCE_SPEED_IPS = 300.0;
-    private static final double[] ANGLES_DEGREES = ShooterConstants.ACTUAL_ANGLES_DEGREES;
-    private static final double[] ANGLE_EXIT_SCALES = ShooterConstants.COMMAND_ANGLE_EXIT_SCALES;
-
-    private static final double[] COMMAND_SPEEDS_IPS = ShooterConstants.COMMAND_SPEEDS_IPS;
-
-    private static final double[] SHOT_EXIT_SPEEDS_IPS = ShooterConstants.COMMAND_BALL_EXIT_IPS;
+    private static final double DRAG_LOG_REFERENCE_SPEED_IPS =
+            ShooterConstants.FITTED_TRAJECTORY_DRAG_LOG_REFERENCE_SPEED_IPS;
+    private static final double[] ANGLES_DEGREES = ShooterConstants.MEASURED_ACTUAL_ANGLES_DEGREES;
+    private static final double[] ANGLE_EXIT_SCALES = ShooterConstants.FITTED_COMMAND_ANGLE_EXIT_SCALES;
+    private static final double[][] DISTANCE_GRID_INCHES = ShooterConstants.MEASURED_DISTANCE_GRID_INCHES;
+    private static final double[] COMMAND_SPEEDS_IPS =
+            Arrays.copyOf(ShooterConstants.COMMANDED_FLYWHEEL_SET_IPS, DISTANCE_GRID_INCHES.length);
+    private static final double[] SHOT_EXIT_SPEEDS_IPS =
+            Arrays.copyOf(ShooterConstants.FITTED_BALL_EXIT_IPS, DISTANCE_GRID_INCHES.length);
 
     // Table distances are relative to the front frame of the robot, but shooter is behind the front of the frame according to:
     // ball exits with initial z of (7.5 inches)+(5 inches * sin(launch angle))
     // ball exits with initial x of (-13.5 inches)+(5 inches * cos(launch angle))
-    private static final double[][] DISTANCE_GRID_INCHES = ShooterConstants.DISTANCE_GRID_INCHES;
 
     private ShotAnalyzer() {
     }
@@ -132,7 +133,7 @@ public final class ShotAnalyzer {
         SampleError worstBelow150 = globalFit.worstBelow150SampleError();
         SampleError worstOverall = globalFit.worstSampleError();
         System.out.printf(
-                "Largest error below 150 in: %.3f in at range %.3f in (angle %.1f deg, command %.0f ips, predicted %.3f in, error %+,.3f in)%n",
+                "Largest error below 150 in: %.3f in at range %.3f in, hood angle %.1f deg (command %.0f ips, predicted %.3f in, error %+,.3f in)%n",
                 Math.abs(worstBelow150.errorInches()),
                 worstBelow150.sample().measuredDistanceInches(),
                 worstBelow150.sample().angleDegrees(),
@@ -140,7 +141,7 @@ public final class ShotAnalyzer {
                 worstBelow150.predictedDistanceInches(),
                 worstBelow150.errorInches());
         System.out.printf(
-                "Largest error overall: %.3f in at range %.3f in (angle %.1f deg, command %.0f ips, predicted %.3f in, error %+,.3f in)%n",
+                "Largest error overall: %.3f in at range %.3f in, hood angle %.1f deg (command %.0f ips, predicted %.3f in, error %+,.3f in)%n",
                 Math.abs(worstOverall.errorInches()),
                 worstOverall.sample().measuredDistanceInches(),
                 worstOverall.sample().angleDegrees(),
@@ -177,11 +178,11 @@ public final class ShotAnalyzer {
                 .sorted(Comparator.comparingDouble(
                         sampleError -> -Math.abs(sampleError.errorInches())))
                 .forEach(sampleError -> System.out.printf(
-                        "angle %.1f deg | command %.0f ips | exit %.3f ips | measured %.3f in | predicted %.3f in | error %+,.3f in | abs %.3f in | weight %.3f%n",
+                        "hood angle %.1f deg | range %.3f in | command %.0f ips | exit %.3f ips | predicted %.3f in | error %+,.3f in | abs %.3f in | weight %.3f%n",
                         sampleError.sample().angleDegrees(),
+                        sampleError.sample().measuredDistanceInches(),
                         sampleError.sample().commandSpeedIps(),
                         sampleError.sample().shotExitSpeedIps(),
-                        sampleError.sample().measuredDistanceInches(),
                         sampleError.predictedDistanceInches(),
                         sampleError.errorInches(),
                         Math.abs(sampleError.errorInches()),
@@ -970,28 +971,34 @@ public final class ShotAnalyzer {
 
     private static void printRelevantFactors(GlobalFitResult globalFit) {
         System.out.println("Relevant factors summary:");
-        System.out.printf("  HOOD_ANGLE_AT_MECHANISM_ZERO_DEGREES = %.6f%n",
+        System.out.printf("  MEASURED_HOOD_ANGLE_AT_MECHANISM_ZERO_DEGREES = %.6f%n",
                 HOOD_ANGLE_AT_MECHANISM_ZERO_DEGREES);
-        System.out.printf("  BACKSPIN_CANCEL_LIMIT_COMMAND_IPS = %.6f%n",
+        System.out.printf("  MEASURED_BACKSPIN_CANCEL_LIMIT_COMMAND_IPS = %.6f%n",
                 BACKSPIN_CANCEL_LIMIT_COMMAND_IPS);
         System.out.printf("  fitPassCount = %d%n", FIT_PASS_COUNT);
         System.out.printf("  fitMoveFraction = %.6f%n", FIT_MOVE_FRACTION);
-        System.out.printf("  INITIAL_X_OFFSET_INCHES = %.6f%n", INITIAL_X_OFFSET_INCHES);
-        System.out.printf("  INITIAL_Z_BASE_INCHES = %.6f%n", INITIAL_Z_BASE_INCHES);
-        System.out.printf("  BALL_CENTER_OFFSET_INCHES = %.6f%n", BALL_CENTER_OFFSET_INCHES);
-        System.out.printf("  dragLogReferenceSpeedIps = %.6f%n", DRAG_LOG_REFERENCE_SPEED_IPS);
+        System.out.printf("  MEASURED_INITIAL_X_OFFSET_INCHES = %.6f%n", INITIAL_X_OFFSET_INCHES);
+        System.out.printf("  MEASURED_INITIAL_Z_BASE_INCHES = %.6f%n", INITIAL_Z_BASE_INCHES);
+        System.out.printf("  MEASURED_BALL_CENTER_OFFSET_INCHES = %.6f%n", BALL_CENTER_OFFSET_INCHES);
+        System.out.printf("  FITTED_TRAJECTORY_DRAG_LOG_REFERENCE_SPEED_IPS = %.6f%n",
+                DRAG_LOG_REFERENCE_SPEED_IPS);
         System.out.printf("  linearDragPerSecond = %.6f%n", globalFit.linearDragPerSecond());
-        System.out.printf("  dragCoefficientBasePerInch = %.9f%n", globalFit.dragCoefficientBasePerInch());
-        System.out.printf("  dragCoefficientLogSlopePerInch = %.9f%n", globalFit.dragCoefficientLogSlopePerInch());
-        System.out.printf("  magnusPerSpinInch = %.9f%n", globalFit.magnusPerSpinInch());
-        System.out.printf("  angleDegrees = %s%n", formatArray(ANGLES_DEGREES, 3));
-        System.out.printf("  angleExitScales = %s%n", formatAngleScales(globalFit));
-        System.out.printf("  commandIps = %s%n", formatArray(COMMAND_SPEEDS_IPS, 0));
-        System.out.printf("  baseExitIps = %s%n", formatArray(SHOT_EXIT_SPEEDS_IPS, 3));
+        System.out.printf("  FITTED_TRAJECTORY_DRAG_COEFFICIENT_BASE_PER_INCH = %.9f%n",
+                globalFit.dragCoefficientBasePerInch());
+        System.out.printf("  FITTED_TRAJECTORY_DRAG_COEFFICIENT_LOG_SLOPE_PER_INCH = %.9f%n",
+                globalFit.dragCoefficientLogSlopePerInch());
+        System.out.printf("  FITTED_TRAJECTORY_MAGNUS_PER_SPIN_INCH = %.9f%n",
+                globalFit.magnusPerSpinInch());
+        System.out.printf("  MEASURED_ACTUAL_ANGLES_DEGREES = %s%n", formatArray(ANGLES_DEGREES, 3));
+        System.out.printf("  FITTED_COMMAND_ANGLE_EXIT_SCALES = %s%n", formatAngleScales(globalFit));
+        System.out.printf("  derivedCommandTableSpeedsIps = %s%n", formatArray(COMMAND_SPEEDS_IPS, 0));
+        System.out.printf("  derivedTableBallExitIps = %s%n", formatArray(SHOT_EXIT_SPEEDS_IPS, 3));
         System.out.printf("  rowExitCorrectionsIps = %s%n",
                 formatArray(globalFit.rowExitSpeedCorrectionsIps(), 3));
-        System.out.printf("  correctedExitIps = %s%n",
+        System.out.printf("  FITTED_BALL_EXIT_IPS(first 14 corrected) = %s%n",
                 formatCorrectedExitIps(globalFit.rowExitSpeedCorrectionsIps()));
+        System.out.println();
+        printPasteReadyShooterConstantsBlock(globalFit);
     }
 
     private static String formatAngleScales(GlobalFitResult globalFit) {
@@ -1006,6 +1013,32 @@ public final class ShotAnalyzer {
         return formatArray(correctedExitIps, 3);
     }
 
+    private static void printPasteReadyShooterConstantsBlock(GlobalFitResult globalFit) {
+        System.out.println("Paste-ready ShooterConstants fitted block:");
+        System.out.println("```java");
+        System.out.printf("static final double FITTED_TRAJECTORY_DRAG_LOG_REFERENCE_SPEED_IPS = %.1f;%n",
+                DRAG_LOG_REFERENCE_SPEED_IPS);
+        System.out.printf("static final double FITTED_TRAJECTORY_DRAG_COEFFICIENT_BASE_PER_INCH = %.9f;%n",
+                globalFit.dragCoefficientBasePerInch());
+        System.out.printf("static final double FITTED_TRAJECTORY_DRAG_COEFFICIENT_LOG_SLOPE_PER_INCH = %.9f;%n",
+                globalFit.dragCoefficientLogSlopePerInch());
+        System.out.printf("static final double FITTED_TRAJECTORY_MAGNUS_PER_SPIN_INCH = %.9f;%n",
+                globalFit.magnusPerSpinInch());
+        System.out.printf("static final double[] FITTED_COMMAND_ANGLE_EXIT_SCALES = %s;%n",
+                formatJavaArray(globalFit.angleExitScales(), 6));
+        System.out.printf("static final double[] FITTED_BALL_EXIT_IPS = %s;%n",
+                formatJavaArray(buildFullCorrectedBallExitIps(globalFit.rowExitSpeedCorrectionsIps()), 3));
+        System.out.println("```");
+    }
+
+    private static double[] buildFullCorrectedBallExitIps(double[] rowExitSpeedCorrectionsIps) {
+        double[] correctedExitIps = ShooterConstants.FITTED_BALL_EXIT_IPS.clone();
+        for (int i = 0; i < SHOT_EXIT_SPEEDS_IPS.length; i++) {
+            correctedExitIps[i] = SHOT_EXIT_SPEEDS_IPS[i] + rowExitSpeedCorrectionsIps[i];
+        }
+        return correctedExitIps;
+    }
+
     private static String formatArray(double[] values, int decimals) {
         StringBuilder builder = new StringBuilder("[");
         for (int i = 0; i < values.length; i++) {
@@ -1015,6 +1048,18 @@ public final class ShotAnalyzer {
             builder.append(String.format("%." + decimals + "f", values[i]));
         }
         builder.append(']');
+        return builder.toString();
+    }
+
+    private static String formatJavaArray(double[] values, int decimals) {
+        StringBuilder builder = new StringBuilder("{");
+        for (int i = 0; i < values.length; i++) {
+            if (i > 0) {
+                builder.append(", ");
+            }
+            builder.append(String.format("%." + decimals + "f", values[i]));
+        }
+        builder.append('}');
         return builder.toString();
     }
 }

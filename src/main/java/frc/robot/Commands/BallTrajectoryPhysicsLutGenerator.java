@@ -7,12 +7,12 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 
 public final class BallTrajectoryPhysicsLutGenerator {
-    private static final int LUT_FILE_MAGIC = 0x42544C54; // "BTLT"
+    private static final int LUT_FILE_MAGIC = ShooterConstants.FITTED_BALL_TRAJECTORY_LUT_MAGIC;
     private static final Path OUTPUT_PATH = Path.of(
             "src",
             "main",
             "deploy",
-            ShooterConstants.BALL_TRAJECTORY_LUT_FILENAME);
+            ShooterConstants.FITTED_BALL_TRAJECTORY_LUT_FILENAME);
 
     private BallTrajectoryPhysicsLutGenerator() {
     }
@@ -55,7 +55,7 @@ public final class BallTrajectoryPhysicsLutGenerator {
         try (DataOutputStream output = new DataOutputStream(
                 new BufferedOutputStream(Files.newOutputStream(OUTPUT_PATH)))) {
             output.writeInt(LUT_FILE_MAGIC);
-            output.writeInt(ShooterConstants.BALL_TRAJECTORY_LUT_VERSION);
+            output.writeInt(ShooterConstants.FITTED_BALL_TRAJECTORY_LUT_VERSION);
             output.writeInt(BallTrajectoryPhysics.LUT_DISTANCE_BIN_COUNT);
             output.writeInt(BallTrajectoryPhysics.LUT_HOOD_ANGLE_BIN_COUNT);
             output.writeInt(BallTrajectoryPhysics.LUT_ELEVATION_BIN_COUNT);

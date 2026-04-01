@@ -14,37 +14,43 @@ import edu.wpi.first.wpilibj.Filesystem;
 
 public final class BallTrajectoryPhysics {
     private static final String LUT_PATH_OVERRIDE_PROPERTY = "frc.ballTrajectoryLutPath";
-    private static final int LUT_FILE_MAGIC = 0x42544C54; // "BTLT"
+    private static final int LUT_FILE_MAGIC = ShooterConstants.FITTED_BALL_TRAJECTORY_LUT_MAGIC;
     private static final double GRAVITY_IPS2 = 386.08858267716535;
     private static final double DRAG_LOG_REFERENCE_SPEED_IPS =
-            ShooterConstants.TRAJECTORY_DRAG_LOG_REFERENCE_SPEED_IPS;
+            ShooterConstants.FITTED_TRAJECTORY_DRAG_LOG_REFERENCE_SPEED_IPS;
     private static final double DRAG_COEFFICIENT_BASE_PER_INCH =
-            ShooterConstants.TRAJECTORY_DRAG_COEFFICIENT_BASE_PER_INCH;
+            ShooterConstants.FITTED_TRAJECTORY_DRAG_COEFFICIENT_BASE_PER_INCH;
     private static final double DRAG_COEFFICIENT_LOG_SLOPE_PER_INCH =
-            ShooterConstants.TRAJECTORY_DRAG_COEFFICIENT_LOG_SLOPE_PER_INCH;
-    private static final double MAGNUS_PER_SPIN_INCH = ShooterConstants.TRAJECTORY_MAGNUS_PER_SPIN_INCH;
-    private static final double INITIAL_X_OFFSET_INCHES = ShooterConstants.INITIAL_X_OFFSET_INCHES;
-    private static final double INITIAL_Z_BASE_INCHES = ShooterConstants.INITIAL_Z_BASE_INCHES;
-    private static final double BALL_CENTER_OFFSET_INCHES = ShooterConstants.BALL_CENTER_OFFSET_INCHES;
+            ShooterConstants.FITTED_TRAJECTORY_DRAG_COEFFICIENT_LOG_SLOPE_PER_INCH;
+    private static final double MAGNUS_PER_SPIN_INCH = ShooterConstants.FITTED_TRAJECTORY_MAGNUS_PER_SPIN_INCH;
+    private static final double[] ANGLE_SCALE_SAMPLE_ANGLES_DEGREES =
+            ShooterConstants.MEASURED_ACTUAL_ANGLES_DEGREES;
+    private static final double[] ANGLE_EXIT_SCALES = ShooterConstants.FITTED_COMMAND_ANGLE_EXIT_SCALES;
+    private static final double INITIAL_X_OFFSET_INCHES = ShooterConstants.MEASURED_INITIAL_X_OFFSET_INCHES;
+    private static final double INITIAL_Z_BASE_INCHES = ShooterConstants.MEASURED_INITIAL_Z_BASE_INCHES;
+    private static final double BALL_CENTER_OFFSET_INCHES = ShooterConstants.MEASURED_BALL_CENTER_OFFSET_INCHES;
     private static final double FRAME_TO_CENTER_DISTANCE_INCHES =
-            ShooterConstants.FRAME_TO_CENTER_DISTANCE_INCHES;
+            ShooterConstants.MEASURED_FRAME_TO_CENTER_DISTANCE_INCHES;
     private static final double BACKSPIN_CANCEL_LIMIT_COMMAND_IPS =
-            ShooterConstants.BACKSPIN_CANCEL_LIMIT_COMMAND_IPS;
+            ShooterConstants.MEASURED_BACKSPIN_CANCEL_LIMIT_COMMAND_IPS;
     private static final double SIMULATION_DT_SECONDS = 0.002;
     private static final double MAX_SIMULATION_TIME_SECONDS = 5.0;
     static final double LUT_MIN_HOOD_ANGLE_DEGREES =
-            ShooterConstants.ACTUAL_ANGLES_DEGREES[
-                    ShooterConstants.ACTUAL_ANGLES_DEGREES.length - 1];
+            ShooterConstants.FITTED_BALL_TRAJECTORY_LUT_MIN_HOOD_ANGLE_DEGREES;
     static final double LUT_MAX_HOOD_ANGLE_DEGREES =
-            ShooterConstants.ACTUAL_ANGLES_DEGREES[0];
-    static final double LUT_HOOD_ANGLE_STEP_DEGREES = 0.1;
+            ShooterConstants.FITTED_BALL_TRAJECTORY_LUT_MAX_HOOD_ANGLE_DEGREES;
+    static final double LUT_HOOD_ANGLE_STEP_DEGREES =
+            ShooterConstants.FITTED_BALL_TRAJECTORY_LUT_HOOD_ANGLE_STEP_DEGREES;
     static final int LUT_HOOD_ANGLE_BIN_COUNT = (int) Math.round(
             (LUT_MAX_HOOD_ANGLE_DEGREES - LUT_MIN_HOOD_ANGLE_DEGREES)
                     / LUT_HOOD_ANGLE_STEP_DEGREES) + 1;
-    static final int LUT_MAX_TARGET_DISTANCE_INCHES = 725;
+    static final int LUT_MAX_TARGET_DISTANCE_INCHES =
+            ShooterConstants.FITTED_BALL_TRAJECTORY_LUT_MAX_TARGET_DISTANCE_INCHES;
     static final int LUT_DISTANCE_BIN_COUNT = LUT_MAX_TARGET_DISTANCE_INCHES + 1;
-    static final int LUT_MAX_TARGET_ELEVATION_FEET = 5;
-    static final double LUT_ELEVATION_STEP_INCHES = 12.0;
+    static final int LUT_MAX_TARGET_ELEVATION_FEET =
+            ShooterConstants.FITTED_BALL_TRAJECTORY_LUT_MAX_TARGET_ELEVATION_FEET;
+    static final double LUT_ELEVATION_STEP_INCHES =
+            ShooterConstants.FITTED_BALL_TRAJECTORY_LUT_ELEVATION_STEP_INCHES;
     static final int LUT_ELEVATION_BIN_COUNT = LUT_MAX_TARGET_ELEVATION_FEET + 1;
     private static volatile float[] requiredExitVelocityLut;
     private static final double MIN_EXIT_SPEED_IPS = 1.0;
@@ -251,7 +257,7 @@ public final class BallTrajectoryPhysics {
                     launcherRelativeHorizontalExitVelocityIps,
                     fieldRelativeExitVelocityIps * Math.sin(hoodAngleRadians));
             double flywheelCommandIps =
-                    FlywheelBallExitInterpolator.getSetIpsForBallExitIps(launcherRelativeExitVelocityIps);
+                    getEstimatedFlywheelCommandIps(hoodAngleDegrees, launcherRelativeExitVelocityIps);
             if (!Double.isFinite(flywheelCommandIps)) {
                 continue;
             }
@@ -389,10 +395,7 @@ public final class BallTrajectoryPhysics {
         double vz = exitVelocityIps * Math.sin(angleRadians);
         double previousX = x;
         double previousZ = z;
-        double launchCommandIps = FlywheelBallExitInterpolator.getSetIpsForBallExitIps(exitVelocityIps);
-        double spinProxyIps = Double.isFinite(launchCommandIps)
-                ? Math.max(0.0, launchCommandIps - BACKSPIN_CANCEL_LIMIT_COMMAND_IPS)
-                : 0.0;
+        double spinProxyIps = getSpinProxyIps(hoodAngleDegrees, exitVelocityIps);
 
         for (double timeSeconds = 0.0;
                 timeSeconds < MAX_SIMULATION_TIME_SECONDS;
@@ -447,6 +450,76 @@ public final class BallTrajectoryPhysics {
 
     private static boolean isUsableUpperBracket(double errorInches) {
         return Double.isFinite(errorInches) && errorInches >= 0.0;
+    }
+
+    private static double getEstimatedFlywheelCommandIps(
+            double hoodAngleDegrees,
+            double correctedExitVelocityIps) {
+        double angleExitScale = getAngleExitScale(hoodAngleDegrees);
+        if (!(angleExitScale > 0.0)) {
+            return Double.NaN;
+        }
+        double baseExitVelocityIps = correctedExitVelocityIps / angleExitScale;
+        return FlywheelBallExitInterpolator.getSetIpsForBallExitIps(baseExitVelocityIps);
+    }
+
+    private static double getSpinProxyIps(
+            double hoodAngleDegrees,
+            double correctedExitVelocityIps) {
+        double angleExitScale = getAngleExitScale(hoodAngleDegrees);
+        if (!(angleExitScale > 0.0)) {
+            return 0.0;
+        }
+        double estimatedFlywheelCommandIps =
+                getEstimatedFlywheelCommandIps(hoodAngleDegrees, correctedExitVelocityIps);
+        if (!Double.isFinite(estimatedFlywheelCommandIps)) {
+            return 0.0;
+        }
+        return Math.max(0.0, estimatedFlywheelCommandIps - BACKSPIN_CANCEL_LIMIT_COMMAND_IPS)
+                * angleExitScale;
+    }
+
+    private static double getAngleExitScale(double hoodAngleDegrees) {
+        if (ANGLE_SCALE_SAMPLE_ANGLES_DEGREES.length != ANGLE_EXIT_SCALES.length) {
+            throw new IllegalStateException("Angle exit scale arrays must match.");
+        }
+
+        for (int i = 0; i < ANGLE_SCALE_SAMPLE_ANGLES_DEGREES.length; i++) {
+            if (Math.abs(hoodAngleDegrees - ANGLE_SCALE_SAMPLE_ANGLES_DEGREES[i]) <= 1e-9) {
+                return ANGLE_EXIT_SCALES[i];
+            }
+        }
+
+        boolean ascendingAngles =
+                ANGLE_SCALE_SAMPLE_ANGLES_DEGREES[0]
+                        <= ANGLE_SCALE_SAMPLE_ANGLES_DEGREES[ANGLE_SCALE_SAMPLE_ANGLES_DEGREES.length - 1];
+        if (ascendingAngles) {
+            if (hoodAngleDegrees <= ANGLE_SCALE_SAMPLE_ANGLES_DEGREES[0]) {
+                return ANGLE_EXIT_SCALES[0];
+            }
+            if (hoodAngleDegrees >= ANGLE_SCALE_SAMPLE_ANGLES_DEGREES[ANGLE_SCALE_SAMPLE_ANGLES_DEGREES.length - 1]) {
+                return ANGLE_EXIT_SCALES[ANGLE_EXIT_SCALES.length - 1];
+            }
+        } else {
+            if (hoodAngleDegrees >= ANGLE_SCALE_SAMPLE_ANGLES_DEGREES[0]) {
+                return ANGLE_EXIT_SCALES[0];
+            }
+            if (hoodAngleDegrees <= ANGLE_SCALE_SAMPLE_ANGLES_DEGREES[ANGLE_SCALE_SAMPLE_ANGLES_DEGREES.length - 1]) {
+                return ANGLE_EXIT_SCALES[ANGLE_EXIT_SCALES.length - 1];
+            }
+        }
+
+        for (int i = 0; i < ANGLE_SCALE_SAMPLE_ANGLES_DEGREES.length - 1; i++) {
+            double angle1 = ANGLE_SCALE_SAMPLE_ANGLES_DEGREES[i];
+            double angle2 = ANGLE_SCALE_SAMPLE_ANGLES_DEGREES[i + 1];
+            if (isBetween(hoodAngleDegrees, angle1, angle2)) {
+                double scale1 = ANGLE_EXIT_SCALES[i];
+                double scale2 = ANGLE_EXIT_SCALES[i + 1];
+                return scale1 + (scale2 - scale1) * ((hoodAngleDegrees - angle1) / (angle2 - angle1));
+            }
+        }
+
+        return Double.NaN;
     }
 
     private static boolean isCoveredByLookupTable(
@@ -566,7 +639,7 @@ public final class BallTrajectoryPhysics {
         String overridePath = System.getProperty(LUT_PATH_OVERRIDE_PROPERTY);
         Path lutPath = overridePath == null || overridePath.isBlank()
                 ? Filesystem.getDeployDirectory().toPath()
-                        .resolve(ShooterConstants.BALL_TRAJECTORY_LUT_FILENAME)
+                        .resolve(ShooterConstants.FITTED_BALL_TRAJECTORY_LUT_FILENAME)
                 : Path.of(overridePath);
 
         try (DataInputStream input = new DataInputStream(
@@ -580,7 +653,7 @@ public final class BallTrajectoryPhysics {
             if (magic != LUT_FILE_MAGIC) {
                 throw new IllegalStateException("Invalid ball trajectory LUT file magic: " + lutPath);
             }
-            if (version != ShooterConstants.BALL_TRAJECTORY_LUT_VERSION) {
+            if (version != ShooterConstants.FITTED_BALL_TRAJECTORY_LUT_VERSION) {
                 throw new IllegalStateException(
                         "Unsupported ball trajectory LUT version " + version + " in " + lutPath);
             }
@@ -629,5 +702,9 @@ public final class BallTrajectoryPhysics {
         }
         double interpolation = (targetX - x0) / (x1 - x0);
         return z0 + interpolation * (z1 - z0);
+    }
+
+    private static boolean isBetween(double value, double bound1, double bound2) {
+        return value >= Math.min(bound1, bound2) && value <= Math.max(bound1, bound2);
     }
 }

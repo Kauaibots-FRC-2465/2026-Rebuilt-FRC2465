@@ -118,7 +118,7 @@ public class SnowblowToAlliance extends Command {
 
         updateLastDriveDirection(fieldCentricRequest);
         if (!poseEstimator.getPredictedFusedState(
-                ShooterConstants.SHOOTER_LOOKAHEAD_SECONDS,
+                ShooterConstants.COMMANDED_SHOOTER_LOOKAHEAD_SECONDS,
                 futureState)) {
             clearSolutionTelemetry();
             shooter.setCoupledIPS(0.0);
@@ -181,7 +181,7 @@ public class SnowblowToAlliance extends Command {
         boolean hasSolution = BallTrajectoryPhysics.solveMovingShot(
                 verticalAim.getMinimumAngle().in(Degrees),
                 verticalAim.getMaximumAngle().in(Degrees),
-                ShooterConstants.MOVING_SHOT_HOOD_SEARCH_STEP_DEGREES,
+                ShooterConstants.COMMANDED_MOVING_SHOT_HOOD_SEARCH_STEP_DEGREES,
                 futureState.xMeters,
                 futureState.yMeters,
                 futureState.headingRadians,
@@ -189,13 +189,13 @@ public class SnowblowToAlliance extends Command {
                 futureState.vyMetersPerSecond,
                 target.getX(),
                 target.getY(),
-                ShooterConstants.SNOWBLOW_TARGET_ELEVATION_INCHES,
+                ShooterConstants.COMMANDED_SNOWBLOW_TARGET_ELEVATION_INCHES,
                 preferredRobotHeading.getRadians(),
                 horizontalAim.getMinimumAngle().in(Degrees),
                 horizontalAim.getMaximumAngle().in(Degrees),
                 movingShotSolution);
         targetDistanceInchesPublisher.set(targetDistanceInches);
-        targetElevationInchesPublisher.set(ShooterConstants.SNOWBLOW_TARGET_ELEVATION_INCHES);
+        targetElevationInchesPublisher.set(ShooterConstants.COMMANDED_SNOWBLOW_TARGET_ELEVATION_INCHES);
         validSolutionPublisher.set(hasSolution);
 
         if (!hasSolution) {

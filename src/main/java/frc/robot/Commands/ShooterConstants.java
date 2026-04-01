@@ -1,53 +1,29 @@
 package frc.robot.Commands;
 
-import java.util.Arrays;
-
 public final class ShooterConstants {
-    public static final double HOOD_ANGLE_AT_MECHANISM_ZERO_DEGREES = 78.6;
-    static final double BACKSPIN_CANCEL_LIMIT_COMMAND_IPS = 410.0;
-    static final double INITIAL_X_OFFSET_INCHES = -13.5;
-    static final double INITIAL_Z_BASE_INCHES = 7.5;
-    static final double BALL_CENTER_OFFSET_INCHES = 5.0;
-    static final double FRAME_TO_CENTER_DISTANCE_INCHES = 11.75;
-    static final double SHOOTER_LOOKAHEAD_SECONDS = 0.25;
-    static final double SNOWBLOW_TARGET_ELEVATION_INCHES = 0.0;
-    static final double MOVING_SHOT_HOOD_SEARCH_STEP_DEGREES = 1.0;
-    static final double TRAJECTORY_DRAG_LOG_REFERENCE_SPEED_IPS = 300.0;
-    static final double TRAJECTORY_DRAG_COEFFICIENT_BASE_PER_INCH = 0.001270781;
-    static final double TRAJECTORY_DRAG_COEFFICIENT_LOG_SLOPE_PER_INCH = -0.000272904;
-    static final double TRAJECTORY_MAGNUS_PER_SPIN_INCH = 0.000001254;
-    static final String BALL_TRAJECTORY_LUT_FILENAME = "ball_trajectory_lut.bin";
-    static final int BALL_TRAJECTORY_LUT_VERSION = 2;
-
-    static final double[] COMMAND_ANGLE_CHANGES_DEGREES = {
+    static final double[] COMMANDED_HOOD_ANGLE_CHANGES_DEGREES = {
         0.0, 5.0, 10.0, 15.0, 20.0,
         25.0, 30.0, 35.0, 40.0, 45.0
     };
-
-    static final double[] ACTUAL_ANGLES_DEGREES =
-            buildActualAnglesDegrees(HOOD_ANGLE_AT_MECHANISM_ZERO_DEGREES, COMMAND_ANGLE_CHANGES_DEGREES);
-
-    static final double[] COMMAND_ANGLE_EXIT_SCALES = {
-        1.114997, 1.1197695, 1.124542, 1.131481, 1.13842,
-        1.151291, 1.173797, 1.198627, 1.220792, 1.247873
-    };
-
-    static final double[] FLYWHEEL_SET_IPS = {
+    static final double[] COMMANDED_FLYWHEEL_SET_IPS = {
         200.0, 240.0, 280.0, 320.0, 360.0, 400.0, 440.0, 480.0,
         520.0, 560.0, 600.0, 640.0, 680.0, 720.0, 760.0, 800.0
     };
+    static final double COMMANDED_SHOOTER_LOOKAHEAD_SECONDS = 0.25;
+    static final double COMMANDED_SNOWBLOW_TARGET_ELEVATION_INCHES = 36.0;
+    static final double COMMANDED_MOVING_SHOT_HOOD_SEARCH_STEP_DEGREES = 1.0;
 
-    static final double[] BALL_EXIT_IPS = {
-        136.956, 173.887, 224.507, 270.333,
-        306.991, 338.273, 362.176, 381.627,
-        396.285, 411.510, 423.450, 439.677,
-        460.376, 477.270, 492.3584267, 507.7218
-    };
-
-    static final double[] COMMAND_SPEEDS_IPS = Arrays.copyOf(FLYWHEEL_SET_IPS, 14);
-    static final double[] COMMAND_BALL_EXIT_IPS = Arrays.copyOf(BALL_EXIT_IPS, 14);
-
-    static final double[][] DISTANCE_GRID_INCHES = {
+    public static final double MEASURED_HOOD_ANGLE_AT_MECHANISM_ZERO_DEGREES = 78.6;
+    static final double MEASURED_BACKSPIN_CANCEL_LIMIT_COMMAND_IPS = 410.0;
+    static final double MEASURED_INITIAL_X_OFFSET_INCHES = -13.5;
+    static final double MEASURED_INITIAL_Z_BASE_INCHES = 7.5;
+    static final double MEASURED_BALL_CENTER_OFFSET_INCHES = 5.0;
+    static final double MEASURED_FRAME_TO_CENTER_DISTANCE_INCHES = 11.75;
+    static final double[] MEASURED_ACTUAL_ANGLES_DEGREES =
+            buildActualAnglesDegrees(
+                    MEASURED_HOOD_ANGLE_AT_MECHANISM_ZERO_DEGREES,
+                    COMMANDED_HOOD_ANGLE_CHANGES_DEGREES);
+    static final double[][] MEASURED_DISTANCE_GRID_INCHES = {
         {  8.0, 18.0, 29.0, 40.0, 46.0, 55.0, 61.0, 63.0, 68.0, 70.0},
         { 21.0, 35.0, 51.0, 66.0, 75.0, 85.0, 97.0,100.0,102.0,103.0},
         { 47.0, 64.0, 90.0,108.0,122.0,134.0,150.0,153.0,157.0,159.0},
@@ -64,20 +40,50 @@ public final class ShooterConstants {
         {  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,558.0}
     };
 
+    static final double FITTED_TRAJECTORY_DRAG_LOG_REFERENCE_SPEED_IPS = 300.0;
+    static final double FITTED_TRAJECTORY_DRAG_COEFFICIENT_BASE_PER_INCH = 0.001270781;
+    static final double FITTED_TRAJECTORY_DRAG_COEFFICIENT_LOG_SLOPE_PER_INCH = -0.000272904;
+    static final double FITTED_TRAJECTORY_MAGNUS_PER_SPIN_INCH = 0.000001254;
+    static final String FITTED_BALL_TRAJECTORY_LUT_FILENAME = "ball_trajectory_lut.bin";
+    static final int FITTED_BALL_TRAJECTORY_LUT_MAGIC = 0x42544C54; // "BTLT"
+    static final int FITTED_BALL_TRAJECTORY_LUT_VERSION = 2;
+    static final double FITTED_BALL_TRAJECTORY_LUT_MIN_HOOD_ANGLE_DEGREES =
+            MEASURED_ACTUAL_ANGLES_DEGREES[MEASURED_ACTUAL_ANGLES_DEGREES.length - 1];
+    static final double FITTED_BALL_TRAJECTORY_LUT_MAX_HOOD_ANGLE_DEGREES =
+            MEASURED_ACTUAL_ANGLES_DEGREES[0];
+    static final double FITTED_BALL_TRAJECTORY_LUT_HOOD_ANGLE_STEP_DEGREES = 0.1;
+    static final int FITTED_BALL_TRAJECTORY_LUT_MAX_TARGET_DISTANCE_INCHES = 725;
+    static final int FITTED_BALL_TRAJECTORY_LUT_MAX_TARGET_ELEVATION_FEET = 5;
+    static final double FITTED_BALL_TRAJECTORY_LUT_ELEVATION_STEP_INCHES = 12.0;
+    static final double[] FITTED_COMMAND_ANGLE_EXIT_SCALES = {
+        1.114997, 1.1197695, 1.124542, 1.131481, 1.13842,
+        1.151291, 1.173797, 1.198627, 1.220792, 1.247873
+    };
+    static final double[] FITTED_BALL_EXIT_IPS = {
+        136.956, 173.887, 224.507, 270.333,
+        306.991, 338.273, 362.176, 381.627,
+        396.285, 411.510, 423.450, 439.677,
+        460.376, 477.270, 492.3584267, 507.7218
+    };
+
     static {
-        if (COMMAND_ANGLE_EXIT_SCALES.length != ACTUAL_ANGLES_DEGREES.length) {
+        if (FITTED_COMMAND_ANGLE_EXIT_SCALES.length != MEASURED_ACTUAL_ANGLES_DEGREES.length) {
             throw new IllegalStateException("Angle exit scale table must match angle count.");
         }
-        if (DISTANCE_GRID_INCHES.length != COMMAND_SPEEDS_IPS.length) {
-            throw new IllegalStateException("Distance grid row count must match command speed count.");
+        if (FITTED_BALL_TRAJECTORY_LUT_MIN_HOOD_ANGLE_DEGREES
+                > FITTED_BALL_TRAJECTORY_LUT_MAX_HOOD_ANGLE_DEGREES) {
+            throw new IllegalStateException("LUT hood angle bounds must be ascending.");
         }
-        if (COMMAND_ANGLE_CHANGES_DEGREES.length != ACTUAL_ANGLES_DEGREES.length) {
+        if (MEASURED_DISTANCE_GRID_INCHES.length > COMMANDED_FLYWHEEL_SET_IPS.length) {
+            throw new IllegalStateException("Distance grid row count must not exceed command speed count.");
+        }
+        if (COMMANDED_HOOD_ANGLE_CHANGES_DEGREES.length != MEASURED_ACTUAL_ANGLES_DEGREES.length) {
             throw new IllegalStateException("Commanded angle changes must match angle count.");
         }
-        if (DISTANCE_GRID_INCHES[0].length != ACTUAL_ANGLES_DEGREES.length) {
+        if (MEASURED_DISTANCE_GRID_INCHES[0].length != MEASURED_ACTUAL_ANGLES_DEGREES.length) {
             throw new IllegalStateException("Distance grid column count must match angle count.");
         }
-        if (FLYWHEEL_SET_IPS.length != BALL_EXIT_IPS.length) {
+        if (COMMANDED_FLYWHEEL_SET_IPS.length != FITTED_BALL_EXIT_IPS.length) {
             throw new IllegalStateException("Flywheel set IPS and ball exit IPS tables must match.");
         }
     }

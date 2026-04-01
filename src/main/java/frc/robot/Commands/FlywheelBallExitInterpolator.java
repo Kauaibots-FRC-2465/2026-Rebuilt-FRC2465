@@ -4,7 +4,7 @@ public final class FlywheelBallExitInterpolator {
     private static final double EPSILON = 1e-9;
 
     static {
-        if (ShooterConstants.FLYWHEEL_SET_IPS.length != ShooterConstants.BALL_EXIT_IPS.length) {
+        if (ShooterConstants.COMMANDED_FLYWHEEL_SET_IPS.length != ShooterConstants.FITTED_BALL_EXIT_IPS.length) {
             throw new IllegalStateException("SET_IPS and BALL_EXIT_IPS must have matching lengths.");
         }
     }
@@ -13,11 +13,11 @@ public final class FlywheelBallExitInterpolator {
     }
 
     public static double getBallExitIpsForSetIps(double setIps) {
-        return interpolate(setIps, ShooterConstants.FLYWHEEL_SET_IPS, ShooterConstants.BALL_EXIT_IPS);
+        return interpolate(setIps, ShooterConstants.COMMANDED_FLYWHEEL_SET_IPS, ShooterConstants.FITTED_BALL_EXIT_IPS);
     }
 
     public static double getSetIpsForBallExitIps(double ballExitIps) {
-        return interpolate(ballExitIps, ShooterConstants.BALL_EXIT_IPS, ShooterConstants.FLYWHEEL_SET_IPS);
+        return interpolate(ballExitIps, ShooterConstants.FITTED_BALL_EXIT_IPS, ShooterConstants.COMMANDED_FLYWHEEL_SET_IPS);
     }
 
     private static double interpolate(double input, double[] inputs, double[] outputs) {

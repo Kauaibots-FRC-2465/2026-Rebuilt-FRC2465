@@ -69,7 +69,7 @@ public class RobotContainer implements Subsystem {
     
     private final static int INCHES = 1;
     private static final double HOOD_ANGLE_AT_MECHANISM_ZERO_DEGREES =
-            ShooterConstants.HOOD_ANGLE_AT_MECHANISM_ZERO_DEGREES;
+            ShooterConstants.MEASURED_HOOD_ANGLE_AT_MECHANISM_ZERO_DEGREES;
     private static final double MIN_HOOD_ANGLE_DEGREES = HOOD_ANGLE_AT_MECHANISM_ZERO_DEGREES - 50.0;
     private static final double MAX_HOOD_ANGLE_DEGREES = HOOD_ANGLE_AT_MECHANISM_ZERO_DEGREES;
     private static final double HOOD_TUNE_ANGLE_STEP_DEGREES = 5.0;
