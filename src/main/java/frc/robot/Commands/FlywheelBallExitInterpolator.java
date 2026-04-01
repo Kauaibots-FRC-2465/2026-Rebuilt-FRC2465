@@ -3,20 +3,8 @@ package frc.robot.Commands;
 public final class FlywheelBallExitInterpolator {
     private static final double EPSILON = 1e-9;
 
-    private static final double[] SET_IPS = {
-        200.0, 240.0, 280.0, 320.0, 360.0, 400.0, 440.0, 480.0,
-        520.0, 560.0, 600.0, 640.0, 680.0, 720.0, 760.0, 800.0
-    };
-
-    private static final double[] BALL_EXIT_IPS = {
-        143.7223601, 176.6259052, 216.1407088, 272.4331199,
-        317.9685292, 355.4835685, 370.3047542, 392.1787301,
-        408.0032517, 423.5261656, 438.1693087, 451.8488867,
-        469.9891753, 483.3837431, 492.3584267, 507.7218
-    };
-
     static {
-        if (SET_IPS.length != BALL_EXIT_IPS.length) {
+        if (ShooterConstants.FLYWHEEL_SET_IPS.length != ShooterConstants.BALL_EXIT_IPS.length) {
             throw new IllegalStateException("SET_IPS and BALL_EXIT_IPS must have matching lengths.");
         }
     }
@@ -25,11 +13,11 @@ public final class FlywheelBallExitInterpolator {
     }
 
     public static double getBallExitIpsForSetIps(double setIps) {
-        return interpolate(setIps, SET_IPS, BALL_EXIT_IPS);
+        return interpolate(setIps, ShooterConstants.FLYWHEEL_SET_IPS, ShooterConstants.BALL_EXIT_IPS);
     }
 
     public static double getSetIpsForBallExitIps(double ballExitIps) {
-        return interpolate(ballExitIps, BALL_EXIT_IPS, SET_IPS);
+        return interpolate(ballExitIps, ShooterConstants.BALL_EXIT_IPS, ShooterConstants.FLYWHEEL_SET_IPS);
     }
 
     private static double interpolate(double input, double[] inputs, double[] outputs) {

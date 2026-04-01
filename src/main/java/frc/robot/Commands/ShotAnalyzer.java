@@ -6,61 +6,28 @@ import java.util.Comparator;
 import java.util.List;
 
 public final class ShotAnalyzer {
-    private static final double HOOD_ANGLE_AT_MECHANISM_ZERO_DEGREES = 78.6;
-    private static final double BACKSPIN_CANCEL_LIMIT_COMMAND_IPS = 410.0;
+    private static final double HOOD_ANGLE_AT_MECHANISM_ZERO_DEGREES =
+            ShooterConstants.CALIBRATED_HOOD_ANGLE_AT_MECHANISM_ZERO_DEGREES;
+    private static final double BACKSPIN_CANCEL_LIMIT_COMMAND_IPS =
+            ShooterConstants.BACKSPIN_CANCEL_LIMIT_COMMAND_IPS;
     private static final double GRAVITY_IPS2 = 386.08858267716535;
-    private static final double INITIAL_X_OFFSET_INCHES = -13.5;
-    private static final double INITIAL_Z_BASE_INCHES = 7.5;
-    private static final double BALL_CENTER_OFFSET_INCHES = 5.0;
+    private static final double INITIAL_X_OFFSET_INCHES = ShooterConstants.INITIAL_X_OFFSET_INCHES;
+    private static final double INITIAL_Z_BASE_INCHES = ShooterConstants.INITIAL_Z_BASE_INCHES;
+    private static final double BALL_CENTER_OFFSET_INCHES = ShooterConstants.BALL_CENTER_OFFSET_INCHES;
     private static final double SIMULATION_DT_SECONDS = 0.002;
     private static final double MAX_SIMULATION_TIME_SECONDS = 5.0;
     private static final double NO_HIT_PENALTY_INCHES = 1000.0;
 
-    private static final double[] ANGLES_DEGREES = {
-        HOOD_ANGLE_AT_MECHANISM_ZERO_DEGREES - 0.0,
-        HOOD_ANGLE_AT_MECHANISM_ZERO_DEGREES - 5.0,
-        HOOD_ANGLE_AT_MECHANISM_ZERO_DEGREES - 10.0,
-        HOOD_ANGLE_AT_MECHANISM_ZERO_DEGREES - 15.0,
-        HOOD_ANGLE_AT_MECHANISM_ZERO_DEGREES - 20.0,
-        HOOD_ANGLE_AT_MECHANISM_ZERO_DEGREES - 25.0,
-        HOOD_ANGLE_AT_MECHANISM_ZERO_DEGREES - 30.0,
-        HOOD_ANGLE_AT_MECHANISM_ZERO_DEGREES - 35.0,
-        HOOD_ANGLE_AT_MECHANISM_ZERO_DEGREES - 40.0,
-        HOOD_ANGLE_AT_MECHANISM_ZERO_DEGREES - 45.0
-    };
+    private static final double[] ANGLES_DEGREES = ShooterConstants.CALIBRATED_ANGLES_DEGREES;
 
-    private static final double[] COMMAND_SPEEDS_IPS = {
-        200.0, 240.0, 280.0, 320.0, 360.0, 400.0, 440.0,
-        480.0, 520.0, 560.0, 600.0, 640.0, 680.0, 720.0
-    };
+    private static final double[] COMMAND_SPEEDS_IPS = ShooterConstants.COMMAND_SPEEDS_IPS;
 
-    private static final double[] SHOT_EXIT_SPEEDS_IPS = {
-        143.7223601, 176.6259052, 216.1407088, 272.4331199,
-        317.9685292, 355.4835685, 370.3047542, 392.1787301,
-        408.0032517, 423.5261656, 438.1693087, 451.8488867,
-        469.9891753, 483.3837431
-    };
+    private static final double[] SHOT_EXIT_SPEEDS_IPS = ShooterConstants.COMMAND_BALL_EXIT_IPS;
 
     // Table distances are relative to the front frame of the robot, but shooter is behind the front of the frame according to:
     // ball exits with initial z of (7.5 inches)+(5 inches * sin(launch angle))
     // ball exits with initial x of (-13.5 inches)+(5 inches * cos(launch angle))
-    private static final double[][] DISTANCE_GRID_INCHES = {
-        //76.9, 71.9, 66.9, 61.9, 56.9, 51.9, 46.9, 41.9, 36.9, 31.9 (angle)
-        {  8.0, 18.0, 29.0, 40.0, 46.0, 55.0, 61.0, 63.0, 68.0, 70.0}, //143.7223601
-        { 21.0, 35.0, 51.0, 66.0, 75.0, 85.0, 97.0,100.0,102.0,103.0}, //176.6259052
-        { 47.0, 64.0, 90.0,108.0,122.0,134.0,150.0,153.0,157.0,159.0}, //216.1407088
-        { 65.0, 89.0,122.0,150.0,168.0,189.0,202.0,211.0,219.0,220.0}, //272.4331199
-        { 74.0,106.0,145.0,176.0,206.0,232.0,247.0,266.0,275.0,274.0}, //317.9685292
-        {  0.0,  0.0,  0.0,  0.0,235.0,258.0,284.0,309.0,315.0,323.0}, //355.4835685
-        {  0.0,  0.0,  0.0,  0.0,  0.0,290.0,314.0,334.0,353.0,359.0}, //370.3047542
-        {  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,343.0,364.0,377.0,390.0}, //392.1787301
-        {  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,363.0,385.0,406.0,414.0}, //408.0032517
-        {  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,417.0,429.0,432.0}, //423.5261656
-        {  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,450.0,459.0}, //438.1693087
-        {  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,490.0}, //451.8488867
-        {  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,527.0}, //469.9891753
-        {  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,558.0}  //483.3837431
-    };
+    private static final double[][] DISTANCE_GRID_INCHES = ShooterConstants.DISTANCE_GRID_INCHES;
 
     private ShotAnalyzer() {
     }

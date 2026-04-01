@@ -5,41 +5,12 @@ import java.io.PrintWriter;
 
 public class ShooterInterpolator {
     private static final double ANGLE_EPSILON = 1e-9;
-    private static final double HOOD_ANGLE_AT_MECHANISM_ZERO_DEGREES = 76.9;
 
     // --- 1. EMPIRICAL DATA ---
-    private static final double[] ANGLES = {
-        HOOD_ANGLE_AT_MECHANISM_ZERO_DEGREES - 0.0,
-        HOOD_ANGLE_AT_MECHANISM_ZERO_DEGREES - 5.0,
-        HOOD_ANGLE_AT_MECHANISM_ZERO_DEGREES - 10.0,
-        HOOD_ANGLE_AT_MECHANISM_ZERO_DEGREES - 15.0,
-        HOOD_ANGLE_AT_MECHANISM_ZERO_DEGREES - 20.0,
-        HOOD_ANGLE_AT_MECHANISM_ZERO_DEGREES - 25.0,
-        HOOD_ANGLE_AT_MECHANISM_ZERO_DEGREES - 30.0,
-        HOOD_ANGLE_AT_MECHANISM_ZERO_DEGREES - 35.0,
-        HOOD_ANGLE_AT_MECHANISM_ZERO_DEGREES - 40.0,
-        HOOD_ANGLE_AT_MECHANISM_ZERO_DEGREES - 45.0
-    };
-    private static final double[] SPEEDS = {200, 240, 280, 320, 360, 400, 440, 480, 520, 560, 600, 640, 680, 720}; 
-    private static final double[] SHOT_EXIT_SPEEDS = buildShotExitSpeeds();
-    
-    private static final double[][] DISTANCE_GRID = {
-        // 76.9 71.9 66.9 61.9 56.9 51.9 46.9 41.9 36.9 31.9
-        {  8, 18, 29, 40, 46, 55, 61, 63, 68, 70}, //200
-        { 21, 35, 51, 66, 75, 85, 97,100,102,103}, //240
-        { 47, 64, 90,108,122,134,150,153,157,159}, //280
-        { 65, 89,122,150,168,189,202,211,219,220}, //320
-        { 74,106,145,176,206,232,247,266,275,274}, //360
-        {  0,  0,  0,  0,235,258,284,309,315,323}, //25
-        {  0,  0,  0,  0,  0,290,314,334,353,359}, //30
-        {  0,  0,  0,  0,  0,  0,343,364,377,390}, //35
-        {  0,  0,  0,  0,  0,  0,363,385,406,414}, //40
-        {  0,  0,  0,  0,  0,  0,  0,417,429,432}, //45
-        {  0,  0,  0,  0,  0,  0,  0,  0,450,459}, //50
-        {  0,  0,  0,  0,  0,  0,  0,  0,  0,490}, //55
-        {  0,  0,  0,  0,  0,  0,  0,  0,  0,527}, //60
-        {  0,  0,  0,  0,  0,  0,  0,  0,  0,558} //65
-    };
+    private static final double[] ANGLES = ShooterConstants.RAW_TABLE_ANGLES_DEGREES;
+    private static final double[] SPEEDS = ShooterConstants.COMMAND_SPEEDS_IPS;
+    private static final double[] SHOT_EXIT_SPEEDS = ShooterConstants.COMMAND_BALL_EXIT_IPS;
+    private static final double[][] DISTANCE_GRID = ShooterConstants.DISTANCE_GRID_INCHES;
 
     // --- 2. PRE-COMPUTED MEMORY CACHE ---
     private static double[][] generatedShotVelocityMap;
@@ -277,19 +248,6 @@ public class ShooterInterpolator {
         }
 
         return Double.NaN;
-    }
-
-    private static double[] buildShotExitSpeeds() {
-        double[] shotExitSpeeds = new double[SPEEDS.length];
-        for (int i = 0; i < SPEEDS.length; i++) {
-            double shotExitSpeed = FlywheelBallExitInterpolator.getBallExitIpsForSetIps(SPEEDS[i]);
-            if (!Double.isFinite(shotExitSpeed)) {
-                throw new IllegalStateException("Unable to convert flywheel set IPS " + SPEEDS[i]
-                        + " to ball exit IPS.");
-            }
-            shotExitSpeeds[i] = shotExitSpeed;
-        }
-        return shotExitSpeeds;
     }
 
     private static boolean isBetween(double value, double bound1, double bound2) {
