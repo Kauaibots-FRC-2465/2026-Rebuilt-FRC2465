@@ -41,7 +41,8 @@ public class SnowblowToAlliance extends Command {
     private final DoubleArrayPublisher targetPublisher;
     private final DoublePublisher targetDistanceInchesPublisher;
     private final DoublePublisher hoodAngleDegreesPublisher;
-    private final DoublePublisher flywheelSpeedIpsPublisher;
+    private final DoublePublisher shotExitVelocityIpsPublisher;
+    private final DoublePublisher flywheelCommandIpsPublisher;
     private final StringPublisher fieldTypePublisher;
     private Translation2d lastFieldRelativeDriveDirection = new Translation2d();
 
@@ -59,7 +60,8 @@ public class SnowblowToAlliance extends Command {
         targetPublisher = snowblowTable.getDoubleArrayTopic("target").publish();
         targetDistanceInchesPublisher = snowblowTable.getDoubleTopic("targetDistanceInches").publish();
         hoodAngleDegreesPublisher = snowblowTable.getDoubleTopic("hoodAngleDegrees").publish();
-        flywheelSpeedIpsPublisher = snowblowTable.getDoubleTopic("flywheelSpeedIps").publish();
+        shotExitVelocityIpsPublisher = snowblowTable.getDoubleTopic("shotExitVelocityIps").publish();
+        flywheelCommandIpsPublisher = snowblowTable.getDoubleTopic("flywheelCommandIps").publish();
         fieldTypePublisher = snowblowTable.getStringTopic(".type").publish();
         fieldTypePublisher.set("Field2d");
 
@@ -126,21 +128,35 @@ public class SnowblowToAlliance extends Command {
         Translation2d robotTranslation = drivetrain.getState().Pose.getTranslation();
         double targetDistanceMeters = robotTranslation.getDistance(target);
         int targetDistanceInches = (int) Math.round(Inches.convertFrom(targetDistanceMeters, Meters));
-        double hoodAngleDegrees = ShooterInterpolator.getMinValidAngle(targetDistanceInches);
+        ShooterInterpolator.ShotSolution shotSolution = ShooterInterpolator.getMinValidShot(targetDistanceInches);
         targetDistanceInchesPublisher.set(targetDistanceInches);
 
-        if (!Double.isFinite(hoodAngleDegrees)) {
+        if (!shotSolution.isValid()) {
             hoodAngleDegreesPublisher.set(Double.NaN);
-            flywheelSpeedIpsPublisher.set(0.0);
+            shotExitVelocityIpsPublisher.set(0.0);
+            flywheelCommandIpsPublisher.set(0.0);
             shooter.setCoupledIPS(0.0);
             return;
         }
 
-        double flywheelSpeedIps = ShooterInterpolator.getSpeedAtAngle(targetDistanceInches, hoodAngleDegrees);
+        double hoodAngleDegrees = shotSolution.angleDegrees();
+        double shotExitVelocityIps = shotSolution.shotVelocityIps();
+        double flywheelCommandIps = FlywheelBallExitInterpolator.getSetIpsForBallExitIps(
+                shotExitVelocityIps);
+
+        if (!Double.isFinite(flywheelCommandIps)) {
+            hoodAngleDegreesPublisher.set(Double.NaN);
+            shotExitVelocityIpsPublisher.set(0.0);
+            flywheelCommandIpsPublisher.set(0.0);
+            shooter.setCoupledIPS(0.0);
+            return;
+        }
+
         hoodAngleDegreesPublisher.set(hoodAngleDegrees);
-        flywheelSpeedIpsPublisher.set(flywheelSpeedIps);
+        shotExitVelocityIpsPublisher.set(shotExitVelocityIps);
+        flywheelCommandIpsPublisher.set(flywheelCommandIps);
         verticalAim.setAngle(Degrees.of(hoodAngleDegrees));
-        shooter.setCoupledIPS(flywheelSpeedIps);
+        shooter.setCoupledIPS(flywheelCommandIps);
     }
 
     private void updateLastDriveDirection(SwerveRequest.FieldCentric fieldCentricRequest) {

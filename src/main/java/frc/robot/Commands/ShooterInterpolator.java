@@ -21,6 +21,7 @@ public class ShooterInterpolator {
         HOOD_ANGLE_AT_MECHANISM_ZERO_DEGREES - 45.0
     };
     private static final double[] SPEEDS = {200, 240, 280, 320, 360, 400, 440, 480, 520, 560, 600, 640, 680, 720}; 
+    private static final double[] SHOT_EXIT_SPEEDS = buildShotExitSpeeds();
     
     private static final double[][] DISTANCE_GRID = {
         // 76.9 71.9 66.9 61.9 56.9 51.9 46.9 41.9 36.9 31.9
@@ -41,11 +42,21 @@ public class ShooterInterpolator {
     };
 
     // --- 2. PRE-COMPUTED MEMORY CACHE ---
-    private static double[][] generatedSpeedMap;
+    private static double[][] generatedShotVelocityMap;
     private static double[] minValidAngleByDistance;
     private static double[] maxValidAngleByDistance;
     private static int minDistance = Integer.MAX_VALUE;
     private static int maxDistance = Integer.MIN_VALUE;
+
+    public record ShotSolution(double angleDegrees, double shotVelocityIps) {
+        public static ShotSolution invalid() {
+            return new ShotSolution(Double.NaN, Double.NaN);
+        }
+
+        public boolean isValid() {
+            return Double.isFinite(angleDegrees) && Double.isFinite(shotVelocityIps);
+        }
+    }
 
     static {
         for (double[] row : DISTANCE_GRID) {
@@ -65,7 +76,7 @@ public class ShooterInterpolator {
             }
         }
 
-        generatedSpeedMap = new double[maxDistance + 1][ANGLES.length];
+        generatedShotVelocityMap = new double[maxDistance + 1][ANGLES.length];
         minValidAngleByDistance = new double[maxDistance + 1];
         maxValidAngleByDistance = new double[maxDistance + 1];
 
@@ -74,7 +85,7 @@ public class ShooterInterpolator {
             double maxValidAngle = Double.NEGATIVE_INFINITY;
 
             for (int col = 0; col < ANGLES.length; col++) {
-                double calculatedSpeed = 0.0;
+                double calculatedShotVelocity = 0.0;
                 
                 for (int row1 = 0; row1 < SPEEDS.length - 1; row1++) {
                     double d1 = DISTANCE_GRID[row1][col];
@@ -89,17 +100,17 @@ public class ShooterInterpolator {
                     double d2 = DISTANCE_GRID[row2][col];
                     
                     if ((targetDist >= d1 && targetDist <= d2) || (targetDist <= d1 && targetDist >= d2)) {
-                        double v1 = SPEEDS[row1];
-                        double v2 = SPEEDS[row2];
+                        double v1 = SHOT_EXIT_SPEEDS[row1];
+                        double v2 = SHOT_EXIT_SPEEDS[row2];
                         
-                        if (d1 == d2) calculatedSpeed = v1; 
-                        else calculatedSpeed = v1 + (v2 - v1) * ((targetDist - d1) / (d2 - d1));
+                        if (d1 == d2) calculatedShotVelocity = v1; 
+                        else calculatedShotVelocity = v1 + (v2 - v1) * ((targetDist - d1) / (d2 - d1));
                         
                         break; 
                     }
                 }
-                generatedSpeedMap[targetDist][col] = calculatedSpeed;
-                if (calculatedSpeed > 0.0) {
+                generatedShotVelocityMap[targetDist][col] = calculatedShotVelocity;
+                if (calculatedShotVelocity > 0.0) {
                     minValidAngle = Math.min(minValidAngle, ANGLES[col]);
                     maxValidAngle = Math.max(maxValidAngle, ANGLES[col]);
                 }
@@ -116,40 +127,55 @@ public class ShooterInterpolator {
     }
 
     // --- 3. RUNTIME QUERY METHOD ---
-    public static double getSpeedAtAngle(int targetDistance, double targetAngle) {
-        if (!isDistanceInRange(targetDistance)) return 0.0;
+    public static ShotSolution getShotAtAngle(int targetDistance, double targetAngle) {
+        if (!isDistanceInRange(targetDistance)) return ShotSolution.invalid();
 
-        double[] speedsForDist = generatedSpeedMap[targetDistance];
-
-        for (int i = 0; i < ANGLES.length; i++) {
-            if (Math.abs(targetAngle - ANGLES[i]) <= ANGLE_EPSILON) {
-                return speedsForDist[i];
-            }
+        double resolvedAngle = clampAngleToBounds(targetAngle);
+        double shotVelocityIps = getShotVelocityAtAngle(targetDistance, resolvedAngle);
+        if (!Double.isFinite(shotVelocityIps) || shotVelocityIps <= 0.0) {
+            return ShotSolution.invalid();
         }
 
-        boolean ascendingAngles = ANGLES[0] <= ANGLES[ANGLES.length - 1];
-        if (ascendingAngles) {
-            if (targetAngle <= ANGLES[0]) return speedsForDist[0];
-            if (targetAngle >= ANGLES[ANGLES.length - 1]) return speedsForDist[ANGLES.length - 1];
-        } else {
-            if (targetAngle >= ANGLES[0]) return speedsForDist[0];
-            if (targetAngle <= ANGLES[ANGLES.length - 1]) return speedsForDist[ANGLES.length - 1];
+        return new ShotSolution(resolvedAngle, shotVelocityIps);
+    }
+
+    public static ShotSolution getMinValidShot(int targetDistance) {
+        if (!isDistanceInRange(targetDistance)) return ShotSolution.invalid();
+        double minValidAngle = minValidAngleByDistance[targetDistance];
+        if (!Double.isFinite(minValidAngle)) return ShotSolution.invalid();
+        return getShotAtAngle(targetDistance, minValidAngle);
+    }
+
+    public static ShotSolution getMaxValidShot(int targetDistance) {
+        if (!isDistanceInRange(targetDistance)) return ShotSolution.invalid();
+        double maxValidAngle = maxValidAngleByDistance[targetDistance];
+        if (!Double.isFinite(maxValidAngle)) return ShotSolution.invalid();
+        return getShotAtAngle(targetDistance, maxValidAngle);
+    }
+
+    public static double getShotDistance(double shotVelocityIps, double targetAngle) {
+        if (!Double.isFinite(shotVelocityIps) || shotVelocityIps <= 0.0) return Double.NaN;
+
+        double resolvedAngle = clampAngleToBounds(targetAngle);
+
+        for (int i = 0; i < ANGLES.length; i++) {
+            if (Math.abs(resolvedAngle - ANGLES[i]) <= ANGLE_EPSILON) {
+                return getDistanceAtAngleColumn(shotVelocityIps, i);
+            }
         }
 
         for (int i = 0; i < ANGLES.length - 1; i++) {
             double a1 = ANGLES[i];
             double a2 = ANGLES[i + 1];
-
-            if (isBetween(targetAngle, a1, a2)) {
-                double v1 = speedsForDist[i];
-                double v2 = speedsForDist[i + 1];
-
-                if (v1 <= 0.0 || v2 <= 0.0) return 0.0;
-
-                return v1 + (v2 - v1) * ((targetAngle - a1) / (a2 - a1));
+            if (isBetween(resolvedAngle, a1, a2)) {
+                double d1 = getDistanceAtAngleColumn(shotVelocityIps, i);
+                double d2 = getDistanceAtAngleColumn(shotVelocityIps, i + 1);
+                if (!Double.isFinite(d1) || !Double.isFinite(d2)) return Double.NaN;
+                return d1 + (d2 - d1) * ((resolvedAngle - a1) / (a2 - a1));
             }
         }
-        return 0.0;
+
+        return Double.NaN;
     }
 
     public static double getMinValidAngle(int targetDistance) {
@@ -162,8 +188,108 @@ public class ShooterInterpolator {
         return maxValidAngleByDistance[targetDistance];
     }
 
+    public static double getShotVelocityAtAngle(int targetDistance, double targetAngle) {
+        if (!isDistanceInRange(targetDistance)) return Double.NaN;
+
+        double[] shotVelocitiesForDistance = generatedShotVelocityMap[targetDistance];
+
+        for (int i = 0; i < ANGLES.length; i++) {
+            if (Math.abs(targetAngle - ANGLES[i]) <= ANGLE_EPSILON) {
+                return shotVelocitiesForDistance[i] > 0.0 ? shotVelocitiesForDistance[i] : Double.NaN;
+            }
+        }
+
+        boolean ascendingAngles = ANGLES[0] <= ANGLES[ANGLES.length - 1];
+        if (ascendingAngles) {
+            if (targetAngle <= ANGLES[0]) {
+                return shotVelocitiesForDistance[0] > 0.0 ? shotVelocitiesForDistance[0] : Double.NaN;
+            }
+            if (targetAngle >= ANGLES[ANGLES.length - 1]) {
+                return shotVelocitiesForDistance[ANGLES.length - 1] > 0.0
+                        ? shotVelocitiesForDistance[ANGLES.length - 1]
+                        : Double.NaN;
+            }
+        } else {
+            if (targetAngle >= ANGLES[0]) {
+                return shotVelocitiesForDistance[0] > 0.0 ? shotVelocitiesForDistance[0] : Double.NaN;
+            }
+            if (targetAngle <= ANGLES[ANGLES.length - 1]) {
+                return shotVelocitiesForDistance[ANGLES.length - 1] > 0.0
+                        ? shotVelocitiesForDistance[ANGLES.length - 1]
+                        : Double.NaN;
+            }
+        }
+
+        for (int i = 0; i < ANGLES.length - 1; i++) {
+            double a1 = ANGLES[i];
+            double a2 = ANGLES[i + 1];
+
+            if (isBetween(targetAngle, a1, a2)) {
+                double v1 = shotVelocitiesForDistance[i];
+                double v2 = shotVelocitiesForDistance[i + 1];
+
+                if (v1 <= 0.0 || v2 <= 0.0) return Double.NaN;
+
+                return v1 + (v2 - v1) * ((targetAngle - a1) / (a2 - a1));
+            }
+        }
+        return Double.NaN;
+    }
+
     private static boolean isDistanceInRange(int targetDistance) {
         return targetDistance >= minDistance && targetDistance <= maxDistance;
+    }
+
+    private static double clampAngleToBounds(double targetAngle) {
+        boolean ascendingAngles = ANGLES[0] <= ANGLES[ANGLES.length - 1];
+        if (ascendingAngles) {
+            return Math.max(ANGLES[0], Math.min(ANGLES[ANGLES.length - 1], targetAngle));
+        }
+        return Math.min(ANGLES[0], Math.max(ANGLES[ANGLES.length - 1], targetAngle));
+    }
+
+    private static double getDistanceAtAngleColumn(double shotVelocityIps, int angleColumn) {
+        double previousDistance = Double.NaN;
+        double previousShotVelocity = Double.NaN;
+
+        for (int row = 0; row < DISTANCE_GRID.length; row++) {
+            double distance = DISTANCE_GRID[row][angleColumn];
+            if (distance <= 0.0) continue;
+
+            double currentShotVelocity = SHOT_EXIT_SPEEDS[row];
+            if (Math.abs(shotVelocityIps - currentShotVelocity) <= ANGLE_EPSILON) {
+                return distance;
+            }
+
+            if (Double.isFinite(previousDistance) && isBetween(shotVelocityIps, previousShotVelocity, currentShotVelocity)) {
+                if (Math.abs(currentShotVelocity - previousShotVelocity) <= ANGLE_EPSILON) {
+                    return previousDistance;
+                }
+
+                return previousDistance
+                        + (distance - previousDistance)
+                                * ((shotVelocityIps - previousShotVelocity)
+                                        / (currentShotVelocity - previousShotVelocity));
+            }
+
+            previousDistance = distance;
+            previousShotVelocity = currentShotVelocity;
+        }
+
+        return Double.NaN;
+    }
+
+    private static double[] buildShotExitSpeeds() {
+        double[] shotExitSpeeds = new double[SPEEDS.length];
+        for (int i = 0; i < SPEEDS.length; i++) {
+            double shotExitSpeed = FlywheelBallExitInterpolator.getBallExitIpsForSetIps(SPEEDS[i]);
+            if (!Double.isFinite(shotExitSpeed)) {
+                throw new IllegalStateException("Unable to convert flywheel set IPS " + SPEEDS[i]
+                        + " to ball exit IPS.");
+            }
+            shotExitSpeeds[i] = shotExitSpeed;
+        }
+        return shotExitSpeeds;
     }
 
     private static boolean isBetween(double value, double bound1, double bound2) {
@@ -176,12 +302,19 @@ public class ShooterInterpolator {
         
         String filename = "ShooterInterpolationTest.csv";
         try (PrintWriter writer = new PrintWriter(new File(filename))) {
-            writer.println("Target Distance (in),Hood Angle (deg),Flywheel Speed (ips)");
+            writer.println("Target Distance (in),Hood Angle (deg),Shot Exit Velocity (ips),Flywheel Command Speed (ips)");
             
             for (int dist = minDistance; dist <= maxDistance; dist++) {
                 for (double angle : ANGLES) {
-                    double speed = getSpeedAtAngle(dist, angle);
-                    writer.printf("%d,%.1f,%.2f%n", dist, angle, speed);
+                    ShotSolution shot = getShotAtAngle(dist, angle);
+                    double flywheelCommandSpeed = FlywheelBallExitInterpolator.getSetIpsForBallExitIps(
+                            shot.shotVelocityIps());
+                    writer.printf(
+                            "%d,%.1f,%.2f,%.2f%n",
+                            dist,
+                            angle,
+                            shot.shotVelocityIps(),
+                            flywheelCommandSpeed);
                 }
             }
             
