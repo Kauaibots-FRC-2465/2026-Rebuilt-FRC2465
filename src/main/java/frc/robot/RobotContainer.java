@@ -124,18 +124,45 @@ public class RobotContainer implements Subsystem {
     private final Command show2465 = wled.showMarquee(Filesystem.getDeployDirectory().getAbsolutePath() + File.separator + "2465.bmp");
     private final Command showBamPowZang = wled.showGIF(Filesystem.getDeployDirectory().getAbsolutePath() + File.separator + "bampowzang5.gif");
 
-    private final Command showRedAlliance = wled.showMarquee(
-    Filesystem.getDeployDirectory().getAbsolutePath() + File.separator + "red.bmp");
-    private final Command showBlueAlliance = wled.showMarquee(
-    Filesystem.getDeployDirectory().getAbsolutePath() + File.separator + "blue.bmp");
-    private Command showAllianceMarquee() {
-    return Commands.either(
-        showRedAlliance,
-        showBlueAlliance,
-        () -> DriverStation.getAlliance().orElse(DriverStation.Alliance.Blue)
-                == DriverStation.Alliance.Red
-    );
+    private final String redAllianceMarqueePath =
+    Filesystem.getDeployDirectory().getAbsolutePath() + File.separator + "red.bmp";
+    private final String blueAllianceMarqueePath =
+    Filesystem.getDeployDirectory().getAbsolutePath() + File.separator + "blue.bmp";
+    private final WLEDSubsystem.PreparedPlaybackPackets redAlliancePlayback =
+    wled.prepareMarquee(redAllianceMarqueePath);
+    private final WLEDSubsystem.PreparedPlaybackPackets blueAlliancePlayback =
+    wled.prepareMarquee(blueAllianceMarqueePath);
+
+
+private Command showAllianceMarquee() {
+    return new OverrideCommand(wled) {
+        private DriverStation.Alliance lastAlliance;
+
+        @Override
+        public void initialize() {
+            lastAlliance = null;
+        }
+
+        @Override
+        public void execute() {
+            DriverStation.Alliance currentAlliance =
+                DriverStation.getAlliance().orElse(DriverStation.Alliance.Blue);
+
+            if (currentAlliance == lastAlliance) {
+                return;
+            }
+
+            wled.setActivePlayback(
+                currentAlliance == DriverStation.Alliance.Red
+                    ? redAlliancePlayback
+                    : blueAlliancePlayback
+            );
+
+            lastAlliance = currentAlliance;
+        }
+    }.ignoringDisable(true);
 }
+
 
 
     public final PoseEstimatorSubsystem poseEstimatorSubsystem;
@@ -376,7 +403,7 @@ public class RobotContainer implements Subsystem {
             this // Reference to this subsystem to set requirements
     );
 
-
+        //hi :D
         configureBindings();
         publishTuningTelemetry();
 
@@ -387,7 +414,7 @@ public class RobotContainer implements Subsystem {
         // Note that X is defined as forward according to WPILib convention,
         // and Y is defined as to the left according to WPILib convention.
         //schedule(showLights);
-        schedule(showAllianceMarquee());
+        wled.setDefaultCommand(showAllianceMarquee());
         //schedule(show2465);
         drivetrain.setDefaultCommand(
             // Drivetrain will execute this command periodically

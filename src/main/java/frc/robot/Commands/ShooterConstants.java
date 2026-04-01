@@ -9,6 +9,10 @@ public final class ShooterConstants {
     static final double INITIAL_X_OFFSET_INCHES = -13.5;
     static final double INITIAL_Z_BASE_INCHES = 7.5;
     static final double BALL_CENTER_OFFSET_INCHES = 5.0;
+    static final double FRAME_TO_CENTER_DISTANCE_INCHES = 11.75;
+    static final double TRAJECTORY_LINEAR_DRAG_PER_SECOND = 0.568749;
+    static final double TRAJECTORY_QUADRATIC_DRAG_PER_INCH = 0.000145312;
+    static final double TRAJECTORY_MAGNUS_PER_SPIN_INCH = 0.0;
 
     static final double[] RAW_TABLE_ANGLES_DEGREES = {
         RAW_TABLE_HOOD_ANGLE_AT_MECHANISM_ZERO_DEGREES - 0.0,
