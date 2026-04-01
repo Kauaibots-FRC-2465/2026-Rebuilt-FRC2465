@@ -13,6 +13,8 @@ public final class ShooterConstants {
     static final double TRAJECTORY_LINEAR_DRAG_PER_SECOND = 0.568749;
     static final double TRAJECTORY_QUADRATIC_DRAG_PER_INCH = 0.000145312;
     static final double TRAJECTORY_MAGNUS_PER_SPIN_INCH = 0.0;
+    static final String BALL_TRAJECTORY_LUT_FILENAME = "ball_trajectory_lut.bin";
+    static final int BALL_TRAJECTORY_LUT_VERSION = 1;
 
     static final double[] RAW_TABLE_ANGLES_DEGREES = {
         RAW_TABLE_HOOD_ANGLE_AT_MECHANISM_ZERO_DEGREES - 0.0,

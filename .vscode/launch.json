@@ -6,6 +6,13 @@
   "configurations": [
     {
       "type": "java",
+      "name": "BallTrajectoryPhysicsLutGenerator",
+      "request": "launch",
+      "mainClass": "frc.robot.Commands.BallTrajectoryPhysicsLutGenerator",
+      "projectName": "Roborio Code"
+    },
+    {
+      "type": "java",
       "name": "ShotAnalyzer",
       "request": "launch",
       "mainClass": "frc.robot.Commands.ShotAnalyzer",
