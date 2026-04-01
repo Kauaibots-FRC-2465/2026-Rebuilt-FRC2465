@@ -16,20 +16,27 @@ public final class BallTrajectoryPhysics {
     private static final String LUT_PATH_OVERRIDE_PROPERTY = "frc.ballTrajectoryLutPath";
     private static final int LUT_FILE_MAGIC = 0x42544C54; // "BTLT"
     private static final double GRAVITY_IPS2 = 386.08858267716535;
-    private static final double LINEAR_DRAG_PER_SECOND = ShooterConstants.TRAJECTORY_LINEAR_DRAG_PER_SECOND;
-    private static final double QUADRATIC_DRAG_PER_INCH = ShooterConstants.TRAJECTORY_QUADRATIC_DRAG_PER_INCH;
+    private static final double DRAG_LOG_REFERENCE_SPEED_IPS =
+            ShooterConstants.TRAJECTORY_DRAG_LOG_REFERENCE_SPEED_IPS;
+    private static final double DRAG_COEFFICIENT_BASE_PER_INCH =
+            ShooterConstants.TRAJECTORY_DRAG_COEFFICIENT_BASE_PER_INCH;
+    private static final double DRAG_COEFFICIENT_LOG_SLOPE_PER_INCH =
+            ShooterConstants.TRAJECTORY_DRAG_COEFFICIENT_LOG_SLOPE_PER_INCH;
+    private static final double MAGNUS_PER_SPIN_INCH = ShooterConstants.TRAJECTORY_MAGNUS_PER_SPIN_INCH;
     private static final double INITIAL_X_OFFSET_INCHES = ShooterConstants.INITIAL_X_OFFSET_INCHES;
     private static final double INITIAL_Z_BASE_INCHES = ShooterConstants.INITIAL_Z_BASE_INCHES;
     private static final double BALL_CENTER_OFFSET_INCHES = ShooterConstants.BALL_CENTER_OFFSET_INCHES;
     private static final double FRAME_TO_CENTER_DISTANCE_INCHES =
             ShooterConstants.FRAME_TO_CENTER_DISTANCE_INCHES;
+    private static final double BACKSPIN_CANCEL_LIMIT_COMMAND_IPS =
+            ShooterConstants.BACKSPIN_CANCEL_LIMIT_COMMAND_IPS;
     private static final double SIMULATION_DT_SECONDS = 0.002;
     private static final double MAX_SIMULATION_TIME_SECONDS = 5.0;
     static final double LUT_MIN_HOOD_ANGLE_DEGREES =
-            ShooterConstants.CALIBRATED_ANGLES_DEGREES[
-                    ShooterConstants.CALIBRATED_ANGLES_DEGREES.length - 1];
+            ShooterConstants.ACTUAL_ANGLES_DEGREES[
+                    ShooterConstants.ACTUAL_ANGLES_DEGREES.length - 1];
     static final double LUT_MAX_HOOD_ANGLE_DEGREES =
-            ShooterConstants.CALIBRATED_ANGLES_DEGREES[0];
+            ShooterConstants.ACTUAL_ANGLES_DEGREES[0];
     static final double LUT_HOOD_ANGLE_STEP_DEGREES = 0.1;
     static final int LUT_HOOD_ANGLE_BIN_COUNT = (int) Math.round(
             (LUT_MAX_HOOD_ANGLE_DEGREES - LUT_MIN_HOOD_ANGLE_DEGREES)
@@ -382,6 +389,10 @@ public final class BallTrajectoryPhysics {
         double vz = exitVelocityIps * Math.sin(angleRadians);
         double previousX = x;
         double previousZ = z;
+        double launchCommandIps = FlywheelBallExitInterpolator.getSetIpsForBallExitIps(exitVelocityIps);
+        double spinProxyIps = Double.isFinite(launchCommandIps)
+                ? Math.max(0.0, launchCommandIps - BACKSPIN_CANCEL_LIMIT_COMMAND_IPS)
+                : 0.0;
 
         for (double timeSeconds = 0.0;
                 timeSeconds < MAX_SIMULATION_TIME_SECONDS;
@@ -391,9 +402,14 @@ public final class BallTrajectoryPhysics {
             }
 
             double speedIps = Math.hypot(vx, vz);
-            double dragGainPerSecond = LINEAR_DRAG_PER_SECOND + QUADRATIC_DRAG_PER_INCH * speedIps;
-            double ax = -dragGainPerSecond * vx;
-            double az = -GRAVITY_IPS2 - dragGainPerSecond * vz;
+            double dragCoefficientPerInch = DRAG_COEFFICIENT_BASE_PER_INCH
+                    + DRAG_COEFFICIENT_LOG_SLOPE_PER_INCH
+                            * Math.log(Math.max(1.0, speedIps) / DRAG_LOG_REFERENCE_SPEED_IPS);
+            dragCoefficientPerInch = Math.max(0.0, dragCoefficientPerInch);
+            double dragGainPerSecond = dragCoefficientPerInch * speedIps;
+            double magnusGainPerSecond = MAGNUS_PER_SPIN_INCH * spinProxyIps * speedIps;
+            double ax = -dragGainPerSecond * vx - magnusGainPerSecond * vz;
+            double az = -GRAVITY_IPS2 - dragGainPerSecond * vz + magnusGainPerSecond * vx;
 
             double nextVx = vx + ax * SIMULATION_DT_SECONDS;
             double nextVz = vz + az * SIMULATION_DT_SECONDS;

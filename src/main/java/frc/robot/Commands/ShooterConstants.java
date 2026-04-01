@@ -3,8 +3,7 @@ package frc.robot.Commands;
 import java.util.Arrays;
 
 public final class ShooterConstants {
-    static final double RAW_TABLE_HOOD_ANGLE_AT_MECHANISM_ZERO_DEGREES = 76.9;
-    static final double CALIBRATED_HOOD_ANGLE_AT_MECHANISM_ZERO_DEGREES = 78.6;
+    public static final double HOOD_ANGLE_AT_MECHANISM_ZERO_DEGREES = 78.6;
     static final double BACKSPIN_CANCEL_LIMIT_COMMAND_IPS = 410.0;
     static final double INITIAL_X_OFFSET_INCHES = -13.5;
     static final double INITIAL_Z_BASE_INCHES = 7.5;
@@ -13,41 +12,24 @@ public final class ShooterConstants {
     static final double SHOOTER_LOOKAHEAD_SECONDS = 0.25;
     static final double SNOWBLOW_TARGET_ELEVATION_INCHES = 0.0;
     static final double MOVING_SHOT_HOOD_SEARCH_STEP_DEGREES = 1.0;
-    static final double TRAJECTORY_LINEAR_DRAG_PER_SECOND = 0.568749;
-    static final double TRAJECTORY_QUADRATIC_DRAG_PER_INCH = 0.000145312;
-    static final double TRAJECTORY_MAGNUS_PER_SPIN_INCH = 0.0;
+    static final double TRAJECTORY_DRAG_LOG_REFERENCE_SPEED_IPS = 300.0;
+    static final double TRAJECTORY_DRAG_COEFFICIENT_BASE_PER_INCH = 0.001270781;
+    static final double TRAJECTORY_DRAG_COEFFICIENT_LOG_SLOPE_PER_INCH = -0.000272904;
+    static final double TRAJECTORY_MAGNUS_PER_SPIN_INCH = 0.000001254;
     static final String BALL_TRAJECTORY_LUT_FILENAME = "ball_trajectory_lut.bin";
-    static final int BALL_TRAJECTORY_LUT_VERSION = 1;
+    static final int BALL_TRAJECTORY_LUT_VERSION = 2;
 
-    static final double[] RAW_TABLE_ANGLES_DEGREES = {
-        RAW_TABLE_HOOD_ANGLE_AT_MECHANISM_ZERO_DEGREES - 0.0,
-        RAW_TABLE_HOOD_ANGLE_AT_MECHANISM_ZERO_DEGREES - 5.0,
-        RAW_TABLE_HOOD_ANGLE_AT_MECHANISM_ZERO_DEGREES - 10.0,
-        RAW_TABLE_HOOD_ANGLE_AT_MECHANISM_ZERO_DEGREES - 15.0,
-        RAW_TABLE_HOOD_ANGLE_AT_MECHANISM_ZERO_DEGREES - 20.0,
-        RAW_TABLE_HOOD_ANGLE_AT_MECHANISM_ZERO_DEGREES - 25.0,
-        RAW_TABLE_HOOD_ANGLE_AT_MECHANISM_ZERO_DEGREES - 30.0,
-        RAW_TABLE_HOOD_ANGLE_AT_MECHANISM_ZERO_DEGREES - 35.0,
-        RAW_TABLE_HOOD_ANGLE_AT_MECHANISM_ZERO_DEGREES - 40.0,
-        RAW_TABLE_HOOD_ANGLE_AT_MECHANISM_ZERO_DEGREES - 45.0
+    static final double[] COMMAND_ANGLE_CHANGES_DEGREES = {
+        0.0, 5.0, 10.0, 15.0, 20.0,
+        25.0, 30.0, 35.0, 40.0, 45.0
     };
 
-    static final double[] CALIBRATED_ANGLES_DEGREES = {
-        CALIBRATED_HOOD_ANGLE_AT_MECHANISM_ZERO_DEGREES - 0.0,
-        CALIBRATED_HOOD_ANGLE_AT_MECHANISM_ZERO_DEGREES - 5.0,
-        CALIBRATED_HOOD_ANGLE_AT_MECHANISM_ZERO_DEGREES - 10.0,
-        CALIBRATED_HOOD_ANGLE_AT_MECHANISM_ZERO_DEGREES - 15.0,
-        CALIBRATED_HOOD_ANGLE_AT_MECHANISM_ZERO_DEGREES - 20.0,
-        CALIBRATED_HOOD_ANGLE_AT_MECHANISM_ZERO_DEGREES - 25.0,
-        CALIBRATED_HOOD_ANGLE_AT_MECHANISM_ZERO_DEGREES - 30.0,
-        CALIBRATED_HOOD_ANGLE_AT_MECHANISM_ZERO_DEGREES - 35.0,
-        CALIBRATED_HOOD_ANGLE_AT_MECHANISM_ZERO_DEGREES - 40.0,
-        CALIBRATED_HOOD_ANGLE_AT_MECHANISM_ZERO_DEGREES - 45.0
-    };
+    static final double[] ACTUAL_ANGLES_DEGREES =
+            buildActualAnglesDegrees(HOOD_ANGLE_AT_MECHANISM_ZERO_DEGREES, COMMAND_ANGLE_CHANGES_DEGREES);
 
     static final double[] COMMAND_ANGLE_EXIT_SCALES = {
-        1.25, 1.25, 1.25, 1.25, 1.25,
-        1.25, 1.254489, 1.266515, 1.276971, 1.295353
+        1.114997, 1.1197695, 1.124542, 1.131481, 1.13842,
+        1.151291, 1.173797, 1.198627, 1.220792, 1.247873
     };
 
     static final double[] FLYWHEEL_SET_IPS = {
@@ -56,10 +38,10 @@ public final class ShooterConstants {
     };
 
     static final double[] BALL_EXIT_IPS = {
-        148.0973601, 188.1884052, 241.7657088, 286.4956199,
-        319.2185292, 345.4835685, 367.4922542, 384.3662301,
-        397.3782517, 411.0261656, 422.2318087, 437.7863867,
-        456.2391753, 470.8837431, 492.3584267, 507.7218
+        136.956, 173.887, 224.507, 270.333,
+        306.991, 338.273, 362.176, 381.627,
+        396.285, 411.510, 423.450, 439.677,
+        460.376, 477.270, 492.3584267, 507.7218
     };
 
     static final double[] COMMAND_SPEEDS_IPS = Arrays.copyOf(FLYWHEEL_SET_IPS, 14);
@@ -70,7 +52,7 @@ public final class ShooterConstants {
         { 21.0, 35.0, 51.0, 66.0, 75.0, 85.0, 97.0,100.0,102.0,103.0},
         { 47.0, 64.0, 90.0,108.0,122.0,134.0,150.0,153.0,157.0,159.0},
         { 65.0, 89.0,122.0,150.0,168.0,189.0,202.0,211.0,219.0,220.0},
-        { 74.0,106.0,145.0,176.0,206.0,232.0,247.0,266.0,275.0,274.0},
+        { 74.0,  0.0,145.0,176.0,206.0,232.0,247.0,266.0,275.0,274.0},
         {  0.0,  0.0,  0.0,  0.0,235.0,258.0,284.0,309.0,315.0,323.0},
         {  0.0,  0.0,  0.0,  0.0,  0.0,290.0,314.0,334.0,353.0,359.0},
         {  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,343.0,364.0,377.0,390.0},
@@ -83,16 +65,16 @@ public final class ShooterConstants {
     };
 
     static {
-        if (RAW_TABLE_ANGLES_DEGREES.length != CALIBRATED_ANGLES_DEGREES.length) {
-            throw new IllegalStateException("Angle tables must have matching lengths.");
-        }
-        if (COMMAND_ANGLE_EXIT_SCALES.length != CALIBRATED_ANGLES_DEGREES.length) {
-            throw new IllegalStateException("Angle exit scale table must match calibrated angle count.");
+        if (COMMAND_ANGLE_EXIT_SCALES.length != ACTUAL_ANGLES_DEGREES.length) {
+            throw new IllegalStateException("Angle exit scale table must match angle count.");
         }
         if (DISTANCE_GRID_INCHES.length != COMMAND_SPEEDS_IPS.length) {
             throw new IllegalStateException("Distance grid row count must match command speed count.");
         }
-        if (DISTANCE_GRID_INCHES[0].length != RAW_TABLE_ANGLES_DEGREES.length) {
+        if (COMMAND_ANGLE_CHANGES_DEGREES.length != ACTUAL_ANGLES_DEGREES.length) {
+            throw new IllegalStateException("Commanded angle changes must match angle count.");
+        }
+        if (DISTANCE_GRID_INCHES[0].length != ACTUAL_ANGLES_DEGREES.length) {
             throw new IllegalStateException("Distance grid column count must match angle count.");
         }
         if (FLYWHEEL_SET_IPS.length != BALL_EXIT_IPS.length) {
@@ -101,5 +83,15 @@ public final class ShooterConstants {
     }
 
     private ShooterConstants() {
+    }
+
+    private static double[] buildActualAnglesDegrees(
+            double hoodAngleAtMechanismZeroDegrees,
+            double[] commandAngleChangesDegrees) {
+        double[] actualAnglesDegrees = new double[commandAngleChangesDegrees.length];
+        for (int i = 0; i < commandAngleChangesDegrees.length; i++) {
+            actualAnglesDegrees[i] = hoodAngleAtMechanismZeroDegrees - commandAngleChangesDegrees[i];
+        }
+        return actualAnglesDegrees;
     }
 }

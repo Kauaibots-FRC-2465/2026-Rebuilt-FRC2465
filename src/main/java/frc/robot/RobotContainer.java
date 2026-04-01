@@ -42,6 +42,7 @@ import edu.wpi.first.wpilibj2.command.button.RobotModeTriggers;
 import edu.wpi.first.wpilibj2.command.sysid.SysIdRoutine.Direction;
 
 import frc.robot.Commands.SnowblowToAlliance;
+import frc.robot.Commands.ShooterConstants;
 import frc.robot.generated.TunerConstants;
 import frc.robot.subsystems.CommandSwerveDrivetrain;
 import frc.robot.subsystems.IntakePositionSubsystem;
@@ -67,7 +68,8 @@ public class RobotContainer implements Subsystem {
     private final static float REMEMBER_TO_TUNE_CURRENTLY_1 = 1f;
     
     private final static int INCHES = 1;
-    private static final double HOOD_ANGLE_AT_MECHANISM_ZERO_DEGREES = 76.9;
+    private static final double HOOD_ANGLE_AT_MECHANISM_ZERO_DEGREES =
+            ShooterConstants.HOOD_ANGLE_AT_MECHANISM_ZERO_DEGREES;
     private static final double MIN_HOOD_ANGLE_DEGREES = HOOD_ANGLE_AT_MECHANISM_ZERO_DEGREES - 50.0;
     private static final double MAX_HOOD_ANGLE_DEGREES = HOOD_ANGLE_AT_MECHANISM_ZERO_DEGREES;
     private static final double HOOD_TUNE_ANGLE_STEP_DEGREES = 5.0;

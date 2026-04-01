@@ -7,7 +7,7 @@ import java.util.List;
 
 public final class ShotAnalyzer {
     private static final double HOOD_ANGLE_AT_MECHANISM_ZERO_DEGREES =
-            ShooterConstants.CALIBRATED_HOOD_ANGLE_AT_MECHANISM_ZERO_DEGREES;
+            ShooterConstants.HOOD_ANGLE_AT_MECHANISM_ZERO_DEGREES;
     private static final double BACKSPIN_CANCEL_LIMIT_COMMAND_IPS =
             ShooterConstants.BACKSPIN_CANCEL_LIMIT_COMMAND_IPS;
     private static final double GRAVITY_IPS2 = 386.08858267716535;
@@ -17,11 +17,11 @@ public final class ShotAnalyzer {
     private static final double SIMULATION_DT_SECONDS = 0.002;
     private static final double MAX_SIMULATION_TIME_SECONDS = 5.0;
     private static final double NO_HIT_PENALTY_INCHES = 1000.0;
-    private static final double FIT_MOVE_FRACTION = 0.25;
-    private static final int FIT_PASS_COUNT = 10;
+    private static final double FIT_MOVE_FRACTION = 0.10;
+    private static final int FIT_PASS_COUNT = 100;
     private static final double FIXED_LINEAR_DRAG_PER_SECOND = 0.0;
     private static final double DRAG_LOG_REFERENCE_SPEED_IPS = 300.0;
-    private static final double[] ANGLES_DEGREES = ShooterConstants.CALIBRATED_ANGLES_DEGREES;
+    private static final double[] ANGLES_DEGREES = ShooterConstants.ACTUAL_ANGLES_DEGREES;
     private static final double[] ANGLE_EXIT_SCALES = ShooterConstants.COMMAND_ANGLE_EXIT_SCALES;
 
     private static final double[] COMMAND_SPEEDS_IPS = ShooterConstants.COMMAND_SPEEDS_IPS;
@@ -104,7 +104,7 @@ public final class ShotAnalyzer {
         System.out.println("Model: a = -g*zHat - kCd(|v|)*|v| * v + kMagnus * spinProxy * perp(v)");
         System.out.printf("where kCd(|v|) = kBase + kLog * ln(|v| / %.1f ips)%n",
                 DRAG_LOG_REFERENCE_SPEED_IPS);
-        System.out.println("Assumption: hood angle fixed from geometry, per-angle exit scales adjustable, linear drag fixed at zero, continuous log-speed Cd model, one global Magnus coefficient; each command row gets its own exit-speed correction");
+        System.out.println("Assumption: hood angle fixed from geometry, per-angle exit scales fixed from constants, linear drag fixed at zero, continuous log-speed Cd model, one global Magnus coefficient; each command row gets its own exit-speed correction");
         System.out.printf("Coupled fit: %d passes, each fitted variable moves %.2f of the way toward its current best target per pass%n",
                 FIT_PASS_COUNT,
                 FIT_MOVE_FRACTION);
@@ -284,7 +284,6 @@ public final class ShotAnalyzer {
             double targetDragBase = findBestDragCoefficientBase(samplesByAngle, currentState);
             double targetDragLogSlope = findBestDragCoefficientLogSlope(samplesByAngle, currentState);
             double targetMagnus = findBestMagnus(samplesByAngle, currentState);
-            double[] targetAngleScales = findBestAngleScales(samplesByAngle, currentState);
             double[] targetRowCorrections = findBestRowCorrections(samplesByRow, currentState);
 
             currentState = moveToward(
@@ -292,7 +291,6 @@ public final class ShotAnalyzer {
                     targetDragBase,
                     targetDragLogSlope,
                     targetMagnus,
-                    targetAngleScales,
                     targetRowCorrections);
         }
 
@@ -304,16 +302,7 @@ public final class ShotAnalyzer {
             double targetDragCoefficientBasePerInch,
             double targetDragCoefficientLogSlopePerInch,
             double targetMagnusPerSpinInch,
-            double[] targetAngleExitScales,
             double[] targetRowExitCorrectionsIps) {
-        double[] updatedAngleScales = currentState.angleExitScales().clone();
-        for (int i = 0; i < updatedAngleScales.length; i++) {
-            updatedAngleScales[i] = moveToward(
-                    updatedAngleScales[i],
-                    targetAngleExitScales[i],
-                    FIT_MOVE_FRACTION);
-        }
-
         double[] updatedRowCorrections = currentState.rowExitSpeedCorrectionsIps().clone();
         for (int i = 0; i < updatedRowCorrections.length; i++) {
             updatedRowCorrections[i] = moveToward(
@@ -335,7 +324,7 @@ public final class ShotAnalyzer {
                         currentState.magnusPerSpinInch(),
                         targetMagnusPerSpinInch,
                         FIT_MOVE_FRACTION),
-                updatedAngleScales,
+                currentState.angleExitScales().clone(),
                 updatedRowCorrections);
     }
 
@@ -491,81 +480,6 @@ public final class ShotAnalyzer {
         }
 
         return bestMagnus;
-    }
-
-    private static double[] findBestAngleScales(
-            List<List<Sample>> samplesByAngle,
-            FitState currentState) {
-        double[] bestAngleScales = currentState.angleExitScales().clone();
-        for (int angleIndex = 0; angleIndex < bestAngleScales.length; angleIndex++) {
-            bestAngleScales[angleIndex] = findBestAngleScale(
-                    samplesByAngle.get(angleIndex),
-                    currentState.angleExitScales()[angleIndex],
-                    currentState.rowExitSpeedCorrectionsIps(),
-                    currentState.dragCoefficientBasePerInch(),
-                    currentState.dragCoefficientLogSlopePerInch(),
-                    currentState.magnusPerSpinInch());
-        }
-        return bestAngleScales;
-    }
-
-    private static double findBestAngleScale(
-            List<Sample> samples,
-            double currentAngleScale,
-            double[] rowExitSpeedCorrectionsIps,
-            double dragCoefficientBasePerInch,
-            double dragCoefficientLogSlopePerInch,
-            double magnusPerSpinInch) {
-        double bestAngleScale = currentAngleScale;
-        double bestScore = scoreSamples(
-                samples,
-                currentAngleScale,
-                rowExitSpeedCorrectionsIps,
-                FIXED_LINEAR_DRAG_PER_SECOND,
-                dragCoefficientBasePerInch,
-                dragCoefficientLogSlopePerInch,
-                magnusPerSpinInch);
-
-        for (double candidateAngleScale = 0.90;
-                candidateAngleScale <= 1.50;
-                candidateAngleScale += 0.02) {
-            double candidateScore = scoreSamples(
-                    samples,
-                    candidateAngleScale,
-                    rowExitSpeedCorrectionsIps,
-                    FIXED_LINEAR_DRAG_PER_SECOND,
-                    dragCoefficientBasePerInch,
-                    dragCoefficientLogSlopePerInch,
-                    magnusPerSpinInch);
-            if (candidateScore < bestScore) {
-                bestScore = candidateScore;
-                bestAngleScale = candidateAngleScale;
-            }
-        }
-
-        double refinementStep = 0.01;
-        for (int refinement = 0; refinement < 6; refinement++) {
-            for (int offset = -3; offset <= 3; offset++) {
-                double candidateAngleScale = Math.max(
-                        0.50,
-                        bestAngleScale + offset * refinementStep);
-                double candidateScore = scoreSamples(
-                        samples,
-                        candidateAngleScale,
-                        rowExitSpeedCorrectionsIps,
-                        FIXED_LINEAR_DRAG_PER_SECOND,
-                        dragCoefficientBasePerInch,
-                        dragCoefficientLogSlopePerInch,
-                        magnusPerSpinInch);
-                if (candidateScore < bestScore) {
-                    bestScore = candidateScore;
-                    bestAngleScale = candidateAngleScale;
-                }
-            }
-            refinementStep *= 0.5;
-        }
-
-        return bestAngleScale;
     }
 
     private static double[] findBestRowCorrections(

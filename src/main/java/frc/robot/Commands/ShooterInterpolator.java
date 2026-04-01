@@ -7,7 +7,7 @@ public class ShooterInterpolator {
     private static final double ANGLE_EPSILON = 1e-9;
 
     // --- 1. EMPIRICAL DATA ---
-    private static final double[] ANGLES = ShooterConstants.RAW_TABLE_ANGLES_DEGREES;
+    private static final double[] ANGLES = ShooterConstants.ACTUAL_ANGLES_DEGREES;
     private static final double[] SPEEDS = ShooterConstants.COMMAND_SPEEDS_IPS;
     private static final double[] SHOT_EXIT_SPEEDS = ShooterConstants.COMMAND_BALL_EXIT_IPS;
     private static final double[][] DISTANCE_GRID = ShooterConstants.DISTANCE_GRID_INCHES;

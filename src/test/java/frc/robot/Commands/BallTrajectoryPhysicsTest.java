@@ -57,7 +57,7 @@ class BallTrajectoryPhysicsTest {
                     continue;
                 }
 
-                double angleDegrees = ShooterConstants.CALIBRATED_ANGLES_DEGREES[col];
+                double angleDegrees = ShooterConstants.ACTUAL_ANGLES_DEGREES[col];
                 double effectiveExitVelocityIps =
                         ShooterConstants.COMMAND_BALL_EXIT_IPS[row]
                                 * ShooterConstants.COMMAND_ANGLE_EXIT_SCALES[col]
