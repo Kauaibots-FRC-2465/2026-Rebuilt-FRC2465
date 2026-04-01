@@ -10,6 +10,9 @@ public final class ShooterConstants {
     static final double INITIAL_Z_BASE_INCHES = 7.5;
     static final double BALL_CENTER_OFFSET_INCHES = 5.0;
     static final double FRAME_TO_CENTER_DISTANCE_INCHES = 11.75;
+    static final double SHOOTER_LOOKAHEAD_SECONDS = 0.25;
+    static final double SNOWBLOW_TARGET_ELEVATION_INCHES = 0.0;
+    static final double MOVING_SHOT_HOOD_SEARCH_STEP_DEGREES = 1.0;
     static final double TRAJECTORY_LINEAR_DRAG_PER_SECOND = 0.568749;
     static final double TRAJECTORY_QUADRATIC_DRAG_PER_INCH = 0.000145312;
     static final double TRAJECTORY_MAGNUS_PER_SPIN_INCH = 0.0;

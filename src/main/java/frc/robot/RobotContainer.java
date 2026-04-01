@@ -451,6 +451,8 @@ private Command showAllianceMarquee() {
         driversController.rightTrigger().whileTrue(
             new SnowblowToAlliance(
                 drivetrain,
+                poseEstimatorSubsystem,
+                horizontalAim,
                 verticalAim,
                 shooter,
                 this::getDriverDriveRequest)

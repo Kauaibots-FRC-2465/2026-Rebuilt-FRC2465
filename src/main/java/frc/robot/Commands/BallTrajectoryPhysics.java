@@ -1,11 +1,15 @@
 package frc.robot.Commands;
 
+import static edu.wpi.first.units.Units.Inches;
+import static edu.wpi.first.units.Units.Meters;
+
 import java.io.BufferedInputStream;
 import java.io.DataInputStream;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 
+import edu.wpi.first.math.MathUtil;
 import edu.wpi.first.wpilibj.Filesystem;
 
 public final class BallTrajectoryPhysics {
@@ -45,6 +49,94 @@ public final class BallTrajectoryPhysics {
     private BallTrajectoryPhysics() {
     }
 
+    public static final class MovingShotSolution {
+        private boolean valid;
+        private double hoodAngleDegrees;
+        private double targetRadialDistanceInches;
+        private double targetElevationInches;
+        private double fieldRelativeExitVelocityIps;
+        private double launcherRelativeExitVelocityIps;
+        private double flywheelCommandIps;
+        private double shotAzimuthDegrees;
+        private double turretDeltaDegrees;
+        private double robotHeadingDegrees;
+
+        public boolean isValid() {
+            return valid;
+        }
+
+        public double getHoodAngleDegrees() {
+            return hoodAngleDegrees;
+        }
+
+        public double getTargetRadialDistanceInches() {
+            return targetRadialDistanceInches;
+        }
+
+        public double getTargetElevationInches() {
+            return targetElevationInches;
+        }
+
+        public double getFieldRelativeExitVelocityIps() {
+            return fieldRelativeExitVelocityIps;
+        }
+
+        public double getLauncherRelativeExitVelocityIps() {
+            return launcherRelativeExitVelocityIps;
+        }
+
+        public double getFlywheelCommandIps() {
+            return flywheelCommandIps;
+        }
+
+        public double getShotAzimuthDegrees() {
+            return shotAzimuthDegrees;
+        }
+
+        public double getTurretDeltaDegrees() {
+            return turretDeltaDegrees;
+        }
+
+        public double getRobotHeadingDegrees() {
+            return robotHeadingDegrees;
+        }
+
+        public void invalidate() {
+            valid = false;
+            hoodAngleDegrees = Double.NaN;
+            targetRadialDistanceInches = Double.NaN;
+            targetElevationInches = Double.NaN;
+            fieldRelativeExitVelocityIps = Double.NaN;
+            launcherRelativeExitVelocityIps = Double.NaN;
+            flywheelCommandIps = Double.NaN;
+            shotAzimuthDegrees = Double.NaN;
+            turretDeltaDegrees = Double.NaN;
+            robotHeadingDegrees = Double.NaN;
+        }
+
+        void set(
+                double hoodAngleDegrees,
+                double targetRadialDistanceInches,
+                double targetElevationInches,
+                double fieldRelativeExitVelocityIps,
+                double launcherRelativeExitVelocityIps,
+                double flywheelCommandIps,
+                double shotAzimuthDegrees,
+                double turretDeltaDegrees,
+                double robotHeadingDegrees) {
+            valid = true;
+            this.hoodAngleDegrees = hoodAngleDegrees;
+            this.targetRadialDistanceInches = targetRadialDistanceInches;
+            this.targetElevationInches = targetElevationInches;
+            this.fieldRelativeExitVelocityIps = fieldRelativeExitVelocityIps;
+            this.launcherRelativeExitVelocityIps = launcherRelativeExitVelocityIps;
+            this.flywheelCommandIps = flywheelCommandIps;
+            this.shotAzimuthDegrees = shotAzimuthDegrees;
+            this.turretDeltaDegrees = turretDeltaDegrees;
+            this.robotHeadingDegrees = robotHeadingDegrees;
+        }
+    }
+
     public static double getRequiredExitVelocityIps(
             double hoodAngleDegrees,
             double targetRadialDistanceInches,
@@ -67,6 +159,123 @@ public final class BallTrajectoryPhysics {
                 hoodAngleDegrees,
                 targetRadialDistanceInches,
                 targetElevationInches);
+    }
+
+    public static boolean solveMovingShot(
+            double minHoodAngleDegrees,
+            double maxHoodAngleDegrees,
+            double hoodAngleStepDegrees,
+            double futureRobotXMeters,
+            double futureRobotYMeters,
+            double futureRobotHeadingRadians,
+            double robotFieldVxMetersPerSecond,
+            double robotFieldVyMetersPerSecond,
+            double targetXMeters,
+            double targetYMeters,
+            double targetElevationInches,
+            double preferredRobotHeadingRadians,
+            double minTurretAngleDegrees,
+            double maxTurretAngleDegrees,
+            MovingShotSolution out) {
+        if (out == null) {
+            throw new IllegalArgumentException("MovingShotSolution output must not be null.");
+        }
+        out.invalidate();
+
+        if (!Double.isFinite(minHoodAngleDegrees)
+                || !Double.isFinite(maxHoodAngleDegrees)
+                || !Double.isFinite(hoodAngleStepDegrees)
+                || hoodAngleStepDegrees <= 0.0
+                || !Double.isFinite(futureRobotXMeters)
+                || !Double.isFinite(futureRobotYMeters)
+                || !Double.isFinite(futureRobotHeadingRadians)
+                || !Double.isFinite(robotFieldVxMetersPerSecond)
+                || !Double.isFinite(robotFieldVyMetersPerSecond)
+                || !Double.isFinite(targetXMeters)
+                || !Double.isFinite(targetYMeters)
+                || !Double.isFinite(targetElevationInches)
+                || !Double.isFinite(minTurretAngleDegrees)
+                || !Double.isFinite(maxTurretAngleDegrees)
+                || minTurretAngleDegrees > maxTurretAngleDegrees) {
+            return false;
+        }
+
+        double clampedMinHoodAngleDegrees = Math.max(LUT_MIN_HOOD_ANGLE_DEGREES, minHoodAngleDegrees);
+        double clampedMaxHoodAngleDegrees = Math.min(LUT_MAX_HOOD_ANGLE_DEGREES, maxHoodAngleDegrees);
+        if (clampedMinHoodAngleDegrees > clampedMaxHoodAngleDegrees) {
+            return false;
+        }
+
+        double targetDxMeters = targetXMeters - futureRobotXMeters;
+        double targetDyMeters = targetYMeters - futureRobotYMeters;
+        double targetDistanceMeters = Math.hypot(targetDxMeters, targetDyMeters);
+        if (!(targetDistanceMeters > 0.0)) {
+            return false;
+        }
+
+        double targetRadialDistanceInches = Inches.convertFrom(targetDistanceMeters, Meters);
+        double robotFieldVxIps = Inches.convertFrom(robotFieldVxMetersPerSecond, Meters);
+        double robotFieldVyIps = Inches.convertFrom(robotFieldVyMetersPerSecond, Meters);
+        double targetAzimuthRadians = Math.atan2(targetDyMeters, targetDxMeters);
+        double baselineRobotHeadingRadians = Double.isFinite(preferredRobotHeadingRadians)
+                ? preferredRobotHeadingRadians
+                : futureRobotHeadingRadians;
+
+        for (double hoodAngleDegrees = clampedMaxHoodAngleDegrees;
+                hoodAngleDegrees >= clampedMinHoodAngleDegrees - 1e-9;
+                hoodAngleDegrees -= hoodAngleStepDegrees) {
+            double fieldRelativeExitVelocityIps = getRequiredExitVelocityIps(
+                    hoodAngleDegrees,
+                    targetRadialDistanceInches,
+                    targetElevationInches);
+            if (!Double.isFinite(fieldRelativeExitVelocityIps)) {
+                continue;
+            }
+
+            double hoodAngleRadians = Math.toRadians(hoodAngleDegrees);
+            double fieldHorizontalExitVelocityIps = fieldRelativeExitVelocityIps * Math.cos(hoodAngleRadians);
+            double launcherRelativeFieldVxIps =
+                    fieldHorizontalExitVelocityIps * Math.cos(targetAzimuthRadians) - robotFieldVxIps;
+            double launcherRelativeFieldVyIps =
+                    fieldHorizontalExitVelocityIps * Math.sin(targetAzimuthRadians) - robotFieldVyIps;
+            double launcherRelativeHorizontalExitVelocityIps =
+                    Math.hypot(launcherRelativeFieldVxIps, launcherRelativeFieldVyIps);
+            double launcherRelativeExitVelocityIps = Math.hypot(
+                    launcherRelativeHorizontalExitVelocityIps,
+                    fieldRelativeExitVelocityIps * Math.sin(hoodAngleRadians));
+            double flywheelCommandIps =
+                    FlywheelBallExitInterpolator.getSetIpsForBallExitIps(launcherRelativeExitVelocityIps);
+            if (!Double.isFinite(flywheelCommandIps)) {
+                continue;
+            }
+
+            double shotAzimuthRadians = Math.atan2(
+                    launcherRelativeFieldVyIps,
+                    launcherRelativeFieldVxIps);
+            double desiredTurretDeltaDegrees = Math.toDegrees(MathUtil.inputModulus(
+                    shotAzimuthRadians - baselineRobotHeadingRadians,
+                    -Math.PI,
+                    Math.PI));
+            double turretDeltaDegrees = Math.max(
+                    minTurretAngleDegrees,
+                    Math.min(maxTurretAngleDegrees, desiredTurretDeltaDegrees));
+            double robotHeadingDegrees = Math.toDegrees(MathUtil.angleModulus(
+                    shotAzimuthRadians - Math.toRadians(turretDeltaDegrees)));
+
+            out.set(
+                    hoodAngleDegrees,
+                    targetRadialDistanceInches,
+                    targetElevationInches,
+                    fieldRelativeExitVelocityIps,
+                    launcherRelativeExitVelocityIps,
+                    flywheelCommandIps,
+                    Math.toDegrees(shotAzimuthRadians),
+                    turretDeltaDegrees,
+                    robotHeadingDegrees);
+            return true;
+        }
+
+        return false;
     }
 
     static double solveRequiredExitVelocityIpsExact(

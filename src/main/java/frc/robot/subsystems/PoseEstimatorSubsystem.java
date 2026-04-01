@@ -197,6 +197,46 @@ public class PoseEstimatorSubsystem extends SubsystemBase {
         public double initialThetaDeviation;
     }
 
+    public static class PredictedFusedState {
+        public double xMeters;
+        public double yMeters;
+        public double headingRadians;
+        public double vxMetersPerSecond;
+        public double vyMetersPerSecond;
+        public double omegaRadiansPerSecond;
+        private boolean valid;
+
+        public boolean isValid() {
+            return valid;
+        }
+
+        void setInvalid() {
+            xMeters = Double.NaN;
+            yMeters = Double.NaN;
+            headingRadians = Double.NaN;
+            vxMetersPerSecond = Double.NaN;
+            vyMetersPerSecond = Double.NaN;
+            omegaRadiansPerSecond = Double.NaN;
+            valid = false;
+        }
+
+        void set(
+                double xMeters,
+                double yMeters,
+                double headingRadians,
+                double vxMetersPerSecond,
+                double vyMetersPerSecond,
+                double omegaRadiansPerSecond) {
+            this.xMeters = xMeters;
+            this.yMeters = yMeters;
+            this.headingRadians = headingRadians;
+            this.vxMetersPerSecond = vxMetersPerSecond;
+            this.vyMetersPerSecond = vyMetersPerSecond;
+            this.omegaRadiansPerSecond = omegaRadiansPerSecond;
+            valid = true;
+        }
+    }
+
     public PoseEstimatorSubsystem(Configuration config) {
         odometryPoseSupplier = config.odometryPose;
         odometryTimestampSupplier = config.odometryTimestamp;
@@ -549,66 +589,97 @@ public class PoseEstimatorSubsystem extends SubsystemBase {
      *         Single threadded FRC code
      */
     public Supplier<Pose2d> getFusedPoseSupplier() {
-        return () -> {
-            if (odometryHistory.size() < 2)
-                return null; // This is a federated filter, tell the downstream drive not to rely on us
-            Pose2d latestOdometryPose       = odometryHistory.get(0).pose;
-            Long   latestOdometryTimestamp  = odometryHistory.get(0).timestamp;
-            Pose2d priorOdometryPose        = odometryHistory.get(1).pose;
-            Long   priorOdometryTimestamp   = odometryHistory.get(1).timestamp;
-            Long   timeSinceLatestOdometry  = (RobotController.getFPGATime() - latestOdometryTimestamp);
-            Long   timeBetweenLatestAndPriorOdometry = (latestOdometryTimestamp - priorOdometryTimestamp);
-            latestOdometryPosePublisher.publish(latestOdometryPose, "PoseEstimator/Debug/latestOdometryPose");
-            latestOdometryTimestampPublisher.set(latestOdometryTimestamp);
-            priorOdometryPosePublisher.publish(priorOdometryPose, "PoseEstimator/Debug/priorOdometryPose");
-            priorOdometryTimestampPublisher.set(priorOdometryTimestamp);
-            timeSinceLatestOdometryPublisher.set(timeSinceLatestOdometry);
-            timeBetweenLatestAndPriorOdometryPublisher.set(timeBetweenLatestAndPriorOdometry);
-            SignalLogger.writeInteger("PoseEstimator/Debug/latestOdometryTimestamp", latestOdometryTimestamp);
-            SignalLogger.writeInteger("PoseEstimator/Debug/priorOdometryTimestamp", priorOdometryTimestamp);
-            SignalLogger.writeInteger("PoseEstimator/Debug/timeSinceLatestOdometry", timeSinceLatestOdometry);
-            SignalLogger.writeInteger(
-                    "PoseEstimator/Debug/timeBetweenLatestAndPriorOdometry",
-                    timeBetweenLatestAndPriorOdometry);
+        return new Supplier<Pose2d>() {
+            private final PredictedFusedState predictedState = new PredictedFusedState();
 
-            if (timeBetweenLatestAndPriorOdometry <= 0) {
-                throw new IllegalStateException(
-                        "CRITICAL: Odometry timestamps are non-monotonic or duplicate. dt=" +
-                                timeBetweenLatestAndPriorOdometry +
-                                ". Fix upstream sensor/loop timing.");
+            @Override
+            public Pose2d get() {
+                if (!getPredictedFusedState(0.0, predictedState)) {
+                    return null;
+                }
+                return new Pose2d(
+                        predictedState.xMeters,
+                        predictedState.yMeters,
+                        Rotation2d.fromRadians(predictedState.headingRadians));
             }
-            if (timeBetweenLatestAndPriorOdometry > 50000)
-                return null; // if more than 50 ms between poses, tell the downstream drive not to rely on us
-            double twistFractionToGetToNow = (double) timeSinceLatestOdometry / timeBetweenLatestAndPriorOdometry;
-            if (twistFractionToGetToNow > 2)
-                return null; // If we have to extrapolate more than 1.5 cycles, tell the downstream drive not
-                             // to rely on us
-            twistFractionToGetToNowPublisher.set(twistFractionToGetToNow);
-            SignalLogger.writeDouble("PoseEstimator/Debug/twistFractionToGetToNow", twistFractionToGetToNow);
-            Twist2d extrapolatedTwist = priorOdometryPose.log(latestOdometryPose);
-            extrapolatedTwist.dtheta *= twistFractionToGetToNow;
-            extrapolatedTwist.dx     *= twistFractionToGetToNow;
-            extrapolatedTwist.dy     *= twistFractionToGetToNow;
-            Pose2d odometryNow = latestOdometryPose.exp(extrapolatedTwist);
-            odometryNowPublisher.publish(odometryNow, "PoseEstimator/Debug/odometryNow");
-            /*
-             * * Geometric Logic Confirmation:
-             * 1. odometryNow.minus(odometryAnchor) calculates the relative Transform2d
-             * (dx, dy, dtheta) in the *local frame* of the odometryAnchor.
-             * (e.g., "Robot moved 1.0m Forward relative to where it started").
-             * * 2. fusedAnchor.plus(...) applies that local movement to the fusedAnchor.
-             * Since .plus() rotates the translation by the pose's heading,
-             * this correctly "replays" the robot's specific physical motion
-             * onto the new, corrected field heading provided by vision.
-             * * DO NOT CHANGE TO GLOBAL SUBTRACTION.
-             * The following is mathematically equivalent to
-             * fusedAnchor.exp(odometryAnchor.log(odometryNow))
-             * for a static rebase.
-             */
-            Pose2d fusedPose = fusedAnchor.plus(odometryNow.minus(odometryAnchor));
-            fusedPosePublisher.publish(fusedPose, "PoseEstimator/Debug/fusedPose");
-            return fusedPose;
         };
+    }
+
+    public boolean getPredictedFusedState(double lookaheadSeconds, PredictedFusedState out) {
+        if (out == null) {
+            throw new IllegalArgumentException("PredictedFusedState output must not be null.");
+        }
+        if (!Double.isFinite(lookaheadSeconds) || lookaheadSeconds < 0.0) {
+            out.setInvalid();
+            return false;
+        }
+        if (odometryHistory.size() < 2) {
+            out.setInvalid();
+            return false;
+        }
+
+        Pose2d latestOdometryPose = odometryHistory.get(0).pose;
+        long latestOdometryTimestamp = odometryHistory.get(0).timestamp;
+        Pose2d priorOdometryPose = odometryHistory.get(1).pose;
+        long priorOdometryTimestamp = odometryHistory.get(1).timestamp;
+        long timeSinceLatestOdometry = RobotController.getFPGATime() - latestOdometryTimestamp;
+        long timeBetweenLatestAndPriorOdometry = latestOdometryTimestamp - priorOdometryTimestamp;
+        latestOdometryPosePublisher.publish(latestOdometryPose, "PoseEstimator/Debug/latestOdometryPose");
+        latestOdometryTimestampPublisher.set(latestOdometryTimestamp);
+        priorOdometryPosePublisher.publish(priorOdometryPose, "PoseEstimator/Debug/priorOdometryPose");
+        priorOdometryTimestampPublisher.set(priorOdometryTimestamp);
+        timeSinceLatestOdometryPublisher.set(timeSinceLatestOdometry);
+        timeBetweenLatestAndPriorOdometryPublisher.set(timeBetweenLatestAndPriorOdometry);
+        SignalLogger.writeInteger("PoseEstimator/Debug/latestOdometryTimestamp", latestOdometryTimestamp);
+        SignalLogger.writeInteger("PoseEstimator/Debug/priorOdometryTimestamp", priorOdometryTimestamp);
+        SignalLogger.writeInteger("PoseEstimator/Debug/timeSinceLatestOdometry", timeSinceLatestOdometry);
+        SignalLogger.writeInteger(
+                "PoseEstimator/Debug/timeBetweenLatestAndPriorOdometry",
+                timeBetweenLatestAndPriorOdometry);
+
+        if (timeBetweenLatestAndPriorOdometry <= 0) {
+            throw new IllegalStateException(
+                    "CRITICAL: Odometry timestamps are non-monotonic or duplicate. dt=" +
+                            timeBetweenLatestAndPriorOdometry +
+                            ". Fix upstream sensor/loop timing.");
+        }
+        if (timeBetweenLatestAndPriorOdometry > 50000) {
+            out.setInvalid();
+            return false;
+        }
+
+        double currentFraction = (double) timeSinceLatestOdometry / timeBetweenLatestAndPriorOdometry;
+        twistFractionToGetToNowPublisher.set(currentFraction);
+        SignalLogger.writeDouble("PoseEstimator/Debug/twistFractionToGetToNow", currentFraction);
+
+        Twist2d extrapolatedTwist = priorOdometryPose.log(latestOdometryPose);
+        double predictionFraction =
+                (timeSinceLatestOdometry + lookaheadSeconds * 1_000_000.0) / timeBetweenLatestAndPriorOdometry;
+        extrapolatedTwist.dtheta *= predictionFraction;
+        extrapolatedTwist.dx *= predictionFraction;
+        extrapolatedTwist.dy *= predictionFraction;
+        Pose2d odometryPrediction = latestOdometryPose.exp(extrapolatedTwist);
+        odometryNowPublisher.publish(odometryPrediction, "PoseEstimator/Debug/odometryNow");
+
+        Pose2d fusedPosePrediction = fusedAnchor.plus(odometryPrediction.minus(odometryAnchor));
+        fusedPosePublisher.publish(fusedPosePrediction, "PoseEstimator/Debug/fusedPose");
+
+        double dtSeconds = timeBetweenLatestAndPriorOdometry / 1_000_000.0;
+        double vxMetersPerSecond =
+                (latestOdometryPose.getX() - priorOdometryPose.getX()) / dtSeconds;
+        double vyMetersPerSecond =
+                (latestOdometryPose.getY() - priorOdometryPose.getY()) / dtSeconds;
+        double omegaRadiansPerSecond =
+                latestOdometryPose.getRotation().minus(priorOdometryPose.getRotation()).getRadians() / dtSeconds;
+
+        out.set(
+                fusedPosePrediction.getX(),
+                fusedPosePrediction.getY(),
+                fusedPosePrediction.getRotation().getRadians(),
+                vxMetersPerSecond,
+                vyMetersPerSecond,
+                omegaRadiansPerSecond);
+        return true;
     }
 
     public DoubleSupplier getFusedXDeviation() {

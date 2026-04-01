@@ -435,6 +435,14 @@ public class SparkAnglePositionSubsystem extends SubsystemBase {
         return Rotations.of(mechanismToPublicRotations(encoder.getPosition()));
     }
 
+    public Angle getMinimumAngle() {
+        return Rotations.of(minimumPublicAngleRotations);
+    }
+
+    public Angle getMaximumAngle() {
+        return Rotations.of(maximumPublicAngleRotations);
+    }
+
     private boolean configureMotor() {
         configured = false;
         REVLibError status = sparkMax.configure(
