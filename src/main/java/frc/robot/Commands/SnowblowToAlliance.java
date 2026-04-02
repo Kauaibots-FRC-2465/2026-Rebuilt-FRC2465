@@ -58,8 +58,8 @@ public class SnowblowToAlliance extends Command {
     private final StringPublisher fieldTypePublisher;
     private final PoseEstimatorSubsystem.PredictedFusedState futureState =
             new PoseEstimatorSubsystem.PredictedFusedState();
-    private final BallTrajectoryPhysics.MovingShotSolution movingShotSolution =
-            new BallTrajectoryPhysics.MovingShotSolution();
+    private final BallTrajectoryLookup.MovingShotSolution movingShotSolution =
+            new BallTrajectoryLookup.MovingShotSolution();
     private final double[] targetFieldPose = new double[3];
     private final double[] futureFieldPose = new double[3];
     private final double[] futureFieldVelocity = new double[3];
@@ -140,12 +140,14 @@ public class SnowblowToAlliance extends Command {
         if (updateShooterSolution(target, preferredRobotHeading)) {
             robotHeadingTarget = Rotation2d.fromDegrees(movingShotSolution.getRobotHeadingDegrees());
         }
+        Rotation2d operatorPerspectiveHeadingTarget =
+                robotHeadingTarget.minus(drivetrain.getDriverPerspectiveForward());
 
         drivetrain.setControl(
                 facingAngleDrive
                         .withVelocityX(fieldCentricRequest.VelocityX)
                         .withVelocityY(fieldCentricRequest.VelocityY)
-                        .withTargetDirection(robotHeadingTarget)
+                        .withTargetDirection(operatorPerspectiveHeadingTarget)
                         .withDeadband(fieldCentricRequest.Deadband)
                         .withRotationalDeadband(fieldCentricRequest.RotationalDeadband)
                         .withCenterOfRotation(fieldCentricRequest.CenterOfRotation)
@@ -178,10 +180,11 @@ public class SnowblowToAlliance extends Command {
         double targetDistanceInches = Inches.convertFrom(
                 target.getDistance(new Translation2d(futureState.xMeters, futureState.yMeters)),
                 Meters);
-        boolean hasSolution = BallTrajectoryPhysics.solveMovingShot(
+        boolean hasSolution = BallTrajectoryLookup.solveMovingShot(
                 verticalAim.getMinimumAngle().in(Degrees),
                 verticalAim.getMaximumAngle().in(Degrees),
                 ShooterConstants.COMMANDED_MOVING_SHOT_HOOD_SEARCH_STEP_DEGREES,
+                true,
                 futureState.xMeters,
                 futureState.yMeters,
                 futureState.headingRadians,
@@ -190,6 +193,7 @@ public class SnowblowToAlliance extends Command {
                 target.getX(),
                 target.getY(),
                 ShooterConstants.COMMANDED_SNOWBLOW_TARGET_ELEVATION_INCHES,
+                ShooterConstants.COMMANDED_MAXIMUM_SHOOTING_HEIGHT_INCHES,
                 preferredRobotHeading.getRadians(),
                 horizontalAim.getMinimumAngle().in(Degrees),
                 horizontalAim.getMaximumAngle().in(Degrees),
@@ -211,22 +215,26 @@ public class SnowblowToAlliance extends Command {
             return false;
         }
 
+        double clampedTurretDeltaDegrees = clampTurretDeltaDegrees(movingShotSolution.getTurretDeltaDegrees());
         hoodAngleDegreesPublisher.set(movingShotSolution.getHoodAngleDegrees());
         shotExitVelocityIpsPublisher.set(movingShotSolution.getLauncherRelativeExitVelocityIps());
         fieldRelativeExitVelocityIpsPublisher.set(movingShotSolution.getFieldRelativeExitVelocityIps());
         flywheelCommandIpsPublisher.set(movingShotSolution.getFlywheelCommandIps());
         shotAzimuthDegreesPublisher.set(movingShotSolution.getShotAzimuthDegrees());
-        turretDeltaDegreesPublisher.set(movingShotSolution.getTurretDeltaDegrees());
+        turretDeltaDegreesPublisher.set(clampedTurretDeltaDegrees);
         robotHeadingDegreesPublisher.set(movingShotSolution.getRobotHeadingDegrees());
         verticalAim.setAngle(Degrees.of(movingShotSolution.getHoodAngleDegrees()));
-        horizontalAim.setAngle(Degrees.of(movingShotSolution.getTurretDeltaDegrees()));
+        horizontalAim.setAngle(Degrees.of(clampedTurretDeltaDegrees));
         shooter.setCoupledIPS(movingShotSolution.getFlywheelCommandIps());
         return true;
     }
 
     private void updateLastDriveDirection(SwerveRequest.FieldCentric fieldCentricRequest) {
+        Translation2d fieldRelativeVelocity = new Translation2d(
+                fieldCentricRequest.VelocityX,
+                fieldCentricRequest.VelocityY).rotateBy(drivetrain.getDriverPerspectiveForward());
         lastFieldRelativeDriveDirection = FieldMath.updateLastDriveDirection(
-                new Translation2d(fieldCentricRequest.VelocityX, fieldCentricRequest.VelocityY),
+                fieldRelativeVelocity,
                 lastFieldRelativeDriveDirection);
     }
 
@@ -235,6 +243,12 @@ public class SnowblowToAlliance extends Command {
             return lastFieldRelativeDriveDirection.getAngle();
         }
         return fallbackHeading;
+    }
+
+    private double clampTurretDeltaDegrees(double turretDeltaDegrees) {
+        return Math.max(
+                horizontalAim.getMinimumAngle().in(Degrees),
+                Math.min(horizontalAim.getMaximumAngle().in(Degrees), turretDeltaDegrees));
     }
 
     private void publishTarget(Translation2d target) {

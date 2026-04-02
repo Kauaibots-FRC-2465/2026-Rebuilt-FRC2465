@@ -20,34 +20,40 @@ public final class BallTrajectoryPhysicsLutGenerator {
     public static void main(String[] args) throws IOException {
         Files.createDirectories(OUTPUT_PATH.getParent());
 
-        float[] lut = new float[BallTrajectoryPhysics.LUT_ELEVATION_BIN_COUNT
-                * BallTrajectoryPhysics.LUT_HOOD_ANGLE_BIN_COUNT
-                * BallTrajectoryPhysics.LUT_DISTANCE_BIN_COUNT];
+        int lutLength = BallTrajectoryLookup.LUT_ELEVATION_BIN_COUNT
+                * BallTrajectoryLookup.LUT_HOOD_ANGLE_BIN_COUNT
+                * BallTrajectoryLookup.LUT_DISTANCE_BIN_COUNT;
+        float[] requiredExitVelocityLut = new float[lutLength];
+        float[] maximumBallZElevationLut = new float[lutLength];
 
-        for (int angleIndex = 0; angleIndex < BallTrajectoryPhysics.LUT_HOOD_ANGLE_BIN_COUNT; angleIndex++) {
-            double hoodAngleDegrees = BallTrajectoryPhysics.LUT_MIN_HOOD_ANGLE_DEGREES
-                    + angleIndex * BallTrajectoryPhysics.LUT_HOOD_ANGLE_STEP_DEGREES;
+        for (int angleIndex = 0; angleIndex < BallTrajectoryLookup.LUT_HOOD_ANGLE_BIN_COUNT; angleIndex++) {
+            double hoodAngleDegrees = BallTrajectoryLookup.LUT_MIN_HOOD_ANGLE_DEGREES
+                    + angleIndex * BallTrajectoryLookup.LUT_HOOD_ANGLE_STEP_DEGREES;
             System.out.printf(
                     "Generating hood angle bin %d/%d -> %.1f deg%n",
                     angleIndex + 1,
-                    BallTrajectoryPhysics.LUT_HOOD_ANGLE_BIN_COUNT,
+                    BallTrajectoryLookup.LUT_HOOD_ANGLE_BIN_COUNT,
                     hoodAngleDegrees);
 
             for (int elevationIndex = 0;
-                    elevationIndex < BallTrajectoryPhysics.LUT_ELEVATION_BIN_COUNT;
+                    elevationIndex < BallTrajectoryLookup.LUT_ELEVATION_BIN_COUNT;
                     elevationIndex++) {
                 double targetElevationInches =
-                        elevationIndex * BallTrajectoryPhysics.LUT_ELEVATION_STEP_INCHES;
+                        elevationIndex * BallTrajectoryLookup.LUT_ELEVATION_STEP_INCHES;
                 for (int distanceIndex = 0;
-                        distanceIndex < BallTrajectoryPhysics.LUT_DISTANCE_BIN_COUNT;
+                        distanceIndex < BallTrajectoryLookup.LUT_DISTANCE_BIN_COUNT;
                         distanceIndex++) {
-                    float requiredExitVelocityIps = (float) BallTrajectoryPhysics
-                            .solveRequiredExitVelocityIpsExact(
+                    int lutIndex = BallTrajectoryLookup.toLutIndex(angleIndex, distanceIndex, elevationIndex);
+                    float requiredExitVelocityIps = (float) BallTrajectoryLookup.solveRequiredExitVelocityIpsExact(
+                            hoodAngleDegrees,
+                            distanceIndex,
+                            targetElevationInches);
+                    requiredExitVelocityLut[lutIndex] = requiredExitVelocityIps;
+                    maximumBallZElevationLut[lutIndex] = (float) BallTrajectoryLookup
+                            .getMaximumBallZElevationForSolvedShotInches(
                                     hoodAngleDegrees,
-                                    distanceIndex,
-                                    targetElevationInches);
-                    lut[BallTrajectoryPhysics.toLutIndex(angleIndex, distanceIndex, elevationIndex)] =
-                            requiredExitVelocityIps;
+                                    requiredExitVelocityIps,
+                                    distanceIndex);
                 }
             }
         }
@@ -56,11 +62,14 @@ public final class BallTrajectoryPhysicsLutGenerator {
                 new BufferedOutputStream(Files.newOutputStream(OUTPUT_PATH)))) {
             output.writeInt(LUT_FILE_MAGIC);
             output.writeInt(ShooterConstants.FITTED_BALL_TRAJECTORY_LUT_VERSION);
-            output.writeInt(BallTrajectoryPhysics.LUT_DISTANCE_BIN_COUNT);
-            output.writeInt(BallTrajectoryPhysics.LUT_HOOD_ANGLE_BIN_COUNT);
-            output.writeInt(BallTrajectoryPhysics.LUT_ELEVATION_BIN_COUNT);
+            output.writeInt(BallTrajectoryLookup.LUT_DISTANCE_BIN_COUNT);
+            output.writeInt(BallTrajectoryLookup.LUT_HOOD_ANGLE_BIN_COUNT);
+            output.writeInt(BallTrajectoryLookup.LUT_ELEVATION_BIN_COUNT);
 
-            for (float value : lut) {
+            for (float value : requiredExitVelocityLut) {
+                output.writeFloat(value);
+            }
+            for (float value : maximumBallZElevationLut) {
                 output.writeFloat(value);
             }
         }

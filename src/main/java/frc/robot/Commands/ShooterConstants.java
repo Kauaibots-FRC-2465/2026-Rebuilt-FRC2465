@@ -12,6 +12,15 @@ public final class ShooterConstants {
     static final double COMMANDED_SHOOTER_LOOKAHEAD_SECONDS = 0.25;
     static final double COMMANDED_SNOWBLOW_TARGET_ELEVATION_INCHES = 36.0;
     static final double COMMANDED_MOVING_SHOT_HOOD_SEARCH_STEP_DEGREES = 1.0;
+    static final double COMMANDED_MAXIMUM_SHOOTING_HEIGHT_INCHES = 120.0;
+    static final double COMMANDED_REBOUND_HOOD_ANGLE_DEGREES = 50.0;
+    static final double COMMANDED_REBOUND_HORIZONTAL_AIM_DEGREES = 0.0;
+    static final double COMMANDED_REBOUND_SHOOTER_SPEED_IPS = 320.0;
+    static final double COMMANDED_REBOUND_INTAKE_ANGLE_DEGREES = 0.0;
+    static final double COMMANDED_REBOUND_INTAKE_DRIVE_SPEED_IPS = 0.0;
+    public static final double COMMANDED_SCORE_IN_HUB_TARGET_ELEVATION_INCHES = 72.0;
+    public static final double COMMANDED_SCORE_IN_HUB_ALLIANCE_WALL_TO_HUB_CENTER_INCHES = 182.11125;
+    public static final double COMMANDED_SCORE_IN_HUB_RIGHT_FIELD_WALL_TO_HUB_CENTER_INCHES = 158.84375;
 
     public static final double MEASURED_HOOD_ANGLE_AT_MECHANISM_ZERO_DEGREES = 78.6;
     static final double MEASURED_BACKSPIN_CANCEL_LIMIT_COMMAND_IPS = 410.0;
@@ -46,7 +55,7 @@ public final class ShooterConstants {
     static final double FITTED_TRAJECTORY_MAGNUS_PER_SPIN_INCH = 0.000001254;
     static final String FITTED_BALL_TRAJECTORY_LUT_FILENAME = "ball_trajectory_lut.bin";
     static final int FITTED_BALL_TRAJECTORY_LUT_MAGIC = 0x42544C54; // "BTLT"
-    static final int FITTED_BALL_TRAJECTORY_LUT_VERSION = 2;
+    static final int FITTED_BALL_TRAJECTORY_LUT_VERSION = 6;
     static final double FITTED_BALL_TRAJECTORY_LUT_MIN_HOOD_ANGLE_DEGREES =
             MEASURED_ACTUAL_ANGLES_DEGREES[MEASURED_ACTUAL_ANGLES_DEGREES.length - 1];
     static final double FITTED_BALL_TRAJECTORY_LUT_MAX_HOOD_ANGLE_DEGREES =

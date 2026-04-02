@@ -41,7 +41,9 @@ import edu.wpi.first.wpilibj2.command.button.CommandXboxController;
 import edu.wpi.first.wpilibj2.command.button.RobotModeTriggers;
 import edu.wpi.first.wpilibj2.command.sysid.SysIdRoutine.Direction;
 
+import frc.robot.Commands.ScoreInHub;
 import frc.robot.Commands.SnowblowToAlliance;
+import frc.robot.Commands.Rebound;
 import frc.robot.Commands.ShooterConstants;
 import frc.robot.generated.TunerConstants;
 import frc.robot.subsystems.CommandSwerveDrivetrain;
@@ -256,8 +258,8 @@ private Command showAllianceMarquee() {
             10,
             40,
             12,
-            Degrees.of(-22),
-            Degrees.of(22),
+            Degrees.of(-18),
+            Degrees.of(18),
             false,
             true);
         sparkFollowerSubsystem.addFollower(
@@ -436,6 +438,14 @@ private Command showAllianceMarquee() {
         engineersController.povDown().onTrue(Commands.runOnce(() -> adjustHoodTuneAngle(HOOD_TUNE_ANGLE_STEP_DEGREES)));
         engineersController.povRight().onTrue(Commands.runOnce(() -> adjustShooterTuneSpeed(SHOOTER_TUNE_SPEED_STEP_IPS)));
         engineersController.povLeft().onTrue(Commands.runOnce(() -> adjustShooterTuneSpeed(-SHOOTER_TUNE_SPEED_STEP_IPS)));
+        engineersController.rightTrigger().whileTrue(
+            new Rebound(
+                horizontalAim,
+                verticalAim,
+                shooter,
+                intakePosition,
+                intakedrive)
+        );
         // Idle while the robot is disabled. This ensures the configured
         // neutral mode is applied to the drive motors while disabled.
         final var idle = new SwerveRequest.Idle();
@@ -459,6 +469,15 @@ private Command showAllianceMarquee() {
                 shooter,
                 this::getDriverDriveRequest)
         );
+        driversController.leftTrigger().whileTrue(
+            new ScoreInHub(
+                drivetrain,
+                poseEstimatorSubsystem,
+                horizontalAim,
+                verticalAim,
+                shooter,
+                this::getDriverDriveRequest)
+        );
 
         // Run SysId routines when holding back/start and X/Y.
         // Note that each routine should be run exactly once in a single log.
@@ -467,8 +486,15 @@ private Command showAllianceMarquee() {
         driversController.start().and(driversController.y()).whileTrue(drivetrain.sysIdQuasistatic(Direction.kForward));
         driversController.start().and(driversController.x()).whileTrue(drivetrain.sysIdQuasistatic(Direction.kReverse));
 
-       //*  Reset the field-centric heading on left bumper press.
-        driversController.leftBumper().onTrue(drivetrain.runOnce(drivetrain::seedFieldCentric));
+       //*  Seed the driver-perspective offset from the fused heading on left bumper press.
+        driversController.leftBumper().onTrue(
+            Commands.runOnce(() -> {
+                Pose2d fusedPose = poseEstimatorSubsystem.getFusedPoseSupplier().get();
+                if (fusedPose != null) {
+                    drivetrain.seedDriverPerspectiveToHeading(fusedPose.getRotation());
+                }
+            })
+        );
 
         horizontalAim.setDefaultCommand(
             horizontalAim.cmdSetScaledAngle(() -> (engineersController.getLeftX() + 1.0) / 2.0));

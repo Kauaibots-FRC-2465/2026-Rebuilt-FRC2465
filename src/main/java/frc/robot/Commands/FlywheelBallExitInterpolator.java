@@ -1,7 +1,7 @@
 package frc.robot.Commands;
 
 public final class FlywheelBallExitInterpolator {
-    private static final double EPSILON = 1e-9;
+    private static final double EPSILON = 1e-3;
 
     static {
         if (ShooterConstants.COMMANDED_FLYWHEEL_SET_IPS.length != ShooterConstants.FITTED_BALL_EXIT_IPS.length) {
@@ -31,8 +31,14 @@ public final class FlywheelBallExitInterpolator {
             }
         }
 
-        if (input < inputs[0] || input > inputs[inputs.length - 1]) {
+        if (input < inputs[0] - EPSILON || input > inputs[inputs.length - 1] + EPSILON) {
             return Double.NaN;
+        }
+        if (input <= inputs[0] + EPSILON) {
+            return outputs[0];
+        }
+        if (input >= inputs[inputs.length - 1] - EPSILON) {
+            return outputs[outputs.length - 1];
         }
 
         for (int i = 0; i < inputs.length - 1; i++) {

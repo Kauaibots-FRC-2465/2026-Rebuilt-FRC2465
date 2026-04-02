@@ -47,6 +47,8 @@ public class CommandSwerveDrivetrain extends TunerSwerveDrivetrain implements Su
     private static final Rotation2d kBlueAlliancePerspectiveRotation = Rotation2d.kZero;
     /* Red alliance sees forward as 180 degrees (toward blue alliance wall) */
     private static final Rotation2d kRedAlliancePerspectiveRotation = Rotation2d.k180deg;
+    /* Driver-requested offset from the alliance forward direction */
+    private Rotation2d m_driverPerspectiveOffset = Rotation2d.kZero;
     /* Keep track if we've ever applied the operator perspective before or not */
     private boolean m_hasAppliedOperatorPerspective = false;
 
@@ -245,15 +247,43 @@ public class CommandSwerveDrivetrain extends TunerSwerveDrivetrain implements Su
          * This ensures driving behavior doesn't change until an explicit disable event occurs during testing.
          */
         if (!m_hasAppliedOperatorPerspective || DriverStation.isDisabled()) {
-            DriverStation.getAlliance().ifPresent(allianceColor -> {
-                setOperatorPerspectiveForward(
-                    allianceColor == Alliance.Red
-                        ? kRedAlliancePerspectiveRotation
-                        : kBlueAlliancePerspectiveRotation
-                );
-                m_hasAppliedOperatorPerspective = true;
-            });
+            applyDriverPerspectiveForward();
         }
+    }
+
+    private Rotation2d getAlliancePerspectiveForward() {
+        return DriverStation.getAlliance()
+                .map(allianceColor ->
+                        allianceColor == Alliance.Red
+                                ? kRedAlliancePerspectiveRotation
+                                : kBlueAlliancePerspectiveRotation)
+                .orElse(kBlueAlliancePerspectiveRotation);
+    }
+
+    private void applyDriverPerspectiveForward() {
+        setOperatorPerspectiveForward(getAlliancePerspectiveForward().plus(m_driverPerspectiveOffset));
+        m_hasAppliedOperatorPerspective = true;
+    }
+
+    public void setDriverPerspectiveOffset(Rotation2d offset) {
+        m_driverPerspectiveOffset = offset;
+        applyDriverPerspectiveForward();
+    }
+
+    public Rotation2d getDriverPerspectiveOffset() {
+        return m_driverPerspectiveOffset;
+    }
+
+    public Rotation2d getDriverPerspectiveForward() {
+        return getAlliancePerspectiveForward().plus(m_driverPerspectiveOffset);
+    }
+
+    public void seedDriverPerspectiveToHeading(Rotation2d fieldHeading) {
+        if (fieldHeading == null) {
+            return;
+        }
+        m_driverPerspectiveOffset = fieldHeading.minus(getAlliancePerspectiveForward());
+        applyDriverPerspectiveForward();
     }
 
     private void startSimThread() {

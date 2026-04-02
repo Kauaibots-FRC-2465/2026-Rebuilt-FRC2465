@@ -8,6 +8,7 @@ import edu.wpi.first.math.geometry.Pose2d;
 import edu.wpi.first.math.geometry.Translation2d;
 import edu.wpi.first.math.kinematics.ChassisSpeeds;
 import edu.wpi.first.wpilibj.DriverStation.Alliance;
+import frc.robot.Commands.ShooterConstants;
 
 /**
  * Field-geometry helpers for alliance-relative targeting logic.
@@ -100,6 +101,36 @@ public final class FieldMath {
             target = mirrorTargetAcrossFieldCenterline(target);
         }
         return target;
+    }
+
+    /**
+     * Returns a fixed hub target expressed by alliance-relative field distances.
+     */
+    public static Translation2d getHubTarget(Alliance alliance) {
+        return getAllianceRelativeFieldPoint(
+                Meters.convertFrom(
+                        ShooterConstants.COMMANDED_SCORE_IN_HUB_ALLIANCE_WALL_TO_HUB_CENTER_INCHES,
+                        Inches),
+                Meters.convertFrom(
+                        ShooterConstants.COMMANDED_SCORE_IN_HUB_RIGHT_FIELD_WALL_TO_HUB_CENTER_INCHES,
+                        Inches),
+                alliance);
+    }
+
+    /**
+     * Converts alliance-relative wall distances into the WPILib blue-origin field coordinate system.
+     */
+    public static Translation2d getAllianceRelativeFieldPoint(
+            double allianceWallDistanceMeters,
+            double rightFieldWallDistanceMeters,
+            Alliance alliance) {
+        double xMeters = alliance == Alliance.Red
+                ? FIELD_LENGTH_METERS - allianceWallDistanceMeters
+                : allianceWallDistanceMeters;
+        double yMeters = alliance == Alliance.Red
+                ? FIELD_WIDTH_METERS - rightFieldWallDistanceMeters
+                : rightFieldWallDistanceMeters;
+        return new Translation2d(xMeters, yMeters);
     }
 
     private static boolean isDrivingAwayFromAllianceWall(Translation2d driveDirection, Alliance alliance) {
