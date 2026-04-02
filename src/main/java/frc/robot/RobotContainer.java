@@ -44,6 +44,7 @@ import edu.wpi.first.wpilibj2.command.sysid.SysIdRoutine.Direction;
 import frc.robot.Commands.ScoreInHub;
 import frc.robot.Commands.SnowblowToAlliance;
 import frc.robot.Commands.Rebound;
+import frc.robot.Commands.HoodTimingCharacterization;
 import frc.robot.Commands.ShooterConstants;
 import frc.robot.generated.TunerConstants;
 import frc.robot.subsystems.CommandSwerveDrivetrain;
@@ -445,6 +446,9 @@ private Command showAllianceMarquee() {
                 shooter,
                 intakePosition,
                 intakedrive)
+        );
+        engineersController.leftBumper().onTrue(
+            new HoodTimingCharacterization(verticalAim)
         );
         // Idle while the robot is disabled. This ensures the configured
         // neutral mode is applied to the drive motors while disabled.

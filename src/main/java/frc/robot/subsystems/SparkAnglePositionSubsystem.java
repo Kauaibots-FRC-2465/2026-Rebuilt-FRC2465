@@ -1,6 +1,7 @@
 package frc.robot.subsystems;
 
 import static edu.wpi.first.units.Units.Rotations;
+import static edu.wpi.first.units.Units.RotationsPerSecond;
 
 import java.util.function.DoubleSupplier;
 import java.util.function.Supplier;
@@ -20,6 +21,7 @@ import com.revrobotics.spark.config.SparkBaseConfig.IdleMode;
 import com.revrobotics.spark.config.SparkMaxConfig;
 
 import edu.wpi.first.units.measure.Angle;
+import edu.wpi.first.units.measure.AngularVelocity;
 import edu.wpi.first.wpilibj.DriverStation;
 import edu.wpi.first.wpilibj2.command.Command;
 import edu.wpi.first.wpilibj2.command.SubsystemBase;
@@ -433,6 +435,18 @@ public class SparkAnglePositionSubsystem extends SubsystemBase {
      */
     public Angle getAngle() {
         return Rotations.of(mechanismToPublicRotations(encoder.getPosition()));
+    }
+
+    /**
+     * Returns current public-angle velocity.
+     *
+     * <p>The Spark relative encoder is configured in mechanism rotations/second, so this
+     * converts back into the subsystem's public-angle frame before returning the value.
+     *
+     * @return current public-angle velocity as a WPILib {@link AngularVelocity}.
+     */
+    public AngularVelocity getVelocity() {
+        return RotationsPerSecond.of(mechanismToPublicRotations(encoder.getVelocity()));
     }
 
     public Angle getMinimumAngle() {
