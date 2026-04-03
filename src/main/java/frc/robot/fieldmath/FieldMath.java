@@ -104,6 +104,28 @@ public final class FieldMath {
     }
 
     /**
+     * Returns a snowblow target on the alliance target line using operator right-stick X
+     * to choose the left-right point along that line.
+     *
+     * <p>`operatorRightX = -1` selects the far left end from the alliance-driver perspective,
+     * and `operatorRightX = +1` selects the far right end.
+     */
+    public static Translation2d getSnowblowTargetOnLine(
+            Alliance alliance,
+            double operatorRightX) {
+        double normalizedOperatorRightX = clamp(operatorRightX, -1.0, 1.0);
+        double interpolation = (normalizedOperatorRightX + 1.0) * 0.5;
+        double rightWallDistanceMeters = lerp(
+                TARGET_SIDE_INSET_METERS,
+                FIELD_WIDTH_METERS - TARGET_SIDE_INSET_METERS,
+                interpolation);
+        return getAllianceRelativeFieldPoint(
+                TARGET_LINE_OFFSET_METERS,
+                rightWallDistanceMeters,
+                alliance);
+    }
+
+    /**
      * Returns a fixed hub target expressed by alliance-relative field distances.
      */
     public static Translation2d getHubTarget(Alliance alliance) {
@@ -170,5 +192,9 @@ public final class FieldMath {
 
     private static double clamp(double value, double min, double max) {
         return Math.max(min, Math.min(max, value));
+    }
+
+    private static double lerp(double start, double end, double t) {
+        return start + (end - start) * t;
     }
 }

@@ -43,6 +43,7 @@ import edu.wpi.first.wpilibj2.command.sysid.SysIdRoutine.Direction;
 
 import frc.robot.Commands.ScoreInHub;
 import frc.robot.Commands.SnowblowToAlliance;
+import frc.robot.Commands.SnowblowToAllianceWithOperatorAim;
 import frc.robot.Commands.Rebound;
 import frc.robot.Commands.HoodTimingCharacterization;
 import frc.robot.Commands.ShooterConstants;
@@ -466,13 +467,14 @@ private Command showAllianceMarquee() {
         driversController.x().onTrue(showLights);
         driversController.x().onFalse(showStatic);
         driversController.rightTrigger().whileTrue(
-            new SnowblowToAlliance(
+            new SnowblowToAllianceWithOperatorAim(
                 drivetrain,
                 poseEstimatorSubsystem,
                 horizontalAim,
                 verticalAim,
                 shooter,
-                this::getDriverDriveRequest)
+                this::getDriverDriveRequest,
+                engineersController::getRightX)
         );
         driversController.leftTrigger().whileTrue(
             new ScoreInHub(

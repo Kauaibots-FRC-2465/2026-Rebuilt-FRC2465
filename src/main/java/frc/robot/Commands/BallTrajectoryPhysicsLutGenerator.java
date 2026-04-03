@@ -48,7 +48,8 @@ public final class BallTrajectoryPhysicsLutGenerator {
                             hoodAngleDegrees,
                             distanceIndex,
                             targetElevationInches);
-                    requiredExitVelocityLut[lutIndex] = requiredExitVelocityIps;
+                    requiredExitVelocityLut
+                    [lutIndex] = requiredExitVelocityIps;
                     maximumBallZElevationLut[lutIndex] = (float) BallTrajectoryLookup
                             .getMaximumBallZElevationForSolvedShotInches(
                                     hoodAngleDegrees,
