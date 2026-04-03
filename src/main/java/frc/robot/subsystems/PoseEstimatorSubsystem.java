@@ -6,8 +6,6 @@ import java.util.function.BooleanSupplier;
 import java.util.function.DoubleSupplier;
 import java.util.function.Supplier;
 
-import com.ctre.phoenix6.SignalLogger;
-
 import edu.wpi.first.math.geometry.Pose2d;
 import edu.wpi.first.math.geometry.Rotation2d;
 import edu.wpi.first.math.geometry.Twist2d;
@@ -22,6 +20,7 @@ import edu.wpi.first.units.measure.Time;
 import edu.wpi.first.wpilibj.RobotController;
 import edu.wpi.first.wpilibj2.command.SubsystemBase;
 import frc.robot.utility.RingBuffer;
+import frc.robot.utility.SlowCallMonitor;
 
 /**
  * A high-fidelity, latency-compensated pose estimator designed to serve as the
@@ -88,6 +87,11 @@ import frc.robot.utility.RingBuffer;
  * update odometry in a supplier method.)
  */
 public class PoseEstimatorSubsystem extends SubsystemBase {
+    private static final double SLOW_PERIODIC_THRESHOLD_MS = 4.0;
+    private static final double SLOW_ODOMETRY_THRESHOLD_MS = 2.0;
+    private static final double SLOW_VISION_THRESHOLD_MS = 2.0;
+    private static final double SLOW_PREDICTION_THRESHOLD_MS = 3.0;
+
     private static class PoseDashboardPublisher {
         private final StructPublisher<Pose2d> posePublisher;
         private final DoubleArrayPublisher fieldPosePublisher;
@@ -109,7 +113,7 @@ public class PoseEstimatorSubsystem extends SubsystemBase {
             // poseArray[1] = pose.getY();
             // poseArray[2] = pose.getRotation().getDegrees();
             // fieldPosePublisher.set(poseArray);
-            SignalLogger.writeStruct(signalLogKey, Pose2d.struct, pose);
+            // SignalLogger.writeStruct(signalLogKey, Pose2d.struct, pose);
         }
     }
 
@@ -205,6 +209,7 @@ public class PoseEstimatorSubsystem extends SubsystemBase {
         public double vxMetersPerSecond;
         public double vyMetersPerSecond;
         public double omegaRadiansPerSecond;
+        public long timestampMicros;
         private boolean valid;
 
         public boolean isValid() {
@@ -218,6 +223,7 @@ public class PoseEstimatorSubsystem extends SubsystemBase {
             vxMetersPerSecond = Double.NaN;
             vyMetersPerSecond = Double.NaN;
             omegaRadiansPerSecond = Double.NaN;
+            timestampMicros = -1L;
             valid = false;
         }
 
@@ -227,14 +233,31 @@ public class PoseEstimatorSubsystem extends SubsystemBase {
                 double headingRadians,
                 double vxMetersPerSecond,
                 double vyMetersPerSecond,
-                double omegaRadiansPerSecond) {
+                double omegaRadiansPerSecond,
+                long timestampMicros) {
             this.xMeters = xMeters;
             this.yMeters = yMeters;
             this.headingRadians = headingRadians;
             this.vxMetersPerSecond = vxMetersPerSecond;
             this.vyMetersPerSecond = vyMetersPerSecond;
             this.omegaRadiansPerSecond = omegaRadiansPerSecond;
+            this.timestampMicros = timestampMicros;
             valid = true;
+        }
+
+        void copyFrom(PredictedFusedState other) {
+            if (other == null || !other.valid) {
+                setInvalid();
+                return;
+            }
+            set(
+                    other.xMeters,
+                    other.yMeters,
+                    other.headingRadians,
+                    other.vxMetersPerSecond,
+                    other.vyMetersPerSecond,
+                    other.omegaRadiansPerSecond,
+                    other.timestampMicros);
         }
     }
 
@@ -279,6 +302,25 @@ public class PoseEstimatorSubsystem extends SubsystemBase {
     private Supplier<Time> visionTimestampSupplier;
     private BooleanSupplier visionIsValidSupplier;
     private Long lastFusedVisionTimestamp;
+    private long predictionCacheEpoch = 0L;
+    private long cachedPredictionEpoch = -1L;
+    private double cachedPredictionLookaheadSeconds = Double.NaN;
+    private final PredictedFusedState cachedPredictedState = new PredictedFusedState();
+
+    private final Supplier<Pose2d> fusedPoseSupplier = new Supplier<Pose2d>() {
+        private final PredictedFusedState predictedState = new PredictedFusedState();
+
+        @Override
+        public Pose2d get() {
+            if (!getPredictedFusedState(0.0, predictedState)) {
+                return null;
+            }
+            return new Pose2d(
+                    predictedState.xMeters,
+                    predictedState.yMeters,
+                    Rotation2d.fromRadians(predictedState.headingRadians));
+        }
+    };
 
     double xVarianceOdometry;
     double yVarianceOdometry;
@@ -289,14 +331,43 @@ public class PoseEstimatorSubsystem extends SubsystemBase {
 
     @Override
     public void periodic() {
-        if (odometryIsValidSupplier.getAsBoolean()) {
+        invalidatePredictionCache();
+        long periodicStartMicros = SlowCallMonitor.nowMicros();
+        long odometryMicros = 0L;
+        long visionMicros = 0L;
+        boolean odometryValid = odometryIsValidSupplier.getAsBoolean();
+        boolean visionValid = visionIsValidSupplier.getAsBoolean();
+
+        if (odometryValid) {
+            long odometryStartMicros = SlowCallMonitor.nowMicros();
             updateOdometry();
+            odometryMicros = SlowCallMonitor.nowMicros() - odometryStartMicros;
         } else {
             odometryHistory.clear();
+            priorPose = null;
+            priorHeading = null;
         }
 
-        if (visionIsValidSupplier.getAsBoolean()) {
+        if (visionValid) {
+            long visionStartMicros = SlowCallMonitor.nowMicros();
             fuseVision();
+            visionMicros = SlowCallMonitor.nowMicros() - visionStartMicros;
+        }
+
+        long totalMicros = SlowCallMonitor.nowMicros() - periodicStartMicros;
+        if (SlowCallMonitor.isSlow(totalMicros, SLOW_PERIODIC_THRESHOLD_MS)
+                || SlowCallMonitor.isSlow(odometryMicros, SLOW_ODOMETRY_THRESHOLD_MS)
+                || SlowCallMonitor.isSlow(visionMicros, SLOW_VISION_THRESHOLD_MS)) {
+            SlowCallMonitor.print(
+                    "PoseEstimatorSubsystem.periodic",
+                    totalMicros,
+                    String.format(
+                            "updateOdometry=%.3f ms fuseVision=%.3f ms odometryValid=%s visionValid=%s historySize=%d",
+                            SlowCallMonitor.toMillis(odometryMicros),
+                            SlowCallMonitor.toMillis(visionMicros),
+                            Boolean.toString(odometryValid),
+                            Boolean.toString(visionValid),
+                            odometryHistory.size()));
         }
     }
 
@@ -350,9 +421,9 @@ public class PoseEstimatorSubsystem extends SubsystemBase {
         }
         // Debug dashboard telemetry disabled to reduce NetworkTables traffic.
         // visionTimestampPublisher.set(visionTimestamp);
-        SignalLogger.writeInteger("PoseEstimator/Debug/visionTimestamp", visionTimestamp);
+        // SignalLogger.writeInteger("PoseEstimator/Debug/visionTimestamp", visionTimestamp);
         // odometryHistorySizePublisher.set(odometryHistory.size());
-        SignalLogger.writeInteger("PoseEstimator/Debug/odometryHistory size", odometryHistory.size());
+        // SignalLogger.writeInteger("PoseEstimator/Debug/odometryHistory size", odometryHistory.size());
 
         if (odometryHistory.size() < 2)
             return;
@@ -381,7 +452,7 @@ public class PoseEstimatorSubsystem extends SubsystemBase {
         }
         long dt = newerOdometryData.timestamp - olderOdometryData.timestamp;
         // dtPublisher.set(dt);
-        SignalLogger.writeInteger("PoseEstimator/Debug/dt from before to after odometry record", dt);
+        // SignalLogger.writeInteger("PoseEstimator/Debug/dt from before to after odometry record", dt);
         if (dt < 0) {
             throw new IllegalStateException(
                     "CRITICAL: Odometry timestamps are non-monotonic or duplicate. dt=" +
@@ -418,9 +489,9 @@ public class PoseEstimatorSubsystem extends SubsystemBase {
         // xKalmanGainPublisher.set(xKalmanGain);
         // yKalmanGainPublisher.set(yKalmanGain);
         // thetaKalmanGainPublisher.set(thetaKalmanGain);
-        SignalLogger.writeDouble("PoseEstimator/Debug/xKalmanGain", xKalmanGain);
-        SignalLogger.writeDouble("PoseEstimator/Debug/yKalmanGain", yKalmanGain);
-        SignalLogger.writeDouble("PoseEstimator/Debug/thetaKalmanGain", thetaKalmanGain);
+        // SignalLogger.writeDouble("PoseEstimator/Debug/xKalmanGain", xKalmanGain);
+        // SignalLogger.writeDouble("PoseEstimator/Debug/yKalmanGain", yKalmanGain);
+        // SignalLogger.writeDouble("PoseEstimator/Debug/thetaKalmanGain", thetaKalmanGain);
         Pose2d predictedFusedPoseAtVision = fusedAnchor.plus(visionTimeOdometryAnchor.minus(previousOdometryAnchor));
         Rotation2d predictedRotation = predictedFusedPoseAtVision.getRotation();
         double ThetaDifference = visionPose.getRotation().minus(predictedRotation).getRadians();
@@ -479,18 +550,34 @@ public class PoseEstimatorSubsystem extends SubsystemBase {
      */
     private void updateOdometry() {
         Pose2d newPose = odometryPoseSupplier.get();
+        long newTimestamp = toMicroseconds(odometryTimestampSupplier.get());
+
+        if (odometryHistory.size() > 0) {
+            long latestTimestamp = odometryHistory.get(0).timestamp;
+            if (newTimestamp == latestTimestamp) {
+                return;
+            }
+            if (newTimestamp < latestTimestamp) {
+                odometryHistory.clear();
+                priorPose = null;
+                priorHeading = null;
+            }
+        }
+
         newOdometryPosePublisher.publish(newPose, "PoseEstimator/Debug/NewOdometryPose");
         Rotation2d newHeading = newPose.getRotation();
 
         odometryHistory.getScratchpad().pose = newPose;
-        odometryHistory.getScratchpad().timestamp = toMicroseconds(odometryTimestampSupplier.get());
+        odometryHistory.getScratchpad().timestamp = newTimestamp;
         // Debug dashboard telemetry disabled to reduce NetworkTables traffic.
         // newOdometryPoseTimestampPublisher.set(odometryHistory.getScratchpad().timestamp);
-        SignalLogger.writeInteger(
-                "PoseEstimator/Debug/NewOdometryPoseTimestamp",
-                odometryHistory.getScratchpad().timestamp);
+        // SignalLogger.writeInteger(
+        //         "PoseEstimator/Debug/NewOdometryPoseTimestamp",
+        //         odometryHistory.getScratchpad().timestamp);
         odometryHistory.add();
-        if (odometryHistory.size() == 1) { // If this is the first pose, make it the prior pose too
+        if (odometryHistory.size() == 1 || priorPose == null || priorHeading == null) {
+            // If this is the first pose after startup or after clearing stale history,
+            // seed the previous sample state without attempting a delta calculation.
             priorPose = newPose;
             priorHeading = priorPose.getRotation();
             return;
@@ -558,9 +645,9 @@ public class PoseEstimatorSubsystem extends SubsystemBase {
         // xVarianceOdometryPublisher.set(xVarianceOdometry);
         // yVarianceOdometryPublisher.set(yVarianceOdometry);
         // hVarianceOdometryPublisher.set(thetaVarianceOdometry);
-        SignalLogger.writeDouble("PoseEstimator/Debug/xVarianceBound", xVarianceOdometry);
-        SignalLogger.writeDouble("PoseEstimator/Debug/yVarianceBound", yVarianceOdometry);
-        SignalLogger.writeDouble("PoseEstimator/Debug/hVarianceBound", thetaVarianceOdometry);
+        // SignalLogger.writeDouble("PoseEstimator/Debug/xVarianceBound", xVarianceOdometry);
+        // SignalLogger.writeDouble("PoseEstimator/Debug/yVarianceBound", yVarianceOdometry);
+        // SignalLogger.writeDouble("PoseEstimator/Debug/hVarianceBound", thetaVarianceOdometry);
         priorPose = newPose;
         priorHeading = newHeading;
     }
@@ -592,41 +679,63 @@ public class PoseEstimatorSubsystem extends SubsystemBase {
      *         Single threadded FRC code
      */
     public Supplier<Pose2d> getFusedPoseSupplier() {
-        return new Supplier<Pose2d>() {
-            private final PredictedFusedState predictedState = new PredictedFusedState();
-
-            @Override
-            public Pose2d get() {
-                if (!getPredictedFusedState(0.0, predictedState)) {
-                    return null;
-                }
-                return new Pose2d(
-                        predictedState.xMeters,
-                        predictedState.yMeters,
-                        Rotation2d.fromRadians(predictedState.headingRadians));
-            }
-        };
+        return fusedPoseSupplier;
     }
 
     public boolean getPredictedFusedState(double lookaheadSeconds, PredictedFusedState out) {
+        long predictionStartMicros = SlowCallMonitor.nowMicros();
+        String outcome = "ok";
+        long latestOdometryTimestamp = -1L;
+        long priorOdometryTimestamp = -1L;
+        long timeSinceLatestOdometry = -1L;
+        long timeBetweenLatestAndPriorOdometry = -1L;
+
         if (out == null) {
+            outcome = "nullOutput";
             throw new IllegalArgumentException("PredictedFusedState output must not be null.");
         }
+        if (cachedPredictionEpoch == predictionCacheEpoch
+                && Double.compare(cachedPredictionLookaheadSeconds, lookaheadSeconds) == 0) {
+            out.copyFrom(cachedPredictedState);
+            return out.isValid();
+        }
         if (!Double.isFinite(lookaheadSeconds) || lookaheadSeconds < 0.0) {
+            outcome = "invalidLookahead";
             out.setInvalid();
-            return false;
+            boolean result = printSlowPredictionAndReturn(
+                    predictionStartMicros,
+                    lookaheadSeconds,
+                    outcome,
+                    latestOdometryTimestamp,
+                    priorOdometryTimestamp,
+                    timeSinceLatestOdometry,
+                    timeBetweenLatestAndPriorOdometry,
+                    false);
+            cachePrediction(lookaheadSeconds, out);
+            return result;
         }
         if (odometryHistory.size() < 2) {
+            outcome = "historyTooShort";
             out.setInvalid();
-            return false;
+            boolean result = printSlowPredictionAndReturn(
+                    predictionStartMicros,
+                    lookaheadSeconds,
+                    outcome,
+                    latestOdometryTimestamp,
+                    priorOdometryTimestamp,
+                    timeSinceLatestOdometry,
+                    timeBetweenLatestAndPriorOdometry,
+                    false);
+            cachePrediction(lookaheadSeconds, out);
+            return result;
         }
 
         Pose2d latestOdometryPose = odometryHistory.get(0).pose;
-        long latestOdometryTimestamp = odometryHistory.get(0).timestamp;
+        latestOdometryTimestamp = odometryHistory.get(0).timestamp;
         Pose2d priorOdometryPose = odometryHistory.get(1).pose;
-        long priorOdometryTimestamp = odometryHistory.get(1).timestamp;
-        long timeSinceLatestOdometry = RobotController.getFPGATime() - latestOdometryTimestamp;
-        long timeBetweenLatestAndPriorOdometry = latestOdometryTimestamp - priorOdometryTimestamp;
+        priorOdometryTimestamp = odometryHistory.get(1).timestamp;
+        timeSinceLatestOdometry = RobotController.getFPGATime() - latestOdometryTimestamp;
+        timeBetweenLatestAndPriorOdometry = latestOdometryTimestamp - priorOdometryTimestamp;
         latestOdometryPosePublisher.publish(latestOdometryPose, "PoseEstimator/Debug/latestOdometryPose");
         // Debug dashboard telemetry disabled to reduce NetworkTables traffic.
         // latestOdometryTimestampPublisher.set(latestOdometryTimestamp);
@@ -634,27 +743,54 @@ public class PoseEstimatorSubsystem extends SubsystemBase {
         // priorOdometryTimestampPublisher.set(priorOdometryTimestamp);
         // timeSinceLatestOdometryPublisher.set(timeSinceLatestOdometry);
         // timeBetweenLatestAndPriorOdometryPublisher.set(timeBetweenLatestAndPriorOdometry);
-        SignalLogger.writeInteger("PoseEstimator/Debug/latestOdometryTimestamp", latestOdometryTimestamp);
-        SignalLogger.writeInteger("PoseEstimator/Debug/priorOdometryTimestamp", priorOdometryTimestamp);
-        SignalLogger.writeInteger("PoseEstimator/Debug/timeSinceLatestOdometry", timeSinceLatestOdometry);
-        SignalLogger.writeInteger(
-                "PoseEstimator/Debug/timeBetweenLatestAndPriorOdometry",
-                timeBetweenLatestAndPriorOdometry);
+        // SignalLogger.writeInteger("PoseEstimator/Debug/latestOdometryTimestamp", latestOdometryTimestamp);
+        // SignalLogger.writeInteger("PoseEstimator/Debug/priorOdometryTimestamp", priorOdometryTimestamp);
+        // SignalLogger.writeInteger("PoseEstimator/Debug/timeSinceLatestOdometry", timeSinceLatestOdometry);
+        // SignalLogger.writeInteger(
+        //         "PoseEstimator/Debug/timeBetweenLatestAndPriorOdometry",
+        //         timeBetweenLatestAndPriorOdometry);
 
-        if (timeBetweenLatestAndPriorOdometry <= 0) {
+        if (timeBetweenLatestAndPriorOdometry < 0) {
+            outcome = "nonMonotonicOdometry";
             throw new IllegalStateException(
                     "CRITICAL: Odometry timestamps are non-monotonic or duplicate. dt=" +
                             timeBetweenLatestAndPriorOdometry +
                             ". Fix upstream sensor/loop timing.");
         }
-        if (timeBetweenLatestAndPriorOdometry > 50000) {
+        if (timeBetweenLatestAndPriorOdometry == 0) {
+            outcome = "duplicateTimestamp";
             out.setInvalid();
-            return false;
+            boolean result = printSlowPredictionAndReturn(
+                    predictionStartMicros,
+                    lookaheadSeconds,
+                    outcome,
+                    latestOdometryTimestamp,
+                    priorOdometryTimestamp,
+                    timeSinceLatestOdometry,
+                    timeBetweenLatestAndPriorOdometry,
+                    false);
+            cachePrediction(lookaheadSeconds, out);
+            return result;
+        }
+        if (timeBetweenLatestAndPriorOdometry > 50000) {
+            outcome = "odometryGap";
+            out.setInvalid();
+            boolean result = printSlowPredictionAndReturn(
+                    predictionStartMicros,
+                    lookaheadSeconds,
+                    outcome,
+                    latestOdometryTimestamp,
+                    priorOdometryTimestamp,
+                    timeSinceLatestOdometry,
+                    timeBetweenLatestAndPriorOdometry,
+                    false);
+            cachePrediction(lookaheadSeconds, out);
+            return result;
         }
 
         double currentFraction = (double) timeSinceLatestOdometry / timeBetweenLatestAndPriorOdometry;
         // twistFractionToGetToNowPublisher.set(currentFraction);
-        SignalLogger.writeDouble("PoseEstimator/Debug/twistFractionToGetToNow", currentFraction);
+        // SignalLogger.writeDouble("PoseEstimator/Debug/twistFractionToGetToNow", currentFraction);
 
         Twist2d extrapolatedTwist = priorOdometryPose.log(latestOdometryPose);
         double predictionFraction =
@@ -675,6 +811,9 @@ public class PoseEstimatorSubsystem extends SubsystemBase {
                 (latestOdometryPose.getY() - priorOdometryPose.getY()) / dtSeconds;
         double omegaRadiansPerSecond =
                 latestOdometryPose.getRotation().minus(priorOdometryPose.getRotation()).getRadians() / dtSeconds;
+        long predictionTimestampMicros = latestOdometryTimestamp
+                + timeSinceLatestOdometry
+                + Math.round(lookaheadSeconds * 1_000_000.0);
 
         out.set(
                 fusedPosePrediction.getX(),
@@ -682,8 +821,19 @@ public class PoseEstimatorSubsystem extends SubsystemBase {
                 fusedPosePrediction.getRotation().getRadians(),
                 vxMetersPerSecond,
                 vyMetersPerSecond,
-                omegaRadiansPerSecond);
-        return true;
+                omegaRadiansPerSecond,
+                predictionTimestampMicros);
+        boolean result = printSlowPredictionAndReturn(
+                predictionStartMicros,
+                lookaheadSeconds,
+                outcome,
+                latestOdometryTimestamp,
+                priorOdometryTimestamp,
+                timeSinceLatestOdometry,
+                timeBetweenLatestAndPriorOdometry,
+                true);
+        cachePrediction(lookaheadSeconds, out);
+        return result;
     }
 
     public DoubleSupplier getFusedXDeviation() {
@@ -702,7 +852,47 @@ public class PoseEstimatorSubsystem extends SubsystemBase {
         return odometryTimestampSupplier; 
     }
 
+    private void invalidatePredictionCache() {
+        predictionCacheEpoch++;
+        cachedPredictionEpoch = -1L;
+        cachedPredictionLookaheadSeconds = Double.NaN;
+        cachedPredictedState.setInvalid();
+    }
+
+    private void cachePrediction(double lookaheadSeconds, PredictedFusedState state) {
+        cachedPredictionEpoch = predictionCacheEpoch;
+        cachedPredictionLookaheadSeconds = lookaheadSeconds;
+        cachedPredictedState.copyFrom(state);
+    }
+
     private static long toMicroseconds(Time timestamp) {
         return Math.round(timestamp.in(Microseconds));
+    }
+
+    private boolean printSlowPredictionAndReturn(
+            long predictionStartMicros,
+            double lookaheadSeconds,
+            String outcome,
+            long latestOdometryTimestamp,
+            long priorOdometryTimestamp,
+            long timeSinceLatestOdometry,
+            long timeBetweenLatestAndPriorOdometry,
+            boolean returnValue) {
+        long totalMicros = SlowCallMonitor.nowMicros() - predictionStartMicros;
+        if (SlowCallMonitor.isSlow(totalMicros, SLOW_PREDICTION_THRESHOLD_MS)) {
+            SlowCallMonitor.print(
+                    "PoseEstimatorSubsystem.getPredictedFusedState",
+                    totalMicros,
+                    String.format(
+                            "outcome=%s lookahead=%.3f s historySize=%d latestTs=%d priorTs=%d sinceLatest=%d us dt=%d us",
+                            outcome,
+                            lookaheadSeconds,
+                            odometryHistory.size(),
+                            latestOdometryTimestamp,
+                            priorOdometryTimestamp,
+                            timeSinceLatestOdometry,
+                            timeBetweenLatestAndPriorOdometry));
+        }
+        return returnValue;
     }
 }

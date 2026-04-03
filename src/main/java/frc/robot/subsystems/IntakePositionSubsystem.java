@@ -101,4 +101,9 @@ public class IntakePositionSubsystem extends SubsystemBase {
                         + rightIntakePosition.getAngle().in(Rotations))
                         / 2.0);
     }
+
+    public void recoverIfResetOccurred() {
+        leftIntakePosition.recoverIfResetOccurred();
+        rightIntakePosition.recoverIfResetOccurred();
+    }
 }

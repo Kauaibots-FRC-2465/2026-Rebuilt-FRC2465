@@ -74,6 +74,7 @@ public class SparkAnglePositionSubsystem extends SubsystemBase {
     private final double maximumAngleRotations;
     private final boolean motorReversed;
     private final boolean useAbsoluteEncoder;
+    private final boolean initializeRelativeEncoderFromAbsolute;
     private final boolean absoluteEncoderReversed;
 
     // Persistent motor configuration
@@ -197,6 +198,7 @@ public class SparkAnglePositionSubsystem extends SubsystemBase {
                 true,
                 motorReversed,
                 useAbsoluteEncoder,
+                useAbsoluteEncoder,
                 absoluteEncoderReversed);
     }
 
@@ -240,6 +242,7 @@ public class SparkAnglePositionSubsystem extends SubsystemBase {
                 publicAngleIncreasesWithMechanism,
                 motorReversed,
                 true,
+                true,
                 absoluteEncoderReversed);
     }
 
@@ -266,6 +269,52 @@ public class SparkAnglePositionSubsystem extends SubsystemBase {
             boolean publicAngleIncreasesWithMechanism,
             boolean motorReversed,
             boolean useAbsoluteEncoder,
+            boolean absoluteEncoderReversed) {
+        this(
+                canID,
+                motorName,
+                mechanismGearRatio,
+                absoluteEncoderGearRatio,
+                kP,
+                kD,
+                stallCurrentLimitAmps,
+                freeCurrentLimitAmps,
+                maxVoltageRequired,
+                minimumAngle,
+                maximumAngle,
+                referenceAngleAtMechanismZero,
+                publicAngleIncreasesWithMechanism,
+                motorReversed,
+                useAbsoluteEncoder,
+                useAbsoluteEncoder,
+                absoluteEncoderReversed);
+    }
+
+    /**
+     * Constructs a new SparkAnglePositionSubsystem with configurable absolute-encoder support.
+     *
+     * @param useAbsoluteEncoder whether the absolute encoder should be configured and exposed
+     *     for reads, drift monitoring, and recenter commands.
+     * @param initializeRelativeEncoderFromAbsolute whether the relative encoder should be
+     *     initialized from the absolute encoder during motor configuration.
+     */
+    public SparkAnglePositionSubsystem(
+            int canID,
+            String motorName,
+            double mechanismGearRatio,
+            double absoluteEncoderGearRatio,
+            double kP,
+            double kD,
+            int stallCurrentLimitAmps,
+            int freeCurrentLimitAmps,
+            double maxVoltageRequired,
+            Angle minimumAngle,
+            Angle maximumAngle,
+            Angle referenceAngleAtMechanismZero,
+            boolean publicAngleIncreasesWithMechanism,
+            boolean motorReversed,
+            boolean useAbsoluteEncoder,
+            boolean initializeRelativeEncoderFromAbsolute,
             boolean absoluteEncoderReversed) {
         System.out.println("Attempting to add SparkAnglePositionSubsystem for " + motorName);
         if (!isValidCanID(canID)) {
@@ -313,7 +362,13 @@ public class SparkAnglePositionSubsystem extends SubsystemBase {
         this.maximumAngleRotations = Math.max(minimumMechanismAngleRotations, maximumMechanismAngleRotations);
         this.motorReversed = motorReversed;
         this.useAbsoluteEncoder = useAbsoluteEncoder;
+        this.initializeRelativeEncoderFromAbsolute = initializeRelativeEncoderFromAbsolute;
         this.absoluteEncoderReversed = absoluteEncoderReversed;
+
+        if (this.initializeRelativeEncoderFromAbsolute && !this.useAbsoluteEncoder) {
+            throw new IllegalArgumentException(
+                    "ASSERTION FAILED: initializeRelativeEncoderFromAbsolute requires absolute encoder support.");
+        }
 
         sparkMax = new SparkMax(canID, MotorType.kBrushless);
         encoder = sparkMax.getEncoder();
@@ -535,6 +590,78 @@ public class SparkAnglePositionSubsystem extends SubsystemBase {
     }
 
     /**
+     * Returns the wrapped raw absolute-encoder position in rotations.
+     *
+     * <p>Because the Spark absolute encoder is configured zero-centered, the returned
+     * value is the current one-turn reading in the range approximately {@code (-0.5, 0.5]}.
+     * If the mechanism motion drives the absolute encoder through multiple turns, callers
+     * must unwrap consecutive readings themselves.
+     *
+     * @return wrapped raw absolute-encoder position in rotations, or {@code NaN} if the
+     *     encoder reported a non-finite value.
+     * @throws IllegalStateException if this subsystem was configured without
+     *     absolute-encoder support.
+     */
+    public double getAbsoluteEncoderRotations() {
+        if (!useAbsoluteEncoder) {
+            throw new IllegalStateException(
+                    "[" + motorName + " | CAN " + canID
+                            + "] Cannot read absolute encoder position: subsystem is configured without absolute encoder support.");
+        }
+
+        double absoluteEncoderRotations = absoluteEncoder.getPosition();
+        if (!Double.isFinite(absoluteEncoderRotations)) {
+            DriverStation.reportError(
+                    "[" + motorName + " | CAN " + canID
+                            + "] Invalid absolute encoder reading while fetching absolute encoder position: "
+                            + absoluteEncoderRotations,
+                    false);
+            return Double.NaN;
+        }
+
+        return absoluteEncoderRotations;
+    }
+
+    /**
+     * Returns the wrapped current public-angle reading derived from the absolute encoder.
+     *
+     * <p>This value is converted into the subsystem's public-angle frame, but it still wraps
+     * each time the absolute encoder completes one rotation. Use it for diagnostics or
+     * delta/unwrapping workflows rather than as a globally calibrated mechanism angle.
+     *
+     * @return wrapped public angle from the absolute encoder, or {@code NaN} if the
+     *     absolute encoder reported a non-finite value.
+     * @throws IllegalStateException if this subsystem was configured without
+     *     absolute-encoder support.
+     */
+    public Angle getAbsoluteAngle() {
+        double absoluteEncoderRotations = getAbsoluteEncoderRotations();
+        if (!Double.isFinite(absoluteEncoderRotations)) {
+            return Rotations.of(Double.NaN);
+        }
+
+        return Rotations.of(mechanismToPublicRotations(absoluteToMechanismRotations(absoluteEncoderRotations)));
+    }
+
+    /**
+     * Returns the signed public-angle change produced by one absolute-encoder rotation.
+     *
+     * <p>This is useful when unwrapping the raw absolute encoder and converting the
+     * accumulated encoder-turn delta back into public-angle units.
+     *
+     * @return public-angle degrees per absolute-encoder rotation.
+     */
+    public double getPublicDegreesPerAbsoluteEncoderRotation() {
+        if (!useAbsoluteEncoder) {
+            throw new IllegalStateException(
+                    "[" + motorName + " | CAN " + canID
+                            + "] Cannot convert absolute encoder rotations: subsystem is configured without absolute encoder support.");
+        }
+
+        return mechanismToPublicVelocityRotationsPerSecond(absoluteToMechanismRotations(1.0)) * 360.0;
+    }
+
+    /**
      * Returns the primary relative encoder position in raw motor rotations.
      *
      * <p>The Spark relative encoder is configured in mechanism rotations for control,
@@ -603,7 +730,7 @@ public class SparkAnglePositionSubsystem extends SubsystemBase {
         }
 
         double initialMechanismRotations;
-        if (useAbsoluteEncoder) {
+        if (initializeRelativeEncoderFromAbsolute) {
             double absoluteEncoderRotations = absoluteEncoder.getPosition();
             if (!Double.isFinite(absoluteEncoderRotations)) {
                 DriverStation.reportError(

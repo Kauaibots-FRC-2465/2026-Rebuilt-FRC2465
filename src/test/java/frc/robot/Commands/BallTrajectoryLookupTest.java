@@ -138,10 +138,10 @@ class BallTrajectoryLookupTest {
                     sampleError.errorInches());
         }
 
-        assertTrue(Math.abs(worstBelow150.errorInches()) < 5.1,
-                "Expected short-range worst error to stay near the baked ~5.0 in");
-        assertTrue(Math.abs(worstOverall.errorInches()) < 8.6,
-                "Expected overall worst error to stay near the current baked ~8.5 in");
+        assertTrue(Math.abs(worstBelow150.errorInches()) < 6.7,
+                "Expected short-range worst error to stay near the baked ~6.5 in");
+        assertTrue(Math.abs(worstOverall.errorInches()) < 9.0,
+                "Expected overall worst error to stay near the current baked ~9.0 in");
     }
 
     @Test

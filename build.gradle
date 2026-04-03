@@ -110,3 +110,10 @@ wpi.java.configureTestTasks(test)
 tasks.withType(JavaCompile) {
     options.compilerArgs.add '-XDstringConcat=inline'
 }
+
+tasks.register('generateBallTrajectoryLut', JavaExec) {
+    group = 'application'
+    description = 'Generates the ball trajectory LUT deploy artifact from current shooter constants.'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'frc.robot.Commands.BallTrajectoryPhysicsLutGenerator'
+}

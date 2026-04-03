@@ -201,6 +201,13 @@ public class ShooterSubsystem extends SubsystemBase {
         return backspinFlywheel.getSpeedIPS();
     }
 
+    public void recoverIfResetOccurred() {
+        mainFlywheel.recoverIfResetOccurred();
+        mirroredMainFlywheel.recoverIfResetOccurred();
+        kicker.recoverIfResetOccurred();
+        backspinFlywheel.recoverIfResetOccurred();
+    }
+
     private static KrakenFlywheelSubsystem createFlywheel(String canBusName, FlywheelConfig config) {
         return new KrakenFlywheelSubsystem(
                 config.canId,

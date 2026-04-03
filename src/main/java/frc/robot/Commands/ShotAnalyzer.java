@@ -20,7 +20,7 @@ public final class ShotAnalyzer {
     private static final double FIT_MOVE_FRACTION = 0.10;
     private static final int FIT_PASS_COUNT = 100;
     private static final double FIXED_LINEAR_DRAG_PER_SECOND = 0.0;
-    private static final double ANGLE_FIT_LIMIT_DEGREES = 2.0;
+    private static final double ANGLE_FIT_LIMIT_DEGREES = 5.0;
     private static final double ANGLE_FIT_INITIAL_STEP_DEGREES = 0.25;
     private static final double DRAG_LOG_REFERENCE_SPEED_IPS =
             ShooterConstants.FITTED_TRAJECTORY_DRAG_LOG_REFERENCE_SPEED_IPS;

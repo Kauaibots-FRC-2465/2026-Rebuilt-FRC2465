@@ -45,8 +45,10 @@ import frc.robot.Commands.ScoreInHub;
 import frc.robot.Commands.SnowblowToAlliance;
 import frc.robot.Commands.SnowblowToAllianceWithOperatorAim;
 import frc.robot.Commands.Rebound;
+import frc.robot.Commands.HoodRestPositionCharacterization;
 import frc.robot.Commands.HoodTimingCharacterization;
 import frc.robot.Commands.ShooterConstants;
+import frc.robot.Commands.TestShootingCommand;
 import frc.robot.generated.TunerConstants;
 import frc.robot.subsystems.CommandSwerveDrivetrain;
 import frc.robot.subsystems.IntakePositionSubsystem;
@@ -72,10 +74,6 @@ public class RobotContainer implements Subsystem {
     private final static float REMEMBER_TO_TUNE_CURRENTLY_1 = 1f;
     
     private final static int INCHES = 1;
-    private static final double HOOD_ANGLE_AT_MECHANISM_ZERO_DEGREES =
-            ShooterConstants.MEASURED_HOOD_ANGLE_AT_MECHANISM_ZERO_DEGREES;
-    private static final double MIN_HOOD_ANGLE_DEGREES = HOOD_ANGLE_AT_MECHANISM_ZERO_DEGREES - 50.0;
-    private static final double MAX_HOOD_ANGLE_DEGREES = HOOD_ANGLE_AT_MECHANISM_ZERO_DEGREES;
     private static final double HOOD_TUNE_ANGLE_STEP_DEGREES = 5.0;
     private static final double SHOOTER_TUNE_SPEED_STEP_IPS = 40;
     private static final double MAIN_FLYWHEEL_VELOCITY_SAMPLE_WINDOW_SECONDS = 0.010;
@@ -184,6 +182,7 @@ private Command showAllianceMarquee() {
 
     public final ShooterSubsystem shooter;
     public final KrakenFlywheelSubsystem intakedrive;
+    private final TestShootingCommand testShootingCommand;
     // CTRE CAN MAP
     // 11 Encoder for Front Left Swerve
     // 12 Encoder for Back Left Swerve
@@ -260,8 +259,8 @@ private Command showAllianceMarquee() {
             10,
             40,
             12,
-            Degrees.of(-15),
-            Degrees.of(15),
+            Degrees.of(-22),
+            Degrees.of(22),
             true,
             true);
         sparkFollowerSubsystem.addFollower(
@@ -274,6 +273,7 @@ private Command showAllianceMarquee() {
             12,
             IdleMode.kBrake,
             false);
+        horizontalAim.enableAbsoluteDriftMonitor("HorizontalAim");
 
 /*        hood = new SparkAnglePositionSubsystem(MotorData.HOOD.id,
             MotorData.HOOD.name,
@@ -297,10 +297,11 @@ private Command showAllianceMarquee() {
             10,
             40,
             12.0,
-            Degrees.of(MIN_HOOD_ANGLE_DEGREES),
-            Degrees.of(MAX_HOOD_ANGLE_DEGREES),
-            Degrees.of(HOOD_ANGLE_AT_MECHANISM_ZERO_DEGREES),
+            Degrees.of(ShooterConstants.COMMANDED_MINIMUM_ALLOWED_HOOD_ANGLE_DEGREES),
+            Degrees.of(ShooterConstants.COMMANDED_MAXIMUM_ALLOWED_HOOD_ANGLE_DEGREES),
+            Degrees.of(ShooterConstants.MEASURED_HOOD_ANGLE_AT_MECHANISM_ZERO_DEGREES),
             false,
+            true,
             true,
             false,
             false);
@@ -378,6 +379,11 @@ private Command showAllianceMarquee() {
           2,                          // | kP
           20                 // | Peak current
         );
+        testShootingCommand = new TestShootingCommand(
+            poseEstimatorSubsystem,
+            horizontalAim,
+            verticalAim,
+            shooter);
         RobotConfig config = null;
         try{
         config = RobotConfig.fromGUISettings();
@@ -438,10 +444,28 @@ private Command showAllianceMarquee() {
 
         //hood.setDefaultCommand(hood.cmdSetScaledAngle(engineersController::getLeftTriggerAxis));
         verticalAim.setDefaultCommand(verticalAim.cmdSetAngle(this::getHoodTuningAngle));
-        engineersController.povUp().onTrue(Commands.runOnce(() -> adjustHoodTuneAngle(-HOOD_TUNE_ANGLE_STEP_DEGREES)));
-        engineersController.povDown().onTrue(Commands.runOnce(() -> adjustHoodTuneAngle(HOOD_TUNE_ANGLE_STEP_DEGREES)));
+        engineersController.povUp().onTrue(Commands.runOnce(() -> {
+            if (CommandScheduler.getInstance().isScheduled(testShootingCommand)) {
+                testShootingCommand.trimHoodUp();
+            } else {
+                adjustHoodTuneAngle(-HOOD_TUNE_ANGLE_STEP_DEGREES);
+            }
+        }));
+        engineersController.povDown().onTrue(Commands.runOnce(() -> {
+            if (CommandScheduler.getInstance().isScheduled(testShootingCommand)) {
+                testShootingCommand.trimHoodDown();
+            } else {
+                adjustHoodTuneAngle(HOOD_TUNE_ANGLE_STEP_DEGREES);
+            }
+        }));
         engineersController.povRight().onTrue(Commands.runOnce(() -> adjustShooterTuneSpeed(SHOOTER_TUNE_SPEED_STEP_IPS)));
         engineersController.povLeft().onTrue(Commands.runOnce(() -> adjustShooterTuneSpeed(-SHOOTER_TUNE_SPEED_STEP_IPS)));
+        engineersController.y().toggleOnTrue(testShootingCommand);
+        engineersController.start().onTrue(Commands.runOnce(() -> {
+            shooter.recoverIfResetOccurred();
+            intakedrive.recoverIfResetOccurred();
+            intakePosition.recoverIfResetOccurred();
+        }));
         engineersController.rightTrigger().whileTrue(
             new Rebound(
                 horizontalAim,
@@ -540,7 +564,7 @@ private Command showAllianceMarquee() {
         return shooterTuneSpeed;
     }
 
-    double hoodTuneAngle = MAX_HOOD_ANGLE_DEGREES;
+    double hoodTuneAngle = ShooterConstants.COMMANDED_MAXIMUM_ALLOWED_HOOD_ANGLE_DEGREES;
 
 
     private Angle getHoodTuningAngle() {
@@ -549,8 +573,8 @@ private Command showAllianceMarquee() {
 
     private void adjustHoodTuneAngle(double deltaDegrees) {
         hoodTuneAngle = Math.max(
-                MIN_HOOD_ANGLE_DEGREES,
-                Math.min(MAX_HOOD_ANGLE_DEGREES, hoodTuneAngle + deltaDegrees));
+                ShooterConstants.COMMANDED_MINIMUM_ALLOWED_HOOD_ANGLE_DEGREES,
+                Math.min(ShooterConstants.COMMANDED_MAXIMUM_ALLOWED_HOOD_ANGLE_DEGREES, hoodTuneAngle + deltaDegrees));
         // Debug tuning telemetry disabled to reduce NetworkTables traffic.
         // hoodTuneAnglePublisher.set(hoodTuneAngle);
     }

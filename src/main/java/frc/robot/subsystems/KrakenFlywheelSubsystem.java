@@ -16,6 +16,7 @@ import edu.wpi.first.wpilibj.DriverStation;
 import edu.wpi.first.wpilibj2.command.Command;
 import edu.wpi.first.wpilibj2.command.SubsystemBase;
 import frc.robot.OverrideCommand;
+import frc.robot.utility.SlowCallMonitor;
 
 /**
  * Subsystem responsible for controlling a Kraken-based flywheel using Phoenix 6
@@ -27,6 +28,11 @@ import frc.robot.OverrideCommand;
  */
 
 public class KrakenFlywheelSubsystem extends SubsystemBase {
+    private static final double SLOW_PERIODIC_THRESHOLD_MS = 3.0;
+    private static final double SLOW_RESET_CHECK_THRESHOLD_MS = 1.0;
+    private static final double SLOW_CONFIGURE_THRESHOLD_MS = 3.0;
+    private static final double SLOW_SET_CONTROL_THRESHOLD_MS = 2.0;
+
     // CAN ID limits for roboRIO CAN bus devices.
     private static final int MIN_CAN_ID = 0;
     private static final int MAX_CAN_ID = 62;
@@ -193,26 +199,54 @@ public class KrakenFlywheelSubsystem extends SubsystemBase {
 
     @Override
     public void periodic() {
-        if (kraken.hasResetOccurred()) {
-            configured = false;
-            cyclesBeforeNextConfigAttempt = 0;
-            
-            DriverStation.reportError(
-                    "[" + motorName + " | CAN " + canID
-                            + " | Bus " + canBusName + "] TalonFX reset detected. Reconfiguring motor.",
-                    false);
-        }
-
+        long periodicStartMicros = SlowCallMonitor.nowMicros();
+        long configureMicros = 0L;
         if (!configured) {
             if (cyclesBeforeNextConfigAttempt > 0) {
                 cyclesBeforeNextConfigAttempt--;
             }
             else {
+                long configureStartMicros = SlowCallMonitor.nowMicros();
                 if (!configureMotor()) {
                     cyclesBeforeNextConfigAttempt = CONFIG_RETRY_DELAY_CYCLES;
                 }
+                configureMicros = SlowCallMonitor.nowMicros() - configureStartMicros;
             }
         }
+
+        long totalMicros = SlowCallMonitor.nowMicros() - periodicStartMicros;
+        if (SlowCallMonitor.isSlow(totalMicros, SLOW_PERIODIC_THRESHOLD_MS)
+                || SlowCallMonitor.isSlow(configureMicros, SLOW_CONFIGURE_THRESHOLD_MS)) {
+            SlowCallMonitor.print(
+                    "KrakenFlywheelSubsystem.periodic",
+                    totalMicros,
+                    String.format(
+                            "configure=%.3f ms configured=%s cyclesBeforeNextConfigAttempt=%d desiredRPS=%.3f motor=%s",
+                            SlowCallMonitor.toMillis(configureMicros),
+                            Boolean.toString(configured),
+                            cyclesBeforeNextConfigAttempt,
+                            desiredRPS,
+                            motorName));
+        }
+    }
+
+    public boolean recoverIfResetOccurred() {
+        if (kraken.hasResetOccurred()) {
+            configured = false;
+            cyclesBeforeNextConfigAttempt = 0;
+            DriverStation.reportError(
+                    "[" + motorName + " | CAN " + canID
+                            + " | Bus " + canBusName + "] TalonFX reset detected. Reconfiguring motor.",
+                    false);
+        }
+        if (configured) {
+            return true;
+        }
+        if (!configureMotor()) {
+            cyclesBeforeNextConfigAttempt = CONFIG_RETRY_DELAY_CYCLES;
+            return false;
+        }
+        return true;
     }
 
     private boolean configureMotor() {
@@ -260,7 +294,19 @@ public class KrakenFlywheelSubsystem extends SubsystemBase {
     public void setRPS(double rps) {
         if (Double.isNaN(desiredRPS) || Math.abs(desiredRPS - rps) > .001) {
             desiredRPS = rps;
+            long setControlStartMicros = SlowCallMonitor.nowMicros();
             kraken.setControl(velocityRequest.withVelocity(desiredRPS * gearRatio));
+            long setControlMicros = SlowCallMonitor.nowMicros() - setControlStartMicros;
+            if (SlowCallMonitor.isSlow(setControlMicros, SLOW_SET_CONTROL_THRESHOLD_MS)) {
+                SlowCallMonitor.print(
+                        "KrakenFlywheelSubsystem.setRPS",
+                        setControlMicros,
+                        String.format(
+                                "requestedRPS=%.3f motorRPS=%.3f configured=%s",
+                                desiredRPS,
+                                desiredRPS * gearRatio,
+                                Boolean.toString(configured)));
+            }
         }
     }
 

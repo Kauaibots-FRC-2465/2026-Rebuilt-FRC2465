@@ -9,7 +9,7 @@ public final class ShooterConstants {
         200.0, 240.0, 280.0, 320.0, 360.0, 400.0, 440.0, 480.0,
         520.0, 560.0, 600.0, 640.0, 680.0, 720.0, 760.0, 800.0
     };
-    static final double COMMANDED_SHOOTER_LOOKAHEAD_SECONDS = 0.0;
+    static final double COMMANDED_SHOOTER_LOOKAHEAD_SECONDS = 0.5;
     static final double COMMANDED_SNOWBLOW_TARGET_ELEVATION_INCHES = 36.0;
     static final double COMMANDED_MOVING_SHOT_HOOD_SEARCH_STEP_DEGREES = 2.5;
     static final double COMMANDED_MAXIMUM_SHOOTING_HEIGHT_INCHES = 120.0;
@@ -30,15 +30,23 @@ public final class ShooterConstants {
     public static final double COMMANDED_SCORE_IN_HUB_RIGHT_FIELD_WALL_TO_HUB_CENTER_INCHES = 158.84375;
 
     public static final double MEASURED_HOOD_ANGLE_AT_MECHANISM_ZERO_DEGREES = 78.6;
+    public static final double COMMANDED_MAXIMUM_ALLOWED_HOOD_ANGLE_DEGREES =
+            MEASURED_HOOD_ANGLE_AT_MECHANISM_ZERO_DEGREES;
+    public static final double COMMANDED_MINIMUM_ALLOWED_HOOD_ANGLE_DEGREES =
+            COMMANDED_MAXIMUM_ALLOWED_HOOD_ANGLE_DEGREES - COMMANDED_HOOD_CHARACTERIZATION_MAX_ANGLE_CHANGE_DEGREES;
     static final double MEASURED_BACKSPIN_CANCEL_LIMIT_COMMAND_IPS = 410.0;
     static final double MEASURED_INITIAL_X_OFFSET_INCHES = -13.5;
     static final double MEASURED_INITIAL_Z_BASE_INCHES = 7.5;
     static final double MEASURED_BALL_CENTER_OFFSET_INCHES = 5.0;
     static final double MEASURED_FRAME_TO_CENTER_DISTANCE_INCHES = 11.75;
+    static final double[] MEASURED_ACTUAL_ANGLE_CHANGES_DEGREES = {
+        0.0, 4.754282, 9.774558, 14.761633, 19.781841,
+        24.802019, 29.788951, 34.775883, 39.796061, 44.782996
+    };
     static final double[] MEASURED_ACTUAL_ANGLES_DEGREES =
             buildActualAnglesDegrees(
                     MEASURED_HOOD_ANGLE_AT_MECHANISM_ZERO_DEGREES,
-                    COMMANDED_HOOD_ANGLE_CHANGES_DEGREES);
+                    MEASURED_ACTUAL_ANGLE_CHANGES_DEGREES);
     static final double[][] MEASURED_DISTANCE_GRID_INCHES = {
         {  8.0, 18.0, 29.0, 40.0, 46.0, 55.0, 61.0, 63.0, 68.0, 70.0},
         { 21.0, 35.0, 51.0, 66.0, 75.0, 85.0, 97.0,100.0,102.0,103.0},
@@ -57,9 +65,9 @@ public final class ShooterConstants {
     };
 
     static final double FITTED_TRAJECTORY_DRAG_LOG_REFERENCE_SPEED_IPS = 300.0;
-    static final double FITTED_TRAJECTORY_DRAG_COEFFICIENT_BASE_PER_INCH = 0.001270781;
-    static final double FITTED_TRAJECTORY_DRAG_COEFFICIENT_LOG_SLOPE_PER_INCH = -0.000272904;
-    static final double FITTED_TRAJECTORY_MAGNUS_PER_SPIN_INCH = 0.000001254;
+    static final double FITTED_TRAJECTORY_DRAG_COEFFICIENT_BASE_PER_INCH = 0.001223906;
+    static final double FITTED_TRAJECTORY_DRAG_COEFFICIENT_LOG_SLOPE_PER_INCH = 0.000015017;
+    static final double FITTED_TRAJECTORY_MAGNUS_PER_SPIN_INCH = 0.000001354;
     static final String FITTED_BALL_TRAJECTORY_LUT_FILENAME = "ball_trajectory_lut.bin";
     static final int FITTED_BALL_TRAJECTORY_LUT_MAGIC = 0x42544C54; // "BTLT"
     static final int FITTED_BALL_TRAJECTORY_LUT_VERSION = 7;
@@ -76,10 +84,10 @@ public final class ShooterConstants {
         1.151291, 1.173797, 1.198627, 1.220792, 1.247873
     };
     static final double[] FITTED_BALL_EXIT_IPS = {
-        136.956, 173.887, 224.507, 270.333,
-        306.991, 338.273, 362.176, 381.627,
-        396.285, 411.510, 423.450, 439.677,
-        460.376, 477.270, 492.3584267, 507.7218
+        136.503, 172.910, 222.548, 269.037,
+        305.265, 336.769, 360.925, 380.494,
+        395.605, 410.430, 422.711, 439.495,
+        461.478, 479.592, 492.358, 507.722
     };
 
     static {
@@ -95,6 +103,9 @@ public final class ShooterConstants {
         }
         if (COMMANDED_HOOD_ANGLE_CHANGES_DEGREES.length != MEASURED_ACTUAL_ANGLES_DEGREES.length) {
             throw new IllegalStateException("Commanded angle changes must match angle count.");
+        }
+        if (MEASURED_ACTUAL_ANGLE_CHANGES_DEGREES.length != MEASURED_ACTUAL_ANGLES_DEGREES.length) {
+            throw new IllegalStateException("Measured actual angle changes must match angle count.");
         }
         if (MEASURED_DISTANCE_GRID_INCHES[0].length != MEASURED_ACTUAL_ANGLES_DEGREES.length) {
             throw new IllegalStateException("Distance grid column count must match angle count.");

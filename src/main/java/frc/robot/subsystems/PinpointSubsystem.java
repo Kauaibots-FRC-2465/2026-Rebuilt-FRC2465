@@ -15,14 +15,18 @@ import edu.wpi.first.math.geometry.Pose2d;
 import edu.wpi.first.networktables.NetworkTable;
 import edu.wpi.first.networktables.NetworkTableInstance;
 import edu.wpi.first.networktables.StringPublisher;
+import edu.wpi.first.wpilibj.RobotController;
 import edu.wpi.first.units.measure.Time;
 import edu.wpi.first.wpilibj2.command.SubsystemBase;
 import frc.robot.utility.ThrottlePrint;
+import frc.robot.utility.SlowCallMonitor;
 import edu.wpi.first.units.AngleUnit;
 import edu.wpi.first.units.DistanceUnit;
 
 
 public class PinpointSubsystem extends SubsystemBase {
+    private static final double SLOW_PERIODIC_THRESHOLD_MS = 8.0;
+
     GoBildaPinpointFRCDriver pinpoint;
     private final double xPodOffset;
     private final double yPodOffset;
@@ -68,19 +72,31 @@ public class PinpointSubsystem extends SubsystemBase {
     
     @Override
     public void periodic() {
+        long periodicStartMicros = RobotController.getFPGATime();
+        long updateStartMicros = RobotController.getFPGATime();
         pinpoint.update();
+        long updateMicros = RobotController.getFPGATime() - updateStartMicros;
         GoBildaPinpointFRCDriver.DeviceStatus currentPinpointStatus = pinpoint.getDeviceStatus();
         if (currentPinpointStatus != lastPublishedPinpointStatus) {
             pinpointStatusPublisher.set(describeDeviceStatus(currentPinpointStatus));
             lastPublishedPinpointStatus = currentPinpointStatus;
         }
-        if(currentPinpointStatus != GoBildaPinpointFRCDriver.DeviceStatus.READY) return;
+        if(currentPinpointStatus != GoBildaPinpointFRCDriver.DeviceStatus.READY) {
+            long totalMicros = RobotController.getFPGATime() - periodicStartMicros;
+            printSlowPeriodic(totalMicros, updateMicros, 0L, currentPinpointStatus);
+            return;
+        }
+        long configurationMicros = 0L;
         if (!configurationSent) {
+            long configurationStartMicros = RobotController.getFPGATime();
             pinpoint.setOffsets(xPodOffset, yPodOffset, distanceUnit);
             pinpoint.setEncoderDirections(xPodDirection, yPodDirection);
             pinpoint.setEncoderResolution(odometryPod);
             configurationSent = true;
+            configurationMicros = RobotController.getFPGATime() - configurationStartMicros;
         }
+        long totalMicros = RobotController.getFPGATime() - periodicStartMicros;
+        printSlowPeriodic(totalMicros, updateMicros, configurationMicros, currentPinpointStatus);
     }
 
     public BooleanSupplier getIsValidSupplier() {
@@ -115,5 +131,25 @@ public class PinpointSubsystem extends SubsystemBase {
             case FAULT_BAD_WRITE_CRC -> "Pinpoint reported a bad write CRC fault.";
             case FAULT_BAD_READ -> "Pinpoint reported a bad read fault.";
         };
+    }
+
+    private void printSlowPeriodic(
+            long totalMicros,
+            long updateMicros,
+            long configurationMicros,
+            GoBildaPinpointFRCDriver.DeviceStatus currentPinpointStatus) {
+        if (!SlowCallMonitor.isSlow(totalMicros, SLOW_PERIODIC_THRESHOLD_MS)
+                && currentPinpointStatus == GoBildaPinpointFRCDriver.DeviceStatus.READY) {
+            return;
+        }
+        SlowCallMonitor.print(
+                "PinpointSubsystem.periodic",
+                totalMicros,
+                String.format(
+                        "update=%.3f ms bulkReadLatency=%.3f ms config=%.3f ms status=%s",
+                        SlowCallMonitor.toMillis(updateMicros),
+                        SlowCallMonitor.toMillis(pinpoint.getFpgaBulkReadLatency()),
+                        SlowCallMonitor.toMillis(configurationMicros),
+                        currentPinpointStatus));
     }
 }

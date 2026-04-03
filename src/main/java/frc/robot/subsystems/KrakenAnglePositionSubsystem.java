@@ -151,16 +151,6 @@ public class KrakenAnglePositionSubsystem extends SubsystemBase {
 
     @Override
     public void periodic() {
-        if (kraken.hasResetOccurred()) {
-            configured = false;
-            cyclesBeforeNextConfigAttempt = 0;
-
-            DriverStation.reportError(
-                    "[" + motorName + " | CAN " + canID
-                            + " | Bus " + canBusName + "] TalonFX reset detected. Reconfiguring motor.",
-                    false);
-        }
-
         if (!configured) {
             if (cyclesBeforeNextConfigAttempt > 0) {
                 cyclesBeforeNextConfigAttempt--;
@@ -176,6 +166,25 @@ public class KrakenAnglePositionSubsystem extends SubsystemBase {
         SignalLogger.writeDouble(
                 "KrakenAnglePositionSubsystem/" + motorName + "/AngleDegrees",
                 currentAngle.in(Degrees));
+    }
+
+    public boolean recoverIfResetOccurred() {
+        if (kraken.hasResetOccurred()) {
+            configured = false;
+            cyclesBeforeNextConfigAttempt = 0;
+            DriverStation.reportError(
+                    "[" + motorName + " | CAN " + canID
+                            + " | Bus " + canBusName + "] TalonFX reset detected. Reconfiguring motor.",
+                    false);
+        }
+        if (configured) {
+            return true;
+        }
+        if (!configureMotor()) {
+            cyclesBeforeNextConfigAttempt = CONFIG_RETRY_DELAY_CYCLES;
+            return false;
+        }
+        return true;
     }
 
     /**

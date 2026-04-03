@@ -20,17 +20,25 @@ import edu.wpi.first.networktables.NetworkTableInstance;
 import edu.wpi.first.networktables.StringPublisher;
 import edu.wpi.first.wpilibj.DriverStation;
 import edu.wpi.first.wpilibj.DriverStation.Alliance;
+import edu.wpi.first.wpilibj.Timer;
 import edu.wpi.first.wpilibj2.command.Command;
 import frc.robot.fieldmath.FieldMath;
 import frc.robot.subsystems.CommandSwerveDrivetrain;
 import frc.robot.subsystems.PoseEstimatorSubsystem;
 import frc.robot.subsystems.ShooterSubsystem;
 import frc.robot.subsystems.SparkAnglePositionSubsystem;
+import frc.robot.utility.SlowCallMonitor;
 
 /**
  * Drives while solving a moving shot into the fixed hub target.
  */
 public class ScoreInHub extends Command {
+    private static final double SLOW_EXECUTE_THRESHOLD_MS = 8.0;
+    private static final double SLOW_PREDICTION_THRESHOLD_MS = 4.0;
+    private static final double SLOW_SOLVER_THRESHOLD_MS = 5.0;
+    private static final double SLOW_SET_CONTROL_THRESHOLD_MS = 2.0;
+    private static final double TRANSIENT_SOLUTION_HOLD_SECONDS = 0.25;
+
     private final CommandSwerveDrivetrain drivetrain;
     private final PoseEstimatorSubsystem poseEstimator;
     private final SparkAnglePositionSubsystem horizontalAim;
@@ -61,6 +69,11 @@ public class ScoreInHub extends Command {
     private final double[] futureFieldPose = new double[3];
     private final double[] futureFieldVelocity = new double[3];
     private Translation2d lastFieldRelativeDriveDirection = new Translation2d();
+    private Rotation2d lastValidRobotHeadingTarget = new Rotation2d();
+    private double lastValidTurretDeltaDegrees = 0.0;
+    private double lastValidFlywheelCommandIps = 0.0;
+    private double lastValidSolutionTimestampSeconds = Double.NEGATIVE_INFINITY;
+    private boolean hasLatchedValidSolution = false;
 
     public ScoreInHub(
             CommandSwerveDrivetrain drivetrain,
@@ -107,23 +120,54 @@ public class ScoreInHub extends Command {
 
     @Override
     public void execute() {
+        long executeStartMicros = SlowCallMonitor.nowMicros();
+        long predictionMicros = 0L;
+        long solutionMicros = 0L;
+        long setControlMicros = 0L;
+
         SwerveRequest requestedDrive = driveRequestSupplier.get();
         if (!(requestedDrive instanceof SwerveRequest.FieldCentric fieldCentricRequest)) {
             clearSolutionTelemetry();
             drivetrain.setControl(requestedDrive);
+            long totalMicros = SlowCallMonitor.nowMicros() - executeStartMicros;
+            if (SlowCallMonitor.isSlow(totalMicros, SLOW_EXECUTE_THRESHOLD_MS)) {
+                SlowCallMonitor.print(
+                        "ScoreInHub.execute",
+                        totalMicros,
+                        "fieldCentric=false");
+            }
             return;
         }
 
         updateLastDriveDirection(fieldCentricRequest);
+        long predictionStartMicros = SlowCallMonitor.nowMicros();
         if (!poseEstimator.getPredictedFusedState(
                 ShooterConstants.COMMANDED_SHOOTER_LOOKAHEAD_SECONDS,
                 futureState)) {
+            predictionMicros = SlowCallMonitor.nowMicros() - predictionStartMicros;
             clearSolutionTelemetry();
-            shooter.setCoupledIPS(0.0);
-            horizontalAim.setAngle(Degrees.of(0.0));
-            drivetrain.setControl(requestedDrive);
+            boolean holdingLastSolution = shouldHoldLastSolution();
+            if (holdingLastSolution) {
+                applyHeldShotCommand(fieldCentricRequest);
+            } else {
+                clearShotCommands();
+                drivetrain.setControl(requestedDrive);
+            }
+            long totalMicros = SlowCallMonitor.nowMicros() - executeStartMicros;
+            if (SlowCallMonitor.isSlow(totalMicros, SLOW_EXECUTE_THRESHOLD_MS)
+                    || SlowCallMonitor.isSlow(predictionMicros, SLOW_PREDICTION_THRESHOLD_MS)) {
+                SlowCallMonitor.print(
+                        "ScoreInHub.execute",
+                        totalMicros,
+                        String.format(
+                                "futureState=false holding=%s holdAge=%.3f s predict=%.3f ms",
+                                Boolean.toString(holdingLastSolution),
+                                getLatchedSolutionAgeSeconds(),
+                                SlowCallMonitor.toMillis(predictionMicros)));
+            }
             return;
         }
+        predictionMicros = SlowCallMonitor.nowMicros() - predictionStartMicros;
         publishFutureState();
 
         Pose2d futurePose = new Pose2d(
@@ -135,12 +179,33 @@ public class ScoreInHub extends Command {
 
         Rotation2d preferredRobotHeading = getPreferredRobotHeading(futurePose.getRotation());
         Rotation2d robotHeadingTarget = preferredRobotHeading;
+        long solutionStartMicros = SlowCallMonitor.nowMicros();
         if (updateShooterSolution(target, preferredRobotHeading)) {
-            robotHeadingTarget = Rotation2d.fromDegrees(movingShotSolution.getRobotHeadingDegrees());
+            robotHeadingTarget = lastValidRobotHeadingTarget;
+        } else if (shouldHoldLastSolution()) {
+            applyHeldShotCommand(fieldCentricRequest);
+            long totalMicros = SlowCallMonitor.nowMicros() - executeStartMicros;
+            solutionMicros = SlowCallMonitor.nowMicros() - solutionStartMicros;
+            if (SlowCallMonitor.isSlow(totalMicros, SLOW_EXECUTE_THRESHOLD_MS)
+                    || SlowCallMonitor.isSlow(solutionMicros, SLOW_SOLVER_THRESHOLD_MS)) {
+                SlowCallMonitor.print(
+                        "ScoreInHub.execute",
+                        totalMicros,
+                        String.format(
+                                "holdingLastSolution=true holdAge=%.3f s predict=%.3f ms solve=%.3f ms setControl=0.000 ms",
+                                getLatchedSolutionAgeSeconds(),
+                                SlowCallMonitor.toMillis(predictionMicros),
+                                SlowCallMonitor.toMillis(solutionMicros)));
+            }
+            return;
+        } else {
+            clearShotCommands();
         }
+        solutionMicros = SlowCallMonitor.nowMicros() - solutionStartMicros;
         Rotation2d operatorPerspectiveHeadingTarget =
                 robotHeadingTarget.minus(drivetrain.getDriverPerspectiveForward());
 
+        long setControlStartMicros = SlowCallMonitor.nowMicros();
         drivetrain.setControl(
                 facingAngleDrive
                         .withVelocityX(fieldCentricRequest.VelocityX)
@@ -153,6 +218,22 @@ public class ScoreInHub extends Command {
                         .withSteerRequestType(fieldCentricRequest.SteerRequestType)
                         .withDesaturateWheelSpeeds(fieldCentricRequest.DesaturateWheelSpeeds)
                         .withForwardPerspective(fieldCentricRequest.ForwardPerspective));
+        setControlMicros = SlowCallMonitor.nowMicros() - setControlStartMicros;
+
+        long totalMicros = SlowCallMonitor.nowMicros() - executeStartMicros;
+        if (SlowCallMonitor.isSlow(totalMicros, SLOW_EXECUTE_THRESHOLD_MS)
+                || SlowCallMonitor.isSlow(predictionMicros, SLOW_PREDICTION_THRESHOLD_MS)
+                || SlowCallMonitor.isSlow(solutionMicros, SLOW_SOLVER_THRESHOLD_MS)
+                || SlowCallMonitor.isSlow(setControlMicros, SLOW_SET_CONTROL_THRESHOLD_MS)) {
+            SlowCallMonitor.print(
+                    "ScoreInHub.execute",
+                    totalMicros,
+                    String.format(
+                            "predict=%.3f ms solve=%.3f ms setControl=%.3f ms",
+                            SlowCallMonitor.toMillis(predictionMicros),
+                            SlowCallMonitor.toMillis(solutionMicros),
+                            SlowCallMonitor.toMillis(setControlMicros)));
+        }
     }
 
     @Override
@@ -172,9 +253,11 @@ public class ScoreInHub extends Command {
     private boolean updateShooterSolution(
             Translation2d target,
             Rotation2d preferredRobotHeading) {
+        long functionStartMicros = SlowCallMonitor.nowMicros();
         double targetDistanceInches = Inches.convertFrom(
                 target.getDistance(new Translation2d(futureState.xMeters, futureState.yMeters)),
                 Meters);
+        long solverStartMicros = SlowCallMonitor.nowMicros();
         boolean hasSolution = BallTrajectoryLookup.solveMovingShot(
                 verticalAim.getMinimumAngle().in(Degrees),
                 verticalAim.getMaximumAngle().in(Degrees),
@@ -193,6 +276,7 @@ public class ScoreInHub extends Command {
                 horizontalAim.getMinimumAngle().in(Degrees),
                 horizontalAim.getMaximumAngle().in(Degrees),
                 movingShotSolution);
+        long solverMicros = SlowCallMonitor.nowMicros() - solverStartMicros;
         // Debug dashboard telemetry disabled to reduce NetworkTables traffic.
         // targetDistanceInchesPublisher.set(targetDistanceInches);
         // targetElevationInchesPublisher.set(ShooterConstants.COMMANDED_SCORE_IN_HUB_TARGET_ELEVATION_INCHES);
@@ -206,8 +290,17 @@ public class ScoreInHub extends Command {
             // shotAzimuthDegreesPublisher.set(Double.NaN);
             // turretDeltaDegreesPublisher.set(Double.NaN);
             // robotHeadingDegreesPublisher.set(preferredRobotHeading.getDegrees());
-            shooter.setCoupledIPS(0.0);
-            horizontalAim.setAngle(Degrees.of(0.0));
+            long totalMicros = SlowCallMonitor.nowMicros() - functionStartMicros;
+            if (SlowCallMonitor.isSlow(totalMicros, SLOW_SOLVER_THRESHOLD_MS)
+                    || SlowCallMonitor.isSlow(solverMicros, SLOW_SOLVER_THRESHOLD_MS)) {
+                SlowCallMonitor.print(
+                        "ScoreInHub.updateShooterSolution",
+                        totalMicros,
+                        String.format(
+                                "hasSolution=false distance=%.1f in solveMovingShot=%.3f ms",
+                                targetDistanceInches,
+                                SlowCallMonitor.toMillis(solverMicros)));
+            }
             return false;
         }
 
@@ -222,6 +315,22 @@ public class ScoreInHub extends Command {
         verticalAim.setAngle(Degrees.of(movingShotSolution.getHoodAngleDegrees()));
         horizontalAim.setAngle(Degrees.of(clampedTurretDeltaDegrees));
         shooter.setCoupledIPS(movingShotSolution.getFlywheelCommandIps());
+        lastValidRobotHeadingTarget = Rotation2d.fromDegrees(movingShotSolution.getRobotHeadingDegrees());
+        lastValidTurretDeltaDegrees = clampedTurretDeltaDegrees;
+        lastValidFlywheelCommandIps = movingShotSolution.getFlywheelCommandIps();
+        lastValidSolutionTimestampSeconds = Timer.getFPGATimestamp();
+        hasLatchedValidSolution = true;
+        long totalMicros = SlowCallMonitor.nowMicros() - functionStartMicros;
+        if (SlowCallMonitor.isSlow(totalMicros, SLOW_SOLVER_THRESHOLD_MS)
+                || SlowCallMonitor.isSlow(solverMicros, SLOW_SOLVER_THRESHOLD_MS)) {
+            SlowCallMonitor.print(
+                    "ScoreInHub.updateShooterSolution",
+                    totalMicros,
+                    String.format(
+                            "hasSolution=true distance=%.1f in solveMovingShot=%.3f ms",
+                            targetDistanceInches,
+                            SlowCallMonitor.toMillis(solverMicros)));
+        }
         return true;
     }
 
@@ -279,5 +388,42 @@ public class ScoreInHub extends Command {
         // shotAzimuthDegreesPublisher.set(Double.NaN);
         // turretDeltaDegreesPublisher.set(Double.NaN);
         // robotHeadingDegreesPublisher.set(Double.NaN);
+    }
+
+    private boolean shouldHoldLastSolution() {
+        return hasLatchedValidSolution
+                && getLatchedSolutionAgeSeconds() <= TRANSIENT_SOLUTION_HOLD_SECONDS;
+    }
+
+    private double getLatchedSolutionAgeSeconds() {
+        if (!hasLatchedValidSolution) {
+            return Double.POSITIVE_INFINITY;
+        }
+        return Timer.getFPGATimestamp() - lastValidSolutionTimestampSeconds;
+    }
+
+    private void clearShotCommands() {
+        shooter.setCoupledIPS(0.0);
+        horizontalAim.setAngle(Degrees.of(0.0));
+        hasLatchedValidSolution = false;
+    }
+
+    private void applyHeldShotCommand(SwerveRequest.FieldCentric fieldCentricRequest) {
+        horizontalAim.setAngle(Degrees.of(lastValidTurretDeltaDegrees));
+        shooter.setCoupledIPS(lastValidFlywheelCommandIps);
+        Rotation2d operatorPerspectiveHeadingTarget =
+                lastValidRobotHeadingTarget.minus(drivetrain.getDriverPerspectiveForward());
+        drivetrain.setControl(
+                facingAngleDrive
+                        .withVelocityX(fieldCentricRequest.VelocityX)
+                        .withVelocityY(fieldCentricRequest.VelocityY)
+                        .withTargetDirection(operatorPerspectiveHeadingTarget)
+                        .withDeadband(fieldCentricRequest.Deadband)
+                        .withRotationalDeadband(fieldCentricRequest.RotationalDeadband)
+                        .withCenterOfRotation(fieldCentricRequest.CenterOfRotation)
+                        .withDriveRequestType(fieldCentricRequest.DriveRequestType)
+                        .withSteerRequestType(fieldCentricRequest.SteerRequestType)
+                        .withDesaturateWheelSpeeds(fieldCentricRequest.DesaturateWheelSpeeds)
+                        .withForwardPerspective(fieldCentricRequest.ForwardPerspective));
     }
 }
