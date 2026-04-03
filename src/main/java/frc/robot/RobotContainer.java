@@ -291,7 +291,7 @@ private Command showAllianceMarquee() {
             MotorData.HOOD.name,
             150.0/10.0*22.0/32.0*5.0*5.0,
             5.0*5.0,
-            0.06,
+            .2, //0.06,
             0.0,
             10,
             40,
@@ -301,6 +301,7 @@ private Command showAllianceMarquee() {
             Degrees.of(HOOD_ANGLE_AT_MECHANISM_ZERO_DEGREES),
             false,
             true,
+            false,
             false);
 
         intakePosition = new IntakePositionSubsystem(
@@ -447,9 +448,9 @@ private Command showAllianceMarquee() {
                 intakePosition,
                 intakedrive)
         );
-        engineersController.leftBumper().onTrue(
-            new HoodTimingCharacterization(verticalAim)
-        );
+        //engineersController.leftBumper().onTrue(
+        //    new HoodTimingCharacterization(verticalAim)
+        //);
         // Idle while the robot is disabled. This ensures the configured
         // neutral mode is applied to the drive motors while disabled.
         final var idle = new SwerveRequest.Idle();

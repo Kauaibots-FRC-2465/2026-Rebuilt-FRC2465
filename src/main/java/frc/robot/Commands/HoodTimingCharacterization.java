@@ -2,7 +2,6 @@ package frc.robot.Commands;
 
 import static edu.wpi.first.units.Units.Degrees;
 
-import java.io.BufferedWriter;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -25,6 +24,9 @@ import frc.robot.subsystems.SparkAnglePositionSubsystem;
  */
 public class HoodTimingCharacterization extends Command {
     private static final double MAX_MOVE_DURATION_SECONDS = 5.0;
+    private static final double START_READY_TOLERANCE_DEGREES = 1.25;
+    private static final double DESTINATION_SETTLE_TOLERANCE_DEGREES =
+            ShooterConstants.COMMANDED_HOOD_CHARACTERIZATION_ARRIVAL_TOLERANCE_DEGREES;
 
     private enum Stage {
         MOVE_TO_START,
@@ -53,9 +55,9 @@ public class HoodTimingCharacterization extends Command {
 
     private final List<MoveDefinition> moveDefinitions = new ArrayList<>();
     private final List<Sample> pendingSamples = new ArrayList<>();
+    private final StringBuilder csvBuffer = new StringBuilder(64 * 1024);
 
     private Path outputPath;
-    private BufferedWriter writer;
     private Stage stage = Stage.COMPLETE;
     private int currentMoveIndex;
     private double maximumActualAngleDegrees;
@@ -64,6 +66,11 @@ public class HoodTimingCharacterization extends Command {
     private double firstInToleranceTimeSeconds;
     private double initialActualAngleDegrees;
     private double initialVelocityDegreesPerSecond;
+    private double currentActualAngleDegrees;
+    private double currentVelocityDegreesPerSecond;
+    private double previousActualAngleDegrees;
+    private double previousSampleTimeSeconds;
+    private boolean skipStartSettleForCurrentMove;
     private boolean timedOut;
     private boolean finished;
 
@@ -82,6 +89,12 @@ public class HoodTimingCharacterization extends Command {
         stage = moveDefinitions.isEmpty() ? Stage.COMPLETE : Stage.MOVE_TO_START;
         finished = moveDefinitions.isEmpty();
         resetMoveState();
+        csvBuffer.setLength(0);
+        skipStartSettleForCurrentMove = false;
+        currentActualAngleDegrees = verticalAim.getAngle().in(Degrees);
+        currentVelocityDegreesPerSecond = 0.0;
+        previousActualAngleDegrees = currentActualAngleDegrees;
+        previousSampleTimeSeconds = Timer.getFPGATimestamp();
 
         outputPath = Filesystem.getOperatingDirectory().toPath().resolve(String.format(
                 Locale.US,
@@ -89,28 +102,15 @@ public class HoodTimingCharacterization extends Command {
                 ShooterConstants.COMMANDED_HOOD_CHARACTERIZATION_FILE_PREFIX,
                 System.currentTimeMillis()));
 
-        try {
-            writer = Files.newBufferedWriter(outputPath, StandardCharsets.US_ASCII);
-            writer.write(
-                    "move_index,label,start_commanded_angle_change_degrees,destination_commanded_angle_change_degrees,"
-                            + "start_actual_angle_degrees,destination_actual_angle_degrees,"
-                            + "initial_actual_angle_degrees,initial_velocity_degrees_per_second,"
-                            + "elapsed_seconds,current_commanded_angle_change_degrees,current_actual_angle_degrees,"
-                            + "current_velocity_degrees_per_second,position_error_degrees,within_tolerance,"
-                            + "velocity_settled,battery_voltage,first_in_tolerance_seconds,settle_seconds,timed_out");
-            writer.newLine();
-            writer.flush();
-            System.out.println("Hood characterization writing to: " + outputPath.toAbsolutePath());
-            DriverStation.reportWarning(
-                    "Hood characterization writing to: " + outputPath.toAbsolutePath(),
-                    false);
-        } catch (IOException e) {
-            DriverStation.reportError(
-                    "Failed to open hood characterization file: " + outputPath + " (" + e.getMessage() + ")",
-                    e.getStackTrace());
-            finished = true;
-            stage = Stage.COMPLETE;
-        }
+        csvBuffer.append(
+                "move_index,label,start_commanded_angle_change_degrees,destination_commanded_angle_change_degrees,"
+                        + "start_actual_angle_degrees,destination_actual_angle_degrees,"
+                        + "initial_actual_angle_degrees,initial_velocity_degrees_per_second,"
+                        + "elapsed_seconds,current_commanded_angle_change_degrees,current_actual_angle_degrees,"
+                        + "current_velocity_degrees_per_second,position_error_degrees,within_tolerance,"
+                        + "velocity_settled,battery_voltage,first_in_tolerance_seconds,settle_seconds,timed_out")
+                .append('\n');
+        System.out.println("Hood characterization collecting data for: " + outputPath.toAbsolutePath());
     }
 
     @Override
@@ -123,6 +123,7 @@ public class HoodTimingCharacterization extends Command {
 
         MoveDefinition move = moveDefinitions.get(currentMoveIndex);
         double nowSeconds = Timer.getFPGATimestamp();
+        updateObservedState(nowSeconds);
 
         switch (stage) {
             case MOVE_TO_START -> handleMoveToStart(move, nowSeconds);
@@ -138,20 +139,25 @@ public class HoodTimingCharacterization extends Command {
 
     @Override
     public void end(boolean interrupted) {
-        if (writer != null) {
+        if (outputPath != null && csvBuffer.length() > 0) {
             try {
-                writer.flush();
-                writer.close();
+                Files.writeString(outputPath, csvBuffer.toString(), StandardCharsets.US_ASCII);
             } catch (IOException e) {
                 DriverStation.reportError(
-                        "Failed to close hood characterization file: " + outputPath + " (" + e.getMessage() + ")",
+                        "Failed to write hood characterization file: " + outputPath + " (" + e.getMessage() + ")",
                         e.getStackTrace());
             }
-            writer = null;
         }
 
         if (outputPath != null) {
-            String status = interrupted ? "interrupted" : "finished";
+            String status;
+            if (!interrupted) {
+                status = "finished";
+            } else if (DriverStation.isDisabled()) {
+                status = "interrupted because robot disabled";
+            } else {
+                status = "interrupted by cancellation or conflicting command";
+            }
             System.out.println("Hood characterization " + status + ": " + outputPath.toAbsolutePath());
             DriverStation.reportWarning(
                     "Hood characterization " + status + ": " + outputPath.toAbsolutePath(),
@@ -163,7 +169,17 @@ public class HoodTimingCharacterization extends Command {
         double startActualAngleDegrees = commandedChangeToActualAngle(move.startCommandedAngleChangeDegrees());
         verticalAim.setAngle(Degrees.of(startActualAngleDegrees));
 
-        if (!hasSettledAt(startActualAngleDegrees, nowSeconds)) {
+        if (skipStartSettleForCurrentMove
+                && isWithinTolerance(
+                        getCurrentActualAngleDegrees(),
+                        startActualAngleDegrees,
+                        START_READY_TOLERANCE_DEGREES)) {
+            skipStartSettleForCurrentMove = false;
+            beginMoveToDestination(move, nowSeconds);
+            return;
+        }
+
+        if (!hasSettledAt(startActualAngleDegrees, START_READY_TOLERANCE_DEGREES, nowSeconds)) {
             return;
         }
 
@@ -186,11 +202,7 @@ public class HoodTimingCharacterization extends Command {
             return;
         }
 
-        stage = Stage.MOVE_TO_DESTINATION;
-        resetMoveState();
-        moveStartTimeSeconds = nowSeconds;
-        initialActualAngleDegrees = getCurrentActualAngleDegrees();
-        initialVelocityDegreesPerSecond = getCurrentVelocityDegreesPerSecond();
+        beginMoveToDestination(move, nowSeconds);
     }
 
     private void handleMoveToDestination(MoveDefinition move, double nowSeconds) {
@@ -216,9 +228,21 @@ public class HoodTimingCharacterization extends Command {
 
         if (withinTolerance && Double.isNaN(firstInToleranceTimeSeconds)) {
             firstInToleranceTimeSeconds = elapsedSeconds;
+            System.out.println("*".repeat(300));
+            System.out.printf(
+                    Locale.US,
+                    "Hood characterization arrival %d/%d: %s | recorded=%.3f s | target=%.3f deg | current=%.3f deg | error=%.3f deg | velocity=%.3f deg/s%n",
+                    currentMoveIndex + 1,
+                    moveDefinitions.size(),
+                    move.label(),
+                    firstInToleranceTimeSeconds,
+                    destinationActualAngleDegrees,
+                    currentActualAngleDegrees,
+                    destinationActualAngleDegrees - currentActualAngleDegrees,
+                    currentVelocityDegreesPerSecond);
         }
 
-        if (hasSettledAt(destinationActualAngleDegrees, nowSeconds)) {
+        if (hasSettledAt(destinationActualAngleDegrees, DESTINATION_SETTLE_TOLERANCE_DEGREES, nowSeconds)) {
             timedOut = false;
             writeCurrentMove(move, elapsedSeconds);
             advanceToNextMove();
@@ -227,6 +251,21 @@ public class HoodTimingCharacterization extends Command {
 
         if (elapsedSeconds >= MAX_MOVE_DURATION_SECONDS) {
             timedOut = true;
+            System.out.printf(
+                    Locale.US,
+                    "Hood characterization timeout %d/%d: %s | target=%.3f deg | current=%.3f deg | error=%.3f deg | velocity=%.3f deg/s | blocker=%s | first=%s%n",
+                    currentMoveIndex + 1,
+                    moveDefinitions.size(),
+                    move.label(),
+                    destinationActualAngleDegrees,
+                    currentActualAngleDegrees,
+                    destinationActualAngleDegrees - currentActualAngleDegrees,
+                    currentVelocityDegreesPerSecond,
+                    getSettleBlockerDescription(
+                            destinationActualAngleDegrees,
+                            DESTINATION_SETTLE_TOLERANCE_DEGREES,
+                            nowSeconds),
+                    formatOptionalNumber(firstInToleranceTimeSeconds));
             writeCurrentMove(move, Double.NaN);
             advanceToNextMove();
         }
@@ -236,31 +275,34 @@ public class HoodTimingCharacterization extends Command {
         int moveIndex = 0;
         double stepDegrees = ShooterConstants.COMMANDED_HOOD_CHARACTERIZATION_STEP_DEGREES;
         double maxAngleChangeDegrees = ShooterConstants.COMMANDED_HOOD_CHARACTERIZATION_MAX_ANGLE_CHANGE_DEGREES;
+        double minAngleChangeDegrees = ShooterConstants.COMMANDED_HOOD_CHARACTERIZATION_MIN_ANGLE_CHANGE_DEGREES;
 
-        for (double highAngleChangeDegrees = ShooterConstants.COMMANDED_HOOD_CHARACTERIZATION_MIN_ANGLE_CHANGE_DEGREES;
+        for (double highAngleChangeDegrees = minAngleChangeDegrees;
                 highAngleChangeDegrees <= maxAngleChangeDegrees + 1e-9;
                 highAngleChangeDegrees += stepDegrees) {
             for (double lowAngleChangeDegrees = highAngleChangeDegrees;
                     lowAngleChangeDegrees <= maxAngleChangeDegrees + 1e-9;
                     lowAngleChangeDegrees += stepDegrees) {
+                if (Math.abs(lowAngleChangeDegrees - highAngleChangeDegrees) <= 1e-9) {
+                    continue;
+                }
+
                 moveDefinitions.add(new MoveDefinition(
                         moveIndex++,
                         String.format(Locale.US, "forward_%.1f_to_%.1f", highAngleChangeDegrees, lowAngleChangeDegrees),
                         highAngleChangeDegrees,
                         lowAngleChangeDegrees));
-                if (Math.abs(lowAngleChangeDegrees - highAngleChangeDegrees) > 1e-9) {
-                    moveDefinitions.add(new MoveDefinition(
-                            moveIndex++,
-                            String.format(Locale.US, "reverse_%.1f_to_%.1f", lowAngleChangeDegrees, highAngleChangeDegrees),
-                            lowAngleChangeDegrees,
-                            highAngleChangeDegrees));
-                }
+                moveDefinitions.add(new MoveDefinition(
+                        moveIndex++,
+                        String.format(Locale.US, "reverse_%.1f_to_%.1f", lowAngleChangeDegrees, highAngleChangeDegrees),
+                        lowAngleChangeDegrees,
+                        highAngleChangeDegrees));
             }
         }
     }
 
     private void writeCurrentMove(MoveDefinition move, double settleSeconds) {
-        if (writer == null) {
+        if (outputPath == null) {
             finished = true;
             stage = Stage.COMPLETE;
             return;
@@ -269,49 +311,56 @@ public class HoodTimingCharacterization extends Command {
         double startActualAngleDegrees = commandedChangeToActualAngle(move.startCommandedAngleChangeDegrees());
         double destinationActualAngleDegrees = commandedChangeToActualAngle(move.destinationCommandedAngleChangeDegrees());
 
-        try {
-            for (Sample sample : pendingSamples) {
-                writer.write(String.format(
-                        Locale.US,
-                        "%d,%s,%.3f,%.3f,%.3f,%.3f,%.3f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%b,%b,%.3f,%s,%s,%b",
-                        move.moveIndex(),
-                        move.label(),
-                        move.startCommandedAngleChangeDegrees(),
-                        move.destinationCommandedAngleChangeDegrees(),
-                        startActualAngleDegrees,
-                        destinationActualAngleDegrees,
-                        initialActualAngleDegrees,
-                        initialVelocityDegreesPerSecond,
-                        sample.elapsedSeconds(),
-                        sample.currentCommandedAngleChangeDegrees(),
-                        sample.currentActualAngleDegrees(),
-                        sample.currentVelocityDegreesPerSecond(),
-                        destinationActualAngleDegrees - sample.currentActualAngleDegrees(),
-                        sample.withinTolerance(),
-                        sample.velocitySettled(),
-                        sample.batteryVoltage(),
-                        formatOptionalNumber(firstInToleranceTimeSeconds),
-                        formatOptionalNumber(settleSeconds),
-                        timedOut));
-                writer.newLine();
-            }
-            writer.flush();
-            System.out.printf(
+        for (Sample sample : pendingSamples) {
+            csvBuffer.append(String.format(
                     Locale.US,
-                    "Hood characterization move %d/%d complete: %s first=%.3f s settle=%s timedOut=%b%n",
-                    currentMoveIndex + 1,
-                    moveDefinitions.size(),
+                    "%d,%s,%.3f,%.3f,%.3f,%.3f,%.3f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%b,%b,%.3f,%s,%s,%b%n",
+                    move.moveIndex(),
                     move.label(),
-                    firstInToleranceTimeSeconds,
+                    move.startCommandedAngleChangeDegrees(),
+                    move.destinationCommandedAngleChangeDegrees(),
+                    startActualAngleDegrees,
+                    destinationActualAngleDegrees,
+                    initialActualAngleDegrees,
+                    initialVelocityDegreesPerSecond,
+                    sample.elapsedSeconds(),
+                    sample.currentCommandedAngleChangeDegrees(),
+                    sample.currentActualAngleDegrees(),
+                    sample.currentVelocityDegreesPerSecond(),
+                    destinationActualAngleDegrees - sample.currentActualAngleDegrees(),
+                    sample.withinTolerance(),
+                    sample.velocitySettled(),
+                    sample.batteryVoltage(),
+                    formatOptionalNumber(firstInToleranceTimeSeconds),
                     formatOptionalNumber(settleSeconds),
-                    timedOut);
-        } catch (IOException e) {
-            DriverStation.reportError(
-                    "Failed to write hood characterization data: " + e.getMessage(),
-                    e.getStackTrace());
-            finished = true;
-            stage = Stage.COMPLETE;
+                    timedOut));
         }
+
+        System.out.printf(
+                Locale.US,
+                "Hood characterization move %d/%d complete: %s first=%.3f s settle=%s timedOut=%b%n",
+                currentMoveIndex + 1,
+                moveDefinitions.size(),
+                move.label(),
+                firstInToleranceTimeSeconds,
+                formatOptionalNumber(settleSeconds),
+                timedOut);
+    }
+
+    private void beginMoveToDestination(MoveDefinition move, double nowSeconds) {
+        stage = Stage.MOVE_TO_DESTINATION;
+        resetMoveState();
+        moveStartTimeSeconds = nowSeconds;
+        initialActualAngleDegrees = getCurrentActualAngleDegrees();
+        initialVelocityDegreesPerSecond = getCurrentVelocityDegreesPerSecond();
+        System.out.printf(
+                Locale.US,
+                "Hood characterization starting timed move %d/%d: %s | start actual=%.3f deg | destination actual=%.3f deg%n",
+                currentMoveIndex + 1,
+                moveDefinitions.size(),
+                move.label(),
+                initialActualAngleDegrees,
+                commandedChangeToActualAngle(move.destinationCommandedAngleChangeDegrees()));
     }
 
     private void advanceToNextMove() {
@@ -323,6 +372,13 @@ public class HoodTimingCharacterization extends Command {
             return;
         }
 
+        double nextStartActualAngleDegrees = commandedChangeToActualAngle(
+                moveDefinitions.get(currentMoveIndex).startCommandedAngleChangeDegrees());
+        skipStartSettleForCurrentMove = !timedOut
+                && isWithinTolerance(
+                        getCurrentActualAngleDegrees(),
+                        nextStartActualAngleDegrees,
+                        START_READY_TOLERANCE_DEGREES);
         stage = Stage.MOVE_TO_START;
         resetMoveState();
     }
@@ -337,12 +393,12 @@ public class HoodTimingCharacterization extends Command {
         pendingSamples.clear();
     }
 
-    private boolean hasSettledAt(double targetActualAngleDegrees, double nowSeconds) {
+    private boolean hasSettledAt(
+            double targetActualAngleDegrees,
+            double toleranceDegrees,
+            double nowSeconds) {
         double currentActualAngleDegrees = getCurrentActualAngleDegrees();
-        double currentVelocityDegreesPerSecond = getCurrentVelocityDegreesPerSecond();
-        boolean settledNow = isWithinTolerance(currentActualAngleDegrees, targetActualAngleDegrees)
-                && Math.abs(currentVelocityDegreesPerSecond)
-                        <= ShooterConstants.COMMANDED_HOOD_CHARACTERIZATION_STOPPED_VELOCITY_DEGREES_PER_SECOND;
+        boolean settledNow = Math.abs(currentActualAngleDegrees - targetActualAngleDegrees) <= toleranceDegrees;
         if (!settledNow) {
             settleWindowStartSeconds = Double.NaN;
             return false;
@@ -356,12 +412,32 @@ public class HoodTimingCharacterization extends Command {
                 >= ShooterConstants.COMMANDED_HOOD_CHARACTERIZATION_SETTLE_DWELL_SECONDS;
     }
 
+    private String getSettleBlockerDescription(
+            double targetActualAngleDegrees,
+            double toleranceDegrees,
+            double nowSeconds) {
+        double currentActualAngleDegrees = getCurrentActualAngleDegrees();
+        boolean positionReady = Math.abs(currentActualAngleDegrees - targetActualAngleDegrees) <= toleranceDegrees;
+        if (!positionReady) {
+            return "position";
+        }
+        if (Double.isNaN(settleWindowStartSeconds)) {
+            return "dwell";
+        }
+        double dwellRemainingSeconds = ShooterConstants.COMMANDED_HOOD_CHARACTERIZATION_SETTLE_DWELL_SECONDS
+                - (nowSeconds - settleWindowStartSeconds);
+        if (dwellRemainingSeconds > 0.0) {
+            return String.format(Locale.US, "dwell(%.3f s)", dwellRemainingSeconds);
+        }
+        return "none";
+    }
+
     private double getCurrentActualAngleDegrees() {
-        return verticalAim.getAngle().in(Degrees);
+        return currentActualAngleDegrees;
     }
 
     private double getCurrentVelocityDegreesPerSecond() {
-        return verticalAim.getVelocity().in(edu.wpi.first.units.Units.RotationsPerSecond) * 360.0;
+        return currentVelocityDegreesPerSecond;
     }
 
     private double getCurrentCommandedAngleChangeDegrees() {
@@ -373,8 +449,32 @@ public class HoodTimingCharacterization extends Command {
     }
 
     private boolean isWithinTolerance(double currentActualAngleDegrees, double targetActualAngleDegrees) {
+        return isWithinTolerance(
+                currentActualAngleDegrees,
+                targetActualAngleDegrees,
+                ShooterConstants.COMMANDED_HOOD_CHARACTERIZATION_ARRIVAL_TOLERANCE_DEGREES);
+    }
+
+    private boolean isWithinTolerance(
+            double currentActualAngleDegrees,
+            double targetActualAngleDegrees,
+            double toleranceDegrees) {
         return Math.abs(currentActualAngleDegrees - targetActualAngleDegrees)
-                <= ShooterConstants.COMMANDED_HOOD_CHARACTERIZATION_ARRIVAL_TOLERANCE_DEGREES;
+                <= toleranceDegrees;
+    }
+
+    private void updateObservedState(double nowSeconds) {
+        double observedAngleDegrees = verticalAim.getAngle().in(Degrees);
+        double deltaTimeSeconds = nowSeconds - previousSampleTimeSeconds;
+        if (deltaTimeSeconds > 1e-6) {
+            currentVelocityDegreesPerSecond =
+                    (observedAngleDegrees - previousActualAngleDegrees) / deltaTimeSeconds;
+        } else {
+            currentVelocityDegreesPerSecond = 0.0;
+        }
+        currentActualAngleDegrees = observedAngleDegrees;
+        previousActualAngleDegrees = observedAngleDegrees;
+        previousSampleTimeSeconds = nowSeconds;
     }
 
     private static String formatOptionalNumber(double value) {
