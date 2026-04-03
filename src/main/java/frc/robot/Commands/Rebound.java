@@ -43,7 +43,7 @@ public class Rebound extends Command {
     @Override
     public void execute() {
         horizontalAim.setAngle(Degrees.of(ShooterConstants.COMMANDED_REBOUND_HORIZONTAL_AIM_DEGREES));
-        verticalAim.setAngle(Degrees.of(ShooterConstants.COMMANDED_REBOUND_HOOD_ANGLE_DEGREES));
+        verticalAim.setAngle(verticalAim.getMinimumAngle());
         shooter.setCoupledIPS(ShooterConstants.COMMANDED_REBOUND_SHOOTER_SPEED_IPS);
         intakePosition.setAngle(Degrees.of(ShooterConstants.COMMANDED_REBOUND_INTAKE_ANGLE_DEGREES));
         intakeDrive.setIPS(ShooterConstants.COMMANDED_REBOUND_INTAKE_DRIVE_SPEED_IPS);

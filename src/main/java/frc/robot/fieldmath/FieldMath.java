@@ -113,7 +113,7 @@ public final class FieldMath {
     public static Translation2d getSnowblowTargetOnLine(
             Alliance alliance,
             double operatorRightX) {
-        double normalizedOperatorRightX = clamp(operatorRightX, -1.0, 1.0);
+         double normalizedOperatorRightX = clamp(operatorRightX, -1.0, 1.0);
         double interpolation = (normalizedOperatorRightX + 1.0) * 0.5;
         double rightWallDistanceMeters = lerp(
                 TARGET_SIDE_INSET_METERS,

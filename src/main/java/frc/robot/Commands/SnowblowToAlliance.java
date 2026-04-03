@@ -138,7 +138,8 @@ public class SnowblowToAlliance extends Command {
         Rotation2d preferredRobotHeading = getPreferredRobotHeading(futurePose.getRotation());
         Rotation2d robotHeadingTarget = preferredRobotHeading;
         if (updateShooterSolution(target, preferredRobotHeading)) {
-            robotHeadingTarget = Rotation2d.fromDegrees(movingShotSolution.getRobotHeadingDegrees());
+            robotHeadingTarget = Rotation2d.fromDegrees(
+                    mirrorLeftRightDegrees(movingShotSolution.getRobotHeadingDegrees()));
         }
         Rotation2d operatorPerspectiveHeadingTarget =
                 robotHeadingTarget.minus(drivetrain.getDriverPerspectiveForward());
@@ -215,14 +216,16 @@ public class SnowblowToAlliance extends Command {
             return false;
         }
 
-        double clampedTurretDeltaDegrees = clampTurretDeltaDegrees(movingShotSolution.getTurretDeltaDegrees());
+        double clampedTurretDeltaDegrees = clampTurretDeltaDegrees(
+                mirrorLeftRightDegrees(movingShotSolution.getTurretDeltaDegrees()));
+        double commandedRobotHeadingDegrees = mirrorLeftRightDegrees(movingShotSolution.getRobotHeadingDegrees());
         hoodAngleDegreesPublisher.set(movingShotSolution.getHoodAngleDegrees());
         shotExitVelocityIpsPublisher.set(movingShotSolution.getLauncherRelativeExitVelocityIps());
         fieldRelativeExitVelocityIpsPublisher.set(movingShotSolution.getFieldRelativeExitVelocityIps());
         flywheelCommandIpsPublisher.set(movingShotSolution.getFlywheelCommandIps());
         shotAzimuthDegreesPublisher.set(movingShotSolution.getShotAzimuthDegrees());
         turretDeltaDegreesPublisher.set(clampedTurretDeltaDegrees);
-        robotHeadingDegreesPublisher.set(movingShotSolution.getRobotHeadingDegrees());
+        robotHeadingDegreesPublisher.set(commandedRobotHeadingDegrees);
         verticalAim.setAngle(Degrees.of(movingShotSolution.getHoodAngleDegrees()));
         horizontalAim.setAngle(Degrees.of(clampedTurretDeltaDegrees));
         shooter.setCoupledIPS(movingShotSolution.getFlywheelCommandIps());
@@ -249,6 +252,10 @@ public class SnowblowToAlliance extends Command {
         return Math.max(
                 horizontalAim.getMinimumAngle().in(Degrees),
                 Math.min(horizontalAim.getMaximumAngle().in(Degrees), turretDeltaDegrees));
+    }
+
+    private static double mirrorLeftRightDegrees(double degrees) {
+        return -degrees;
     }
 
     private void publishTarget(Translation2d target) {

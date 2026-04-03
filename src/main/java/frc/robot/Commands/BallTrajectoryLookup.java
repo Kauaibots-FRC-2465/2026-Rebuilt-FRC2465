@@ -352,15 +352,16 @@ public final class BallTrajectoryLookup {
             double shotAzimuthRadians = Math.atan2(
                     launcherRelativeFieldVyIps,
                     launcherRelativeFieldVxIps);
+            // Horizontal aim public angle is positive toward robot-right, not mathematical CCW.
             double desiredTurretDeltaDegrees = Math.toDegrees(MathUtil.inputModulus(
-                    shotAzimuthRadians - baselineRobotHeadingRadians,
+                    baselineRobotHeadingRadians - shotAzimuthRadians,
                     -Math.PI,
                     Math.PI));
             double turretDeltaDegrees = Math.max(
                     minTurretAngleDegrees,
                     Math.min(maxTurretAngleDegrees, desiredTurretDeltaDegrees));
             double robotHeadingDegrees = Math.toDegrees(MathUtil.angleModulus(
-                    shotAzimuthRadians - Math.toRadians(turretDeltaDegrees)));
+                    shotAzimuthRadians + Math.toRadians(turretDeltaDegrees)));
 
             out.set(
                     hoodAngleDegrees,

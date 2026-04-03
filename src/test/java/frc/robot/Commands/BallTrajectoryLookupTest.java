@@ -1,6 +1,9 @@
 package frc.robot.Commands;
 
+import static edu.wpi.first.units.Units.Inches;
+import static edu.wpi.first.units.Units.Meters;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.ArrayList;
@@ -339,6 +342,38 @@ class BallTrajectoryLookupTest {
                 highestCommandSample.requiredExitVelocityIps(),
                 highestCommandSample.estimatedCommandIps(),
                 highestCommandSample.maximumHeightInches());
+    }
+
+    @Test
+    void movingShotTurretDeltaUsesRobotRightPositiveConvention() {
+        BallTrajectoryLookup.MovingShotSolution solution = new BallTrajectoryLookup.MovingShotSolution();
+
+        boolean solved = BallTrajectoryLookup.solveMovingShot(
+                ShooterConstants.FITTED_BALL_TRAJECTORY_LUT_MIN_HOOD_ANGLE_DEGREES,
+                ShooterConstants.FITTED_BALL_TRAJECTORY_LUT_MAX_HOOD_ANGLE_DEGREES,
+                ShooterConstants.COMMANDED_MOVING_SHOT_HOOD_SEARCH_STEP_DEGREES,
+                true,
+                0.0,
+                0.0,
+                Math.toRadians(10.0),
+                0.0,
+                0.0,
+                Inches.of(120.0).in(Meters),
+                0.0,
+                ShooterConstants.COMMANDED_SCORE_IN_HUB_TARGET_ELEVATION_INCHES,
+                ShooterConstants.COMMANDED_MAXIMUM_SHOOTING_HEIGHT_INCHES,
+                Math.toRadians(10.0),
+                -18.0,
+                18.0,
+                solution);
+
+        assertTrue(solved, "Expected a valid stationary moving-shot solution for sign-convention test");
+        assertEquals(10.0, solution.getTurretDeltaDegrees(), 0.25,
+                "Positive turret delta should mean robot-right, matching horizontal aim public angle");
+        assertEquals(10.0, solution.getRobotHeadingDegrees(), 0.25,
+                "Preferred heading should be preserved when the turret can absorb the full offset");
+        assertEquals(0.0, solution.getShotAzimuthDegrees(), 0.25,
+                "Target placed directly downfield should yield zero shot azimuth");
     }
 
     private static double findLandingDistanceInches(double hoodAngleDegrees, double exitVelocityIps) {
