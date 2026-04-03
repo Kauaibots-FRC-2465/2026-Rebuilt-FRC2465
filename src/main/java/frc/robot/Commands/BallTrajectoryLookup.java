@@ -214,6 +214,10 @@ public final class BallTrajectoryLookup {
                 targetElevationInches);
     }
 
+    public static void preloadLookupTables() {
+        getLookupTables();
+    }
+
     public static double getMaximumBallZElevationInches(
             double hoodAngleDegrees,
             double targetRadialDistanceInches,

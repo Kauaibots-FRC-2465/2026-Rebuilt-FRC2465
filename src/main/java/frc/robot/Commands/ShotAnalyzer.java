@@ -20,6 +20,8 @@ public final class ShotAnalyzer {
     private static final double FIT_MOVE_FRACTION = 0.10;
     private static final int FIT_PASS_COUNT = 100;
     private static final double FIXED_LINEAR_DRAG_PER_SECOND = 0.0;
+    private static final double ANGLE_FIT_LIMIT_DEGREES = 2.0;
+    private static final double ANGLE_FIT_INITIAL_STEP_DEGREES = 0.25;
     private static final double DRAG_LOG_REFERENCE_SPEED_IPS =
             ShooterConstants.FITTED_TRAJECTORY_DRAG_LOG_REFERENCE_SPEED_IPS;
     private static final double[] ANGLES_DEGREES = ShooterConstants.MEASURED_ACTUAL_ANGLES_DEGREES;
@@ -49,6 +51,7 @@ public final class ShotAnalyzer {
 
     private record SampleError(
             Sample sample,
+            double fittedAngleDegrees,
             double predictedDistanceInches,
             double errorInches) {
     }
@@ -65,7 +68,8 @@ public final class ShotAnalyzer {
 
     private record AngleFit(
             int angleIndex,
-            double angleDegrees,
+            double expectedAngleDegrees,
+            double fittedAngleDegrees,
             FitResult fitResult,
             List<Sample> samples) {
     }
@@ -74,6 +78,7 @@ public final class ShotAnalyzer {
             double dragCoefficientBasePerInch,
             double dragCoefficientLogSlopePerInch,
             double magnusPerSpinInch,
+            double[] fittedAnglesDegrees,
             double[] angleExitScales,
             double[] rowExitSpeedCorrectionsIps) {
     }
@@ -83,6 +88,7 @@ public final class ShotAnalyzer {
             double dragCoefficientBasePerInch,
             double dragCoefficientLogSlopePerInch,
             double magnusPerSpinInch,
+            double[] fittedAnglesDegrees,
             double[] angleExitScales,
             double[] rowExitSpeedCorrectionsIps,
             double totalObjectiveScore,
@@ -105,7 +111,9 @@ public final class ShotAnalyzer {
         System.out.println("Model: a = -g*zHat - kCd(|v|)*|v| * v + kMagnus * spinProxy * perp(v)");
         System.out.printf("where kCd(|v|) = kBase + kLog * ln(|v| / %.1f ips)%n",
                 DRAG_LOG_REFERENCE_SPEED_IPS);
-        System.out.println("Assumption: hood angle fixed from geometry, per-angle exit scales fixed from constants, linear drag fixed at zero, continuous log-speed Cd model, one global Magnus coefficient; each command row gets its own exit-speed correction");
+        System.out.printf(
+                "Assumption: hood angle fitted independently within +/- %.1f deg of measured geometry, per-angle exit scales fixed from constants, linear drag fixed at zero, continuous log-speed Cd model, one global Magnus coefficient; each command row gets its own exit-speed correction%n",
+                ANGLE_FIT_LIMIT_DEGREES);
         System.out.printf("Coupled fit: %d passes, each fitted variable moves %.2f of the way toward its current best target per pass%n",
                 FIT_PASS_COUNT,
                 FIT_MOVE_FRACTION);
@@ -136,7 +144,7 @@ public final class ShotAnalyzer {
                 "Largest error below 150 in: %.3f in at range %.3f in, hood angle %.1f deg (command %.0f ips, predicted %.3f in, error %+,.3f in)%n",
                 Math.abs(worstBelow150.errorInches()),
                 worstBelow150.sample().measuredDistanceInches(),
-                worstBelow150.sample().angleDegrees(),
+                worstBelow150.fittedAngleDegrees(),
                 worstBelow150.sample().commandSpeedIps(),
                 worstBelow150.predictedDistanceInches(),
                 worstBelow150.errorInches());
@@ -144,7 +152,7 @@ public final class ShotAnalyzer {
                 "Largest error overall: %.3f in at range %.3f in, hood angle %.1f deg (command %.0f ips, predicted %.3f in, error %+,.3f in)%n",
                 Math.abs(worstOverall.errorInches()),
                 worstOverall.sample().measuredDistanceInches(),
-                worstOverall.sample().angleDegrees(),
+                worstOverall.fittedAngleDegrees(),
                 worstOverall.sample().commandSpeedIps(),
                 worstOverall.predictedDistanceInches(),
                 worstOverall.errorInches());
@@ -155,8 +163,10 @@ public final class ShotAnalyzer {
             SampleError worst = fit.worstSampleError();
 
             System.out.printf(
-                    "Angle %.1f deg | samples %d | weight sum %.3f | exit scale %.6f | weighted RMSE %.3f in | max error %.3f in%n",
-                    angleFit.angleDegrees(),
+                    "Angle expected %.1f deg -> fitted %.3f deg (delta %+,.3f) | samples %d | weight sum %.3f | exit scale %.6f | weighted RMSE %.3f in | max error %.3f in%n",
+                    angleFit.expectedAngleDegrees(),
+                    angleFit.fittedAngleDegrees(),
+                    angleFit.fittedAngleDegrees() - angleFit.expectedAngleDegrees(),
                     angleFit.samples().size(),
                     fit.weightSum(),
                     fit.exitVelocityScaleFactor(),
@@ -179,7 +189,7 @@ public final class ShotAnalyzer {
                         sampleError -> -Math.abs(sampleError.errorInches())))
                 .forEach(sampleError -> System.out.printf(
                         "hood angle %.1f deg | range %.3f in | command %.0f ips | exit %.3f ips | predicted %.3f in | error %+,.3f in | abs %.3f in | weight %.3f%n",
-                        sampleError.sample().angleDegrees(),
+                        sampleError.fittedAngleDegrees(),
                         sampleError.sample().measuredDistanceInches(),
                         sampleError.sample().commandSpeedIps(),
                         sampleError.sample().shotExitSpeedIps(),
@@ -278,10 +288,12 @@ public final class ShotAnalyzer {
                 0.001200000,
                 0.000150000,
                 0.000001200,
+                ANGLES_DEGREES.clone(),
                 ANGLE_EXIT_SCALES.clone(),
                 new double[COMMAND_SPEEDS_IPS.length]);
 
         for (int pass = 0; pass < FIT_PASS_COUNT; pass++) {
+            double[] targetAngles = findBestAngles(samplesByAngle, currentState);
             double targetDragBase = findBestDragCoefficientBase(samplesByAngle, currentState);
             double targetDragLogSlope = findBestDragCoefficientLogSlope(samplesByAngle, currentState);
             double targetMagnus = findBestMagnus(samplesByAngle, currentState);
@@ -289,6 +301,7 @@ public final class ShotAnalyzer {
 
             currentState = moveToward(
                     currentState,
+                    targetAngles,
                     targetDragBase,
                     targetDragLogSlope,
                     targetMagnus,
@@ -300,10 +313,19 @@ public final class ShotAnalyzer {
 
     private static FitState moveToward(
             FitState currentState,
+            double[] targetFittedAnglesDegrees,
             double targetDragCoefficientBasePerInch,
             double targetDragCoefficientLogSlopePerInch,
             double targetMagnusPerSpinInch,
             double[] targetRowExitCorrectionsIps) {
+        double[] updatedAnglesDegrees = currentState.fittedAnglesDegrees().clone();
+        for (int i = 0; i < updatedAnglesDegrees.length; i++) {
+            updatedAnglesDegrees[i] = moveToward(
+                    updatedAnglesDegrees[i],
+                    clampAngleFitToExpected(i, targetFittedAnglesDegrees[i]),
+                    FIT_MOVE_FRACTION);
+        }
+
         double[] updatedRowCorrections = currentState.rowExitSpeedCorrectionsIps().clone();
         for (int i = 0; i < updatedRowCorrections.length; i++) {
             updatedRowCorrections[i] = moveToward(
@@ -325,6 +347,7 @@ public final class ShotAnalyzer {
                         currentState.magnusPerSpinInch(),
                         targetMagnusPerSpinInch,
                         FIT_MOVE_FRACTION),
+                updatedAnglesDegrees,
                 currentState.angleExitScales().clone(),
                 updatedRowCorrections);
     }
@@ -339,6 +362,7 @@ public final class ShotAnalyzer {
         double bestDragBase = currentState.dragCoefficientBasePerInch();
         double bestScore = scoreGlobalModel(
                 samplesByAngle,
+                currentState.fittedAnglesDegrees(),
                 currentState.angleExitScales(),
                 currentState.rowExitSpeedCorrectionsIps(),
                 bestDragBase,
@@ -350,6 +374,7 @@ public final class ShotAnalyzer {
                 candidateDragBase += 0.00015) {
             double candidateScore = scoreGlobalModel(
                     samplesByAngle,
+                    currentState.fittedAnglesDegrees(),
                     currentState.angleExitScales(),
                     currentState.rowExitSpeedCorrectionsIps(),
                     candidateDragBase,
@@ -367,6 +392,7 @@ public final class ShotAnalyzer {
                 double candidateDragBase = Math.max(0.0, bestDragBase + offset * refinementStep);
                 double candidateScore = scoreGlobalModel(
                         samplesByAngle,
+                        currentState.fittedAnglesDegrees(),
                         currentState.angleExitScales(),
                         currentState.rowExitSpeedCorrectionsIps(),
                         candidateDragBase,
@@ -389,6 +415,7 @@ public final class ShotAnalyzer {
         double bestDragLogSlope = currentState.dragCoefficientLogSlopePerInch();
         double bestScore = scoreGlobalModel(
                 samplesByAngle,
+                currentState.fittedAnglesDegrees(),
                 currentState.angleExitScales(),
                 currentState.rowExitSpeedCorrectionsIps(),
                 currentState.dragCoefficientBasePerInch(),
@@ -400,6 +427,7 @@ public final class ShotAnalyzer {
                 candidateDragLogSlope += 0.00010) {
             double candidateScore = scoreGlobalModel(
                     samplesByAngle,
+                    currentState.fittedAnglesDegrees(),
                     currentState.angleExitScales(),
                     currentState.rowExitSpeedCorrectionsIps(),
                     currentState.dragCoefficientBasePerInch(),
@@ -417,6 +445,7 @@ public final class ShotAnalyzer {
                 double candidateDragLogSlope = bestDragLogSlope + offset * refinementStep;
                 double candidateScore = scoreGlobalModel(
                         samplesByAngle,
+                        currentState.fittedAnglesDegrees(),
                         currentState.angleExitScales(),
                         currentState.rowExitSpeedCorrectionsIps(),
                         currentState.dragCoefficientBasePerInch(),
@@ -439,6 +468,7 @@ public final class ShotAnalyzer {
         double bestMagnus = currentState.magnusPerSpinInch();
         double bestScore = scoreGlobalModel(
                 samplesByAngle,
+                currentState.fittedAnglesDegrees(),
                 currentState.angleExitScales(),
                 currentState.rowExitSpeedCorrectionsIps(),
                 currentState.dragCoefficientBasePerInch(),
@@ -450,6 +480,7 @@ public final class ShotAnalyzer {
                 candidateMagnus += 0.00000025) {
             double candidateScore = scoreGlobalModel(
                     samplesByAngle,
+                    currentState.fittedAnglesDegrees(),
                     currentState.angleExitScales(),
                     currentState.rowExitSpeedCorrectionsIps(),
                     currentState.dragCoefficientBasePerInch(),
@@ -467,6 +498,7 @@ public final class ShotAnalyzer {
                 double candidateMagnus = Math.max(0.0, bestMagnus + offset * refinementStep);
                 double candidateScore = scoreGlobalModel(
                         samplesByAngle,
+                        currentState.fittedAnglesDegrees(),
                         currentState.angleExitScales(),
                         currentState.rowExitSpeedCorrectionsIps(),
                         currentState.dragCoefficientBasePerInch(),
@@ -483,6 +515,25 @@ public final class ShotAnalyzer {
         return bestMagnus;
     }
 
+    private static double[] findBestAngles(
+            List<List<Sample>> samplesByAngle,
+            FitState currentState) {
+        double[] bestAnglesDegrees = currentState.fittedAnglesDegrees().clone();
+        for (int angleIndex = 0; angleIndex < bestAnglesDegrees.length; angleIndex++) {
+            bestAnglesDegrees[angleIndex] = findBestAngle(
+                    samplesByAngle.get(angleIndex),
+                    angleIndex,
+                    currentState.fittedAnglesDegrees()[angleIndex],
+                    currentState.angleExitScales()[angleIndex],
+                    currentState.rowExitSpeedCorrectionsIps(),
+                    FIXED_LINEAR_DRAG_PER_SECOND,
+                    currentState.dragCoefficientBasePerInch(),
+                    currentState.dragCoefficientLogSlopePerInch(),
+                    currentState.magnusPerSpinInch());
+        }
+        return bestAnglesDegrees;
+    }
+
     private static double[] findBestRowCorrections(
             List<List<Sample>> samplesByRow,
             FitState currentState) {
@@ -490,6 +541,7 @@ public final class ShotAnalyzer {
         for (int rowIndex = 0; rowIndex < bestRowCorrections.length; rowIndex++) {
             bestRowCorrections[rowIndex] = findBestRowCorrection(
                     samplesByRow.get(rowIndex),
+                    currentState.fittedAnglesDegrees(),
                     currentState.angleExitScales(),
                     currentState.rowExitSpeedCorrectionsIps(),
                     FIXED_LINEAR_DRAG_PER_SECOND,
@@ -512,13 +564,19 @@ public final class ShotAnalyzer {
             List<Sample> samples = samplesByAngle.get(angleIndex);
             FitResult fit = evaluateAngleFit(
                     samples,
+                    fitState.fittedAnglesDegrees()[angleIndex],
                     fitState.angleExitScales()[angleIndex],
                     fitState.rowExitSpeedCorrectionsIps(),
                     FIXED_LINEAR_DRAG_PER_SECOND,
                     fitState.dragCoefficientBasePerInch(),
                     fitState.dragCoefficientLogSlopePerInch(),
                     fitState.magnusPerSpinInch());
-            angleFits.add(new AngleFit(angleIndex, ANGLES_DEGREES[angleIndex], fit, samples));
+            angleFits.add(new AngleFit(
+                    angleIndex,
+                    ANGLES_DEGREES[angleIndex],
+                    fitState.fittedAnglesDegrees()[angleIndex],
+                    fit,
+                    samples));
             totalObjectiveScore += fit.objectiveScore();
 
             if (worstSampleError == null
@@ -543,6 +601,7 @@ public final class ShotAnalyzer {
                 fitState.dragCoefficientBasePerInch(),
                 fitState.dragCoefficientLogSlopePerInch(),
                 fitState.magnusPerSpinInch(),
+                fitState.fittedAnglesDegrees().clone(),
                 fitState.angleExitScales().clone(),
                 fitState.rowExitSpeedCorrectionsIps().clone(),
                 totalObjectiveScore,
@@ -553,6 +612,7 @@ public final class ShotAnalyzer {
 
     private static double scoreGlobalModel(
             List<List<Sample>> samplesByAngle,
+            double[] fittedAnglesDegrees,
             double[] angleScales,
             double[] rowExitSpeedCorrectionsIps,
             double dragCoefficientBasePerInch,
@@ -562,6 +622,7 @@ public final class ShotAnalyzer {
         for (int angleIndex = 0; angleIndex < samplesByAngle.size(); angleIndex++) {
             totalObjectiveScore += scoreSamples(
                     samplesByAngle.get(angleIndex),
+                    fittedAnglesDegrees[angleIndex],
                     angleScales[angleIndex],
                     rowExitSpeedCorrectionsIps,
                     FIXED_LINEAR_DRAG_PER_SECOND,
@@ -572,8 +633,78 @@ public final class ShotAnalyzer {
         return totalObjectiveScore;
     }
 
+    private static double findBestAngle(
+            List<Sample> samples,
+            int angleIndex,
+            double currentAngleDegrees,
+            double exitVelocityScaleFactor,
+            double[] rowExitSpeedCorrectionsIps,
+            double linearDragPerSecond,
+            double dragCoefficientBasePerInch,
+            double dragCoefficientLogSlopePerInch,
+            double magnusPerSpinInch) {
+        double expectedAngleDegrees = ANGLES_DEGREES[angleIndex];
+        double minAngleDegrees = expectedAngleDegrees - ANGLE_FIT_LIMIT_DEGREES;
+        double maxAngleDegrees = expectedAngleDegrees + ANGLE_FIT_LIMIT_DEGREES;
+        double bestAngleDegrees = clampAngle(currentAngleDegrees, minAngleDegrees, maxAngleDegrees);
+        double bestScore = scoreSamples(
+                samples,
+                bestAngleDegrees,
+                exitVelocityScaleFactor,
+                rowExitSpeedCorrectionsIps,
+                linearDragPerSecond,
+                dragCoefficientBasePerInch,
+                dragCoefficientLogSlopePerInch,
+                magnusPerSpinInch);
+
+        for (double candidateAngleDegrees = minAngleDegrees;
+                candidateAngleDegrees <= maxAngleDegrees + 1e-9;
+                candidateAngleDegrees += ANGLE_FIT_INITIAL_STEP_DEGREES) {
+            double candidateScore = scoreSamples(
+                    samples,
+                    candidateAngleDegrees,
+                    exitVelocityScaleFactor,
+                    rowExitSpeedCorrectionsIps,
+                    linearDragPerSecond,
+                    dragCoefficientBasePerInch,
+                    dragCoefficientLogSlopePerInch,
+                    magnusPerSpinInch);
+            if (candidateScore < bestScore) {
+                bestScore = candidateScore;
+                bestAngleDegrees = candidateAngleDegrees;
+            }
+        }
+
+        double refinementStepDegrees = ANGLE_FIT_INITIAL_STEP_DEGREES * 0.5;
+        for (int refinement = 0; refinement < 6; refinement++) {
+            for (int offset = -3; offset <= 3; offset++) {
+                double candidateAngleDegrees = clampAngle(
+                        bestAngleDegrees + offset * refinementStepDegrees,
+                        minAngleDegrees,
+                        maxAngleDegrees);
+                double candidateScore = scoreSamples(
+                        samples,
+                        candidateAngleDegrees,
+                        exitVelocityScaleFactor,
+                        rowExitSpeedCorrectionsIps,
+                        linearDragPerSecond,
+                        dragCoefficientBasePerInch,
+                        dragCoefficientLogSlopePerInch,
+                        magnusPerSpinInch);
+                if (candidateScore < bestScore) {
+                    bestScore = candidateScore;
+                    bestAngleDegrees = candidateAngleDegrees;
+                }
+            }
+            refinementStepDegrees *= 0.5;
+        }
+
+        return bestAngleDegrees;
+    }
+
     private static double findBestRowCorrection(
             List<Sample> samples,
+            double[] fittedAnglesDegrees,
             double[] angleScales,
             double[] rowExitSpeedCorrectionsIps,
             double linearDragPerSecond,
@@ -585,6 +716,7 @@ public final class ShotAnalyzer {
                 : rowExitSpeedCorrectionsIps[samples.get(0).commandSpeedIndex()];
         double bestScore = scoreSamplesForRow(
                 samples,
+                fittedAnglesDegrees,
                 angleScales,
                 rowExitSpeedCorrectionsIps,
                 bestCorrectionIps,
@@ -598,6 +730,7 @@ public final class ShotAnalyzer {
                 candidateCorrectionIps += 5.0) {
             double candidateScore = scoreSamplesForRow(
                     samples,
+                    fittedAnglesDegrees,
                     angleScales,
                     rowExitSpeedCorrectionsIps,
                     candidateCorrectionIps,
@@ -616,6 +749,7 @@ public final class ShotAnalyzer {
             bestCorrectionIps = refineRowCorrection(
                     samples,
                     bestCorrectionIps,
+                    fittedAnglesDegrees,
                     angleScales,
                     rowExitSpeedCorrectionsIps,
                     rowCorrectionStepIps,
@@ -632,6 +766,7 @@ public final class ShotAnalyzer {
     private static double refineRowCorrection(
             List<Sample> samples,
             double currentCorrectionIps,
+            double[] fittedAnglesDegrees,
             double[] angleScales,
             double[] rowExitSpeedCorrectionsIps,
             double rowCorrectionStepIps,
@@ -642,6 +777,7 @@ public final class ShotAnalyzer {
         double bestCorrectionIps = currentCorrectionIps;
         double bestScore = scoreSamplesForRow(
                 samples,
+                fittedAnglesDegrees,
                 angleScales,
                 rowExitSpeedCorrectionsIps,
                 currentCorrectionIps,
@@ -654,6 +790,7 @@ public final class ShotAnalyzer {
             double candidateCorrectionIps = currentCorrectionIps + correctionOffset * rowCorrectionStepIps;
             double candidateScore = scoreSamplesForRow(
                     samples,
+                    fittedAnglesDegrees,
                     angleScales,
                     rowExitSpeedCorrectionsIps,
                     candidateCorrectionIps,
@@ -672,6 +809,7 @@ public final class ShotAnalyzer {
 
     private static FitResult evaluateAngleFit(
             List<Sample> samples,
+            double angleDegrees,
             double exitVelocityScaleFactor,
             double[] rowExitSpeedCorrectionsIps,
             double linearDragPerSecond,
@@ -680,6 +818,7 @@ public final class ShotAnalyzer {
             double magnusPerSpinInch) {
         EvaluationSummary evaluation = evaluateSamples(
                 samples,
+                angleDegrees,
                 exitVelocityScaleFactor,
                 rowExitSpeedCorrectionsIps,
                 linearDragPerSecond,
@@ -698,6 +837,7 @@ public final class ShotAnalyzer {
 
     private static double scoreSamples(
             List<Sample> samples,
+            double angleDegrees,
             double exitVelocityScaleFactor,
             double[] rowExitSpeedCorrectionsIps,
             double linearDragPerSecond,
@@ -718,7 +858,7 @@ public final class ShotAnalyzer {
                     correctedShotExitSpeedIps,
                     sample.commandSpeedIps(),
                     effectiveExitSpeedScaleFactor,
-                    sample.angleDegrees(),
+                    angleDegrees,
                     linearDragPerSecond,
                     dragCoefficientBasePerInch,
                     dragCoefficientLogSlopePerInch,
@@ -740,6 +880,7 @@ public final class ShotAnalyzer {
 
     private static EvaluationSummary evaluateSamples(
             List<Sample> samples,
+            double angleDegrees,
             double exitVelocityScaleFactor,
             double[] rowExitSpeedCorrectionsIps,
             double linearDragPerSecond,
@@ -762,7 +903,7 @@ public final class ShotAnalyzer {
                     correctedShotExitSpeedIps,
                     sample.commandSpeedIps(),
                     effectiveExitSpeedScaleFactor,
-                    sample.angleDegrees(),
+                    angleDegrees,
                     linearDragPerSecond,
                     dragCoefficientBasePerInch,
                     dragCoefficientLogSlopePerInch,
@@ -777,7 +918,7 @@ public final class ShotAnalyzer {
             weightedSquaredErrorSum += sample.weight() * errorInches * errorInches;
             weightSum += sample.weight();
 
-            SampleError sampleError = new SampleError(sample, predictedDistanceInches, errorInches);
+            SampleError sampleError = new SampleError(sample, angleDegrees, predictedDistanceInches, errorInches);
             sampleErrors.add(sampleError);
 
             if (absErrorInches > maxAbsError) {
@@ -799,6 +940,7 @@ public final class ShotAnalyzer {
 
     private static double scoreSamplesForRow(
             List<Sample> samples,
+            double[] fittedAnglesDegrees,
             double[] angleScales,
             double[] rowExitSpeedCorrectionsIps,
             double candidateRowCorrectionIps,
@@ -826,7 +968,7 @@ public final class ShotAnalyzer {
                     correctedShotExitSpeedIps,
                     sample.commandSpeedIps(),
                     effectiveExitSpeedScaleFactor,
-                    sample.angleDegrees(),
+                    fittedAnglesDegrees[sample.angleIndex()],
                     linearDragPerSecond,
                     dragCoefficientBasePerInch,
                     dragCoefficientLogSlopePerInch,
@@ -848,6 +990,7 @@ public final class ShotAnalyzer {
 
     private static EvaluationSummary evaluateSamplesForRow(
             List<Sample> samples,
+            double[] fittedAnglesDegrees,
             double[] angleScales,
             double[] rowExitSpeedCorrectionsIps,
             double candidateRowCorrectionIps,
@@ -877,7 +1020,7 @@ public final class ShotAnalyzer {
                     correctedShotExitSpeedIps,
                     sample.commandSpeedIps(),
                     effectiveExitSpeedScaleFactor,
-                    sample.angleDegrees(),
+                    fittedAnglesDegrees[sample.angleIndex()],
                     linearDragPerSecond,
                     dragCoefficientBasePerInch,
                     dragCoefficientLogSlopePerInch,
@@ -892,7 +1035,11 @@ public final class ShotAnalyzer {
             weightedSquaredErrorSum += sample.weight() * errorInches * errorInches;
             weightSum += sample.weight();
 
-            SampleError sampleError = new SampleError(sample, predictedDistanceInches, errorInches);
+            SampleError sampleError = new SampleError(
+                    sample,
+                    fittedAnglesDegrees[sample.angleIndex()],
+                    predictedDistanceInches,
+                    errorInches);
             sampleErrors.add(sampleError);
 
             if (absErrorInches > maxAbsError) {
@@ -990,6 +1137,7 @@ public final class ShotAnalyzer {
         System.out.printf("  FITTED_TRAJECTORY_MAGNUS_PER_SPIN_INCH = %.9f%n",
                 globalFit.magnusPerSpinInch());
         System.out.printf("  MEASURED_ACTUAL_ANGLES_DEGREES = %s%n", formatArray(ANGLES_DEGREES, 3));
+        System.out.printf("  FITTED_ACTUAL_ANGLES_DEGREES = %s%n", formatArray(globalFit.fittedAnglesDegrees(), 3));
         System.out.printf("  FITTED_COMMAND_ANGLE_EXIT_SCALES = %s%n", formatAngleScales(globalFit));
         System.out.printf("  derivedCommandTableSpeedsIps = %s%n", formatArray(COMMAND_SPEEDS_IPS, 0));
         System.out.printf("  derivedTableBallExitIps = %s%n", formatArray(SHOT_EXIT_SPEEDS_IPS, 3));
@@ -1024,6 +1172,8 @@ public final class ShotAnalyzer {
                 globalFit.dragCoefficientLogSlopePerInch());
         System.out.printf("static final double FITTED_TRAJECTORY_MAGNUS_PER_SPIN_INCH = %.9f;%n",
                 globalFit.magnusPerSpinInch());
+        System.out.printf("static final double[] FITTED_ACTUAL_ANGLES_DEGREES = %s;%n",
+                formatJavaArray(globalFit.fittedAnglesDegrees(), 6));
         System.out.printf("static final double[] FITTED_COMMAND_ANGLE_EXIT_SCALES = %s;%n",
                 formatJavaArray(globalFit.angleExitScales(), 6));
         System.out.printf("static final double[] FITTED_BALL_EXIT_IPS = %s;%n",
@@ -1061,5 +1211,16 @@ public final class ShotAnalyzer {
         }
         builder.append('}');
         return builder.toString();
+    }
+
+    private static double clampAngleFitToExpected(int angleIndex, double candidateAngleDegrees) {
+        return clampAngle(
+                candidateAngleDegrees,
+                ANGLES_DEGREES[angleIndex] - ANGLE_FIT_LIMIT_DEGREES,
+                ANGLES_DEGREES[angleIndex] + ANGLE_FIT_LIMIT_DEGREES);
+    }
+
+    private static double clampAngle(double value, double min, double max) {
+        return Math.max(min, Math.min(max, value));
     }
 }

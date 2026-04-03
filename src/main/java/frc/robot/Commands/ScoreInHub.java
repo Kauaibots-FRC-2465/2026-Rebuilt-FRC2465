@@ -59,7 +59,6 @@ public class ScoreInHub extends Command {
     private final double[] targetFieldPose = new double[3];
     private final double[] futureFieldPose = new double[3];
     private final double[] futureFieldVelocity = new double[3];
-    private Translation2d lastFieldRelativeDriveDirection = new Translation2d();
 
     public ScoreInHub(
             CommandSwerveDrivetrain drivetrain,
@@ -112,7 +111,6 @@ public class ScoreInHub extends Command {
             return;
         }
 
-        updateLastDriveDirection(fieldCentricRequest);
         if (!poseEstimator.getPredictedFusedState(
                 ShooterConstants.COMMANDED_SHOOTER_LOOKAHEAD_SECONDS,
                 futureState)) {
@@ -127,9 +125,9 @@ public class ScoreInHub extends Command {
         Translation2d target = getTarget();
         publishTarget(target);
 
-        Rotation2d preferredRobotHeading = getPreferredRobotHeading(
-                Rotation2d.fromRadians(futureState.headingRadians));
-        Rotation2d robotHeadingTarget = preferredRobotHeading;
+        Rotation2d targetFacingHeading = getTargetFacingHeading(target);
+        Rotation2d preferredRobotHeading = targetFacingHeading;
+        Rotation2d robotHeadingTarget = targetFacingHeading;
         if (updateShooterSolution(target, preferredRobotHeading)) {
             robotHeadingTarget = Rotation2d.fromDegrees(movingShotSolution.getRobotHeadingDegrees());
         }
@@ -219,20 +217,10 @@ public class ScoreInHub extends Command {
         return true;
     }
 
-    private void updateLastDriveDirection(SwerveRequest.FieldCentric fieldCentricRequest) {
-        Translation2d fieldRelativeVelocity = new Translation2d(
-                fieldCentricRequest.VelocityX,
-                fieldCentricRequest.VelocityY).rotateBy(drivetrain.getDriverPerspectiveForward());
-        lastFieldRelativeDriveDirection = FieldMath.updateLastDriveDirection(
-                fieldRelativeVelocity,
-                lastFieldRelativeDriveDirection);
-    }
-
-    private Rotation2d getPreferredRobotHeading(Rotation2d fallbackHeading) {
-        if (lastFieldRelativeDriveDirection.getNorm() > 1e-9) {
-            return lastFieldRelativeDriveDirection.getAngle();
-        }
-        return fallbackHeading;
+    private Rotation2d getTargetFacingHeading(Translation2d target) {
+        return new Rotation2d(
+                target.getX() - futureState.xMeters,
+                target.getY() - futureState.yMeters);
     }
 
     private double clampTurretDeltaDegrees(double turretDeltaDegrees) {

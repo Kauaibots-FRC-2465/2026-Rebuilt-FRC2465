@@ -7,8 +7,10 @@ package frc.robot;
 import com.ctre.phoenix6.HootAutoReplay;
 
 import edu.wpi.first.wpilibj.TimedRobot;
+import edu.wpi.first.wpilibj.DriverStation;
 import edu.wpi.first.wpilibj2.command.Command;
 import edu.wpi.first.wpilibj2.command.CommandScheduler;
+import frc.robot.Commands.BallTrajectoryLookup;
 import frc.robot.utility.ThrottlePrint;
 
 public class Robot extends TimedRobot {
@@ -23,6 +25,17 @@ public class Robot extends TimedRobot {
 
     public Robot() {
         m_robotContainer = new RobotContainer();
+    }
+
+    @Override
+    public void robotInit() {
+        try {
+            BallTrajectoryLookup.preloadLookupTables();
+        } catch (RuntimeException e) {
+            DriverStation.reportError(
+                    "Failed to preload ball trajectory LUT during robot startup: " + e.getMessage(),
+                    e.getStackTrace());
+        }
     }
 
     @Override
