@@ -9,7 +9,7 @@ public final class ShooterConstants {
         200.0, 240.0, 280.0, 320.0, 360.0, 400.0, 440.0, 480.0,
         520.0, 560.0, 600.0, 640.0, 680.0, 720.0, 760.0, 800.0
     };
-    static final double COMMANDED_SHOOTER_LOOKAHEAD_SECONDS = 0.05;
+    static final double COMMANDED_SHOOTER_LOOKAHEAD_SECONDS = 0.0;
     static final double COMMANDED_SNOWBLOW_TARGET_ELEVATION_INCHES = 36.0;
     static final double COMMANDED_MOVING_SHOT_HOOD_SEARCH_STEP_DEGREES = 2.5;
     static final double COMMANDED_MAXIMUM_SHOOTING_HEIGHT_INCHES = 120.0;
