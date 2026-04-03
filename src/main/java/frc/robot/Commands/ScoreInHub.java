@@ -9,6 +9,7 @@ import java.util.function.Supplier;
 
 import com.ctre.phoenix6.swerve.SwerveRequest;
 
+import edu.wpi.first.math.geometry.Pose2d;
 import edu.wpi.first.math.geometry.Rotation2d;
 import edu.wpi.first.math.geometry.Translation2d;
 import edu.wpi.first.networktables.BooleanPublisher;
@@ -59,6 +60,7 @@ public class ScoreInHub extends Command {
     private final double[] targetFieldPose = new double[3];
     private final double[] futureFieldPose = new double[3];
     private final double[] futureFieldVelocity = new double[3];
+    private Translation2d lastFieldRelativeDriveDirection = new Translation2d();
 
     public ScoreInHub(
             CommandSwerveDrivetrain drivetrain,
@@ -90,7 +92,8 @@ public class ScoreInHub extends Command {
         futureVelocityPublisher = scoreTable.getDoubleArrayTopic("futureVelocity").publish();
         validSolutionPublisher = scoreTable.getBooleanTopic("validSolution").publish();
         fieldTypePublisher = scoreTable.getStringTopic(".type").publish();
-        fieldTypePublisher.set("Field2d");
+        // Debug dashboard telemetry disabled to reduce NetworkTables traffic.
+        // fieldTypePublisher.set("Field2d");
 
         facingAngleDrive.withHeadingPID(5.0, 0.0, 0.0);
         facingAngleDrive.HeadingController.enableContinuousInput(-Math.PI, Math.PI);
@@ -111,6 +114,7 @@ public class ScoreInHub extends Command {
             return;
         }
 
+        updateLastDriveDirection(fieldCentricRequest);
         if (!poseEstimator.getPredictedFusedState(
                 ShooterConstants.COMMANDED_SHOOTER_LOOKAHEAD_SECONDS,
                 futureState)) {
@@ -122,12 +126,15 @@ public class ScoreInHub extends Command {
         }
         publishFutureState();
 
+        Pose2d futurePose = new Pose2d(
+                futureState.xMeters,
+                futureState.yMeters,
+                Rotation2d.fromRadians(futureState.headingRadians));
         Translation2d target = getTarget();
         publishTarget(target);
 
-        Rotation2d targetFacingHeading = getTargetFacingHeading(target);
-        Rotation2d preferredRobotHeading = targetFacingHeading;
-        Rotation2d robotHeadingTarget = targetFacingHeading;
+        Rotation2d preferredRobotHeading = getPreferredRobotHeading(futurePose.getRotation());
+        Rotation2d robotHeadingTarget = preferredRobotHeading;
         if (updateShooterSolution(target, preferredRobotHeading)) {
             robotHeadingTarget = Rotation2d.fromDegrees(movingShotSolution.getRobotHeadingDegrees());
         }
@@ -186,41 +193,52 @@ public class ScoreInHub extends Command {
                 horizontalAim.getMinimumAngle().in(Degrees),
                 horizontalAim.getMaximumAngle().in(Degrees),
                 movingShotSolution);
-        targetDistanceInchesPublisher.set(targetDistanceInches);
-        targetElevationInchesPublisher.set(ShooterConstants.COMMANDED_SCORE_IN_HUB_TARGET_ELEVATION_INCHES);
-        validSolutionPublisher.set(hasSolution);
+        // Debug dashboard telemetry disabled to reduce NetworkTables traffic.
+        // targetDistanceInchesPublisher.set(targetDistanceInches);
+        // targetElevationInchesPublisher.set(ShooterConstants.COMMANDED_SCORE_IN_HUB_TARGET_ELEVATION_INCHES);
+        // validSolutionPublisher.set(hasSolution);
 
         if (!hasSolution) {
-            hoodAngleDegreesPublisher.set(Double.NaN);
-            shotExitVelocityIpsPublisher.set(0.0);
-            fieldRelativeExitVelocityIpsPublisher.set(0.0);
-            flywheelCommandIpsPublisher.set(0.0);
-            shotAzimuthDegreesPublisher.set(Double.NaN);
-            turretDeltaDegreesPublisher.set(Double.NaN);
-            robotHeadingDegreesPublisher.set(preferredRobotHeading.getDegrees());
+            // hoodAngleDegreesPublisher.set(Double.NaN);
+            // shotExitVelocityIpsPublisher.set(0.0);
+            // fieldRelativeExitVelocityIpsPublisher.set(0.0);
+            // flywheelCommandIpsPublisher.set(0.0);
+            // shotAzimuthDegreesPublisher.set(Double.NaN);
+            // turretDeltaDegreesPublisher.set(Double.NaN);
+            // robotHeadingDegreesPublisher.set(preferredRobotHeading.getDegrees());
             shooter.setCoupledIPS(0.0);
             horizontalAim.setAngle(Degrees.of(0.0));
             return false;
         }
 
         double clampedTurretDeltaDegrees = clampTurretDeltaDegrees(movingShotSolution.getTurretDeltaDegrees());
-        hoodAngleDegreesPublisher.set(movingShotSolution.getHoodAngleDegrees());
-        shotExitVelocityIpsPublisher.set(movingShotSolution.getLauncherRelativeExitVelocityIps());
-        fieldRelativeExitVelocityIpsPublisher.set(movingShotSolution.getFieldRelativeExitVelocityIps());
-        flywheelCommandIpsPublisher.set(movingShotSolution.getFlywheelCommandIps());
-        shotAzimuthDegreesPublisher.set(movingShotSolution.getShotAzimuthDegrees());
-        turretDeltaDegreesPublisher.set(clampedTurretDeltaDegrees);
-        robotHeadingDegreesPublisher.set(movingShotSolution.getRobotHeadingDegrees());
+        // hoodAngleDegreesPublisher.set(movingShotSolution.getHoodAngleDegrees());
+        // shotExitVelocityIpsPublisher.set(movingShotSolution.getLauncherRelativeExitVelocityIps());
+        // fieldRelativeExitVelocityIpsPublisher.set(movingShotSolution.getFieldRelativeExitVelocityIps());
+        // flywheelCommandIpsPublisher.set(movingShotSolution.getFlywheelCommandIps());
+        // shotAzimuthDegreesPublisher.set(movingShotSolution.getShotAzimuthDegrees());
+        // turretDeltaDegreesPublisher.set(clampedTurretDeltaDegrees);
+        // robotHeadingDegreesPublisher.set(movingShotSolution.getRobotHeadingDegrees());
         verticalAim.setAngle(Degrees.of(movingShotSolution.getHoodAngleDegrees()));
         horizontalAim.setAngle(Degrees.of(clampedTurretDeltaDegrees));
         shooter.setCoupledIPS(movingShotSolution.getFlywheelCommandIps());
         return true;
     }
 
-    private Rotation2d getTargetFacingHeading(Translation2d target) {
-        return new Rotation2d(
-                target.getX() - futureState.xMeters,
-                target.getY() - futureState.yMeters);
+    private void updateLastDriveDirection(SwerveRequest.FieldCentric fieldCentricRequest) {
+        Translation2d fieldRelativeVelocity = new Translation2d(
+                fieldCentricRequest.VelocityX,
+                fieldCentricRequest.VelocityY).rotateBy(drivetrain.getDriverPerspectiveForward());
+        lastFieldRelativeDriveDirection = FieldMath.updateLastDriveDirection(
+                fieldRelativeVelocity,
+                lastFieldRelativeDriveDirection);
+    }
+
+    private Rotation2d getPreferredRobotHeading(Rotation2d fallbackHeading) {
+        if (lastFieldRelativeDriveDirection.getNorm() > 1e-9) {
+            return lastFieldRelativeDriveDirection.getAngle();
+        }
+        return fallbackHeading;
     }
 
     private double clampTurretDeltaDegrees(double turretDeltaDegrees) {
@@ -233,7 +251,8 @@ public class ScoreInHub extends Command {
         targetFieldPose[0] = target.getX();
         targetFieldPose[1] = target.getY();
         targetFieldPose[2] = 0.0;
-        targetPublisher.set(targetFieldPose);
+        // Debug dashboard telemetry disabled to reduce NetworkTables traffic.
+        // targetPublisher.set(targetFieldPose);
     }
 
     private void publishFutureState() {
@@ -243,20 +262,22 @@ public class ScoreInHub extends Command {
         futureFieldVelocity[0] = futureState.vxMetersPerSecond;
         futureFieldVelocity[1] = futureState.vyMetersPerSecond;
         futureFieldVelocity[2] = Math.toDegrees(futureState.omegaRadiansPerSecond);
-        futurePosePublisher.set(futureFieldPose);
-        futureVelocityPublisher.set(futureFieldVelocity);
+        // Debug dashboard telemetry disabled to reduce NetworkTables traffic.
+        // futurePosePublisher.set(futureFieldPose);
+        // futureVelocityPublisher.set(futureFieldVelocity);
     }
 
     private void clearSolutionTelemetry() {
-        validSolutionPublisher.set(false);
-        targetDistanceInchesPublisher.set(Double.NaN);
-        targetElevationInchesPublisher.set(Double.NaN);
-        hoodAngleDegreesPublisher.set(Double.NaN);
-        shotExitVelocityIpsPublisher.set(0.0);
-        fieldRelativeExitVelocityIpsPublisher.set(0.0);
-        flywheelCommandIpsPublisher.set(0.0);
-        shotAzimuthDegreesPublisher.set(Double.NaN);
-        turretDeltaDegreesPublisher.set(Double.NaN);
-        robotHeadingDegreesPublisher.set(Double.NaN);
+        // Debug dashboard telemetry disabled to reduce NetworkTables traffic.
+        // validSolutionPublisher.set(false);
+        // targetDistanceInchesPublisher.set(Double.NaN);
+        // targetElevationInchesPublisher.set(Double.NaN);
+        // hoodAngleDegreesPublisher.set(Double.NaN);
+        // shotExitVelocityIpsPublisher.set(0.0);
+        // fieldRelativeExitVelocityIpsPublisher.set(0.0);
+        // flywheelCommandIpsPublisher.set(0.0);
+        // shotAzimuthDegreesPublisher.set(Double.NaN);
+        // turretDeltaDegreesPublisher.set(Double.NaN);
+        // robotHeadingDegreesPublisher.set(Double.NaN);
     }
 }

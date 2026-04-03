@@ -34,7 +34,8 @@ public class Telemetry {
 
         /* Set up the module state Mechanism2d telemetry */
         for (int i = 0; i < 4; ++i) {
-            SmartDashboard.putData("Module " + i, m_moduleMechanisms[i]);
+            // Debug dashboard telemetry disabled to reduce NetworkTables traffic.
+            // SmartDashboard.putData("Module " + i, m_moduleMechanisms[i]);
         }
     }
 
@@ -87,13 +88,14 @@ public class Telemetry {
     /** Accept the swerve drive state and telemeterize it to SmartDashboard and SignalLogger. */
     public void telemeterize(SwerveDriveState state) {
         /* Telemeterize the swerve drive state */
-        drivePose.set(state.Pose);
-        driveSpeeds.set(state.Speeds);
-        driveModuleStates.set(state.ModuleStates);
-        driveModuleTargets.set(state.ModuleTargets);
-        driveModulePositions.set(state.ModulePositions);
-        driveTimestamp.set(state.Timestamp);
-        driveOdometryFrequency.set(1.0 / state.OdometryPeriod);
+        // Debug dashboard telemetry disabled to reduce NetworkTables traffic.
+        // drivePose.set(state.Pose);
+        // driveSpeeds.set(state.Speeds);
+        // driveModuleStates.set(state.ModuleStates);
+        // driveModuleTargets.set(state.ModuleTargets);
+        // driveModulePositions.set(state.ModulePositions);
+        // driveTimestamp.set(state.Timestamp);
+        // driveOdometryFrequency.set(1.0 / state.OdometryPeriod);
 
         /* Also write to log file */
         SignalLogger.writeStruct("DriveState/Pose", Pose2d.struct, state.Pose);

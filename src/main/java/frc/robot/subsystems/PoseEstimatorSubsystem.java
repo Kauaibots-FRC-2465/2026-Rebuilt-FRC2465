@@ -102,12 +102,13 @@ public class PoseEstimatorSubsystem extends SubsystemBase {
         }
 
         void publish(Pose2d pose, String signalLogKey) {
-            posePublisher.set(pose);
-            fieldTypePublisher.set("Field2d");
-            poseArray[0] = pose.getX();
-            poseArray[1] = pose.getY();
-            poseArray[2] = pose.getRotation().getDegrees();
-            fieldPosePublisher.set(poseArray);
+            // Debug dashboard telemetry disabled to reduce NetworkTables traffic.
+            // posePublisher.set(pose);
+            // fieldTypePublisher.set("Field2d");
+            // poseArray[0] = pose.getX();
+            // poseArray[1] = pose.getY();
+            // poseArray[2] = pose.getRotation().getDegrees();
+            // fieldPosePublisher.set(poseArray);
             SignalLogger.writeStruct(signalLogKey, Pose2d.struct, pose);
         }
     }
@@ -347,9 +348,10 @@ public class PoseEstimatorSubsystem extends SubsystemBase {
         if (visionTimestamp.equals(lastFusedVisionTimestamp)) {
             return;
         }
-        visionTimestampPublisher.set(visionTimestamp);
+        // Debug dashboard telemetry disabled to reduce NetworkTables traffic.
+        // visionTimestampPublisher.set(visionTimestamp);
         SignalLogger.writeInteger("PoseEstimator/Debug/visionTimestamp", visionTimestamp);
-        odometryHistorySizePublisher.set(odometryHistory.size());
+        // odometryHistorySizePublisher.set(odometryHistory.size());
         SignalLogger.writeInteger("PoseEstimator/Debug/odometryHistory size", odometryHistory.size());
 
         if (odometryHistory.size() < 2)
@@ -378,7 +380,7 @@ public class PoseEstimatorSubsystem extends SubsystemBase {
             return;
         }
         long dt = newerOdometryData.timestamp - olderOdometryData.timestamp;
-        dtPublisher.set(dt);
+        // dtPublisher.set(dt);
         SignalLogger.writeInteger("PoseEstimator/Debug/dt from before to after odometry record", dt);
         if (dt < 0) {
             throw new IllegalStateException(
@@ -399,23 +401,23 @@ public class PoseEstimatorSubsystem extends SubsystemBase {
         odometryAnchorPublisher.publish(visionTimeOdometryAnchor, "PoseEstimator/Debug/odometryAnchor");
         double xDeviationSupplier = Math.max(0.005, visionXDeviationSupplier.getAsDouble()); // No better than .5 cm
         double xVarianceVision = xDeviationSupplier * xDeviationSupplier;
-        xVarianceVisionPublisher.set(xVarianceVision);
+        // xVarianceVisionPublisher.set(xVarianceVision);
         double yDeviationVision = Math.max(0.005, visionYDeviationSupplier.getAsDouble()); // No better than .5 cm
         double yVarianceVision = yDeviationVision * yDeviationVision;
-        yVarianceVisionPublisher.set(yVarianceVision);
+        // yVarianceVisionPublisher.set(yVarianceVision);
         double thetaDeviationVision = Math.max(0.00174533 /* radians */, visionThetaDeviationSupplier.getAsDouble());  // No better than .1 deg
         double thetaVarianceVision = thetaDeviationVision * thetaDeviationVision;
         if(Double.isNaN(xVarianceVision)
         ||Double.isNaN(yVarianceVision)
         ||Double.isNaN(thetaVarianceVision)) return;
 
-        thetaVarianceVisionPublisher.set(thetaVarianceVision);
+        // thetaVarianceVisionPublisher.set(thetaVarianceVision);
         double xKalmanGain = xVarianceOdometry / (xVarianceOdometry + xVarianceVision);
         double yKalmanGain = yVarianceOdometry / (yVarianceOdometry + yVarianceVision);
         double thetaKalmanGain = thetaVarianceOdometry / (thetaVarianceOdometry + thetaVarianceVision);
-        xKalmanGainPublisher.set(xKalmanGain);
-        yKalmanGainPublisher.set(yKalmanGain);
-        thetaKalmanGainPublisher.set(thetaKalmanGain);
+        // xKalmanGainPublisher.set(xKalmanGain);
+        // yKalmanGainPublisher.set(yKalmanGain);
+        // thetaKalmanGainPublisher.set(thetaKalmanGain);
         SignalLogger.writeDouble("PoseEstimator/Debug/xKalmanGain", xKalmanGain);
         SignalLogger.writeDouble("PoseEstimator/Debug/yKalmanGain", yKalmanGain);
         SignalLogger.writeDouble("PoseEstimator/Debug/thetaKalmanGain", thetaKalmanGain);
@@ -482,7 +484,8 @@ public class PoseEstimatorSubsystem extends SubsystemBase {
 
         odometryHistory.getScratchpad().pose = newPose;
         odometryHistory.getScratchpad().timestamp = toMicroseconds(odometryTimestampSupplier.get());
-        newOdometryPoseTimestampPublisher.set(odometryHistory.getScratchpad().timestamp);
+        // Debug dashboard telemetry disabled to reduce NetworkTables traffic.
+        // newOdometryPoseTimestampPublisher.set(odometryHistory.getScratchpad().timestamp);
         SignalLogger.writeInteger(
                 "PoseEstimator/Debug/NewOdometryPoseTimestamp",
                 odometryHistory.getScratchpad().timestamp);
@@ -552,9 +555,9 @@ public class PoseEstimatorSubsystem extends SubsystemBase {
                                                                 // clamp here to prevent NaNs
         yVarianceOdometry = Math.min(yVarianceOdometry, 3 * 3); // and extreme values leading to
                                                                 // overconfidence after a vision update
-        xVarianceOdometryPublisher.set(xVarianceOdometry);
-        yVarianceOdometryPublisher.set(yVarianceOdometry);
-        hVarianceOdometryPublisher.set(thetaVarianceOdometry);
+        // xVarianceOdometryPublisher.set(xVarianceOdometry);
+        // yVarianceOdometryPublisher.set(yVarianceOdometry);
+        // hVarianceOdometryPublisher.set(thetaVarianceOdometry);
         SignalLogger.writeDouble("PoseEstimator/Debug/xVarianceBound", xVarianceOdometry);
         SignalLogger.writeDouble("PoseEstimator/Debug/yVarianceBound", yVarianceOdometry);
         SignalLogger.writeDouble("PoseEstimator/Debug/hVarianceBound", thetaVarianceOdometry);
@@ -625,11 +628,12 @@ public class PoseEstimatorSubsystem extends SubsystemBase {
         long timeSinceLatestOdometry = RobotController.getFPGATime() - latestOdometryTimestamp;
         long timeBetweenLatestAndPriorOdometry = latestOdometryTimestamp - priorOdometryTimestamp;
         latestOdometryPosePublisher.publish(latestOdometryPose, "PoseEstimator/Debug/latestOdometryPose");
-        latestOdometryTimestampPublisher.set(latestOdometryTimestamp);
+        // Debug dashboard telemetry disabled to reduce NetworkTables traffic.
+        // latestOdometryTimestampPublisher.set(latestOdometryTimestamp);
         priorOdometryPosePublisher.publish(priorOdometryPose, "PoseEstimator/Debug/priorOdometryPose");
-        priorOdometryTimestampPublisher.set(priorOdometryTimestamp);
-        timeSinceLatestOdometryPublisher.set(timeSinceLatestOdometry);
-        timeBetweenLatestAndPriorOdometryPublisher.set(timeBetweenLatestAndPriorOdometry);
+        // priorOdometryTimestampPublisher.set(priorOdometryTimestamp);
+        // timeSinceLatestOdometryPublisher.set(timeSinceLatestOdometry);
+        // timeBetweenLatestAndPriorOdometryPublisher.set(timeBetweenLatestAndPriorOdometry);
         SignalLogger.writeInteger("PoseEstimator/Debug/latestOdometryTimestamp", latestOdometryTimestamp);
         SignalLogger.writeInteger("PoseEstimator/Debug/priorOdometryTimestamp", priorOdometryTimestamp);
         SignalLogger.writeInteger("PoseEstimator/Debug/timeSinceLatestOdometry", timeSinceLatestOdometry);
@@ -649,7 +653,7 @@ public class PoseEstimatorSubsystem extends SubsystemBase {
         }
 
         double currentFraction = (double) timeSinceLatestOdometry / timeBetweenLatestAndPriorOdometry;
-        twistFractionToGetToNowPublisher.set(currentFraction);
+        // twistFractionToGetToNowPublisher.set(currentFraction);
         SignalLogger.writeDouble("PoseEstimator/Debug/twistFractionToGetToNow", currentFraction);
 
         Twist2d extrapolatedTwist = priorOdometryPose.log(latestOdometryPose);

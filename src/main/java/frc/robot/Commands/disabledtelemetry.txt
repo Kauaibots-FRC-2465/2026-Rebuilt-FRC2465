@@ -1,0 +1,109 @@
+Disabled dashboard/network-table telemetry to reduce loop overruns.
+
+Kept enabled because they appear driver-facing:
+- Pose/robotPose
+- Pose/.type
+- SubsystemStatus/PinpontStatus
+
+Disabled as debug:
+- Tuning/HoodTuneAngleDegrees
+- Tuning/ShooterTuneSpeedIps
+- Tuning/MainFlywheelMeasuredSpeedIps
+- SmartDashboard Module 0
+- SmartDashboard Module 1
+- SmartDashboard Module 2
+- SmartDashboard Module 3
+- DriveState/Pose
+- DriveState/Speeds
+- DriveState/ModuleStates
+- DriveState/ModuleTargets
+- DriveState/ModulePositions
+- DriveState/Timestamp
+- DriveState/OdometryFrequency
+- KrakenAnglePositionSubsystem/<motorName>/AngleDegrees
+- KrakenAnglePositionSubsystem/<motorName>/AngleRotations
+- PoseEstimator/Debug/NewOdometryPose
+- PoseEstimator/Debug/NewOdometryPose/robotPose
+- PoseEstimator/Debug/NewOdometryPose/.type
+- PoseEstimator/Debug/visionPose
+- PoseEstimator/Debug/visionPose/robotPose
+- PoseEstimator/Debug/visionPose/.type
+- PoseEstimator/Debug/odometryAnchor
+- PoseEstimator/Debug/odometryAnchor/robotPose
+- PoseEstimator/Debug/odometryAnchor/.type
+- PoseEstimator/Debug/fusedAnchor
+- PoseEstimator/Debug/fusedAnchor/robotPose
+- PoseEstimator/Debug/fusedAnchor/.type
+- PoseEstimator/Debug/latestOdometryPose
+- PoseEstimator/Debug/latestOdometryPose/robotPose
+- PoseEstimator/Debug/latestOdometryPose/.type
+- PoseEstimator/Debug/priorOdometryPose
+- PoseEstimator/Debug/priorOdometryPose/robotPose
+- PoseEstimator/Debug/priorOdometryPose/.type
+- PoseEstimator/Debug/odometryNow
+- PoseEstimator/Debug/odometryNow/robotPose
+- PoseEstimator/Debug/odometryNow/.type
+- PoseEstimator/Debug/fusedPose
+- PoseEstimator/Debug/fusedPose/robotPose
+- PoseEstimator/Debug/fusedPose/.type
+- PoseEstimator/Debug/visionTimestamp
+- PoseEstimator/Debug/odometryHistory size
+- PoseEstimator/Debug/dt from before to after odometry record
+- PoseEstimator/Debug/xKalmanGain
+- PoseEstimator/Debug/yKalmanGain
+- PoseEstimator/Debug/thetaKalmanGain
+- PoseEstimator/Debug/NewOdometryPoseTimestamp
+- PoseEstimator/Debug/variance x, odometry
+- PoseEstimator/Debug/variance y, odometry
+- PoseEstimator/Debug/variance h, odometry
+- PoseEstimator/Debug/latestOdometryTimestamp
+- PoseEstimator/Debug/priorOdometryTimestamp
+- PoseEstimator/Debug/timeSinceLatestOdometry
+- PoseEstimator/Debug/timeBetweenLatestAndPriorOdometry
+- PoseEstimator/Debug/twistFractionToGetToNow
+- PoseEstimator/Debug/variance x, vision
+- PoseEstimator/Debug/variance y, vision
+- PoseEstimator/Debug/variance h, vision
+- ScoreInHub/target
+- ScoreInHub/targetDistanceInches
+- ScoreInHub/targetElevationInches
+- ScoreInHub/hoodAngleDegrees
+- ScoreInHub/shotExitVelocityIps
+- ScoreInHub/fieldRelativeExitVelocityIps
+- ScoreInHub/flywheelCommandIps
+- ScoreInHub/shotAzimuthDegrees
+- ScoreInHub/turretDeltaDegrees
+- ScoreInHub/robotHeadingDegrees
+- ScoreInHub/futurePose
+- ScoreInHub/futureVelocity
+- ScoreInHub/validSolution
+- ScoreInHub/.type
+- SnowblowToAlliance/target
+- SnowblowToAlliance/targetDistanceInches
+- SnowblowToAlliance/targetElevationInches
+- SnowblowToAlliance/hoodAngleDegrees
+- SnowblowToAlliance/shotExitVelocityIps
+- SnowblowToAlliance/fieldRelativeExitVelocityIps
+- SnowblowToAlliance/flywheelCommandIps
+- SnowblowToAlliance/shotAzimuthDegrees
+- SnowblowToAlliance/turretDeltaDegrees
+- SnowblowToAlliance/robotHeadingDegrees
+- SnowblowToAlliance/futurePose
+- SnowblowToAlliance/futureVelocity
+- SnowblowToAlliance/validSolution
+- SnowblowToAlliance/.type
+- SnowblowToAllianceWithOperatorAim/target
+- SnowblowToAllianceWithOperatorAim/targetDistanceInches
+- SnowblowToAllianceWithOperatorAim/targetElevationInches
+- SnowblowToAllianceWithOperatorAim/hoodAngleDegrees
+- SnowblowToAllianceWithOperatorAim/shotExitVelocityIps
+- SnowblowToAllianceWithOperatorAim/fieldRelativeExitVelocityIps
+- SnowblowToAllianceWithOperatorAim/flywheelCommandIps
+- SnowblowToAllianceWithOperatorAim/shotAzimuthDegrees
+- SnowblowToAllianceWithOperatorAim/turretDeltaDegrees
+- SnowblowToAllianceWithOperatorAim/robotHeadingDegrees
+- SnowblowToAllianceWithOperatorAim/operatorRightX
+- SnowblowToAllianceWithOperatorAim/futurePose
+- SnowblowToAllianceWithOperatorAim/futureVelocity
+- SnowblowToAllianceWithOperatorAim/validSolution
+- SnowblowToAllianceWithOperatorAim/.type

@@ -3,6 +3,7 @@ package frc.robot.subsystems;
 import static edu.wpi.first.units.Units.Rotations;
 import static edu.wpi.first.units.Units.RotationsPerSecond;
 
+import java.util.Objects;
 import java.util.function.DoubleSupplier;
 import java.util.function.Supplier;
 
@@ -20,9 +21,11 @@ import com.revrobotics.spark.SparkMax;
 import com.revrobotics.spark.config.SparkBaseConfig.IdleMode;
 import com.revrobotics.spark.config.SparkMaxConfig;
 
+import edu.wpi.first.math.MathUtil;
 import edu.wpi.first.units.measure.Angle;
 import edu.wpi.first.units.measure.AngularVelocity;
 import edu.wpi.first.wpilibj.DriverStation;
+import edu.wpi.first.wpilibj.Timer;
 import edu.wpi.first.wpilibj2.command.Command;
 import edu.wpi.first.wpilibj2.command.SubsystemBase;
 import frc.robot.OverrideCommand;
@@ -85,6 +88,9 @@ public class SparkAnglePositionSubsystem extends SubsystemBase {
     private Supplier<Angle> desiredAngleSupplier;
     private double lastSetAngleRotations;
     private final ThrottlePrint outOfRangePrint = new ThrottlePrint(50);
+    private boolean absoluteDriftMonitorEnabled = false;
+    private String absoluteDriftMonitorLabel = "";
+    private double nextAbsoluteDriftPrintTimeSeconds = Double.POSITIVE_INFINITY;
 
     // Runtime configuration/recovery state
     private boolean configured = false;
@@ -377,6 +383,17 @@ public class SparkAnglePositionSubsystem extends SubsystemBase {
                 }
             }
         }
+
+        if (absoluteDriftMonitorEnabled && configured) {
+            double nowSeconds = Timer.getFPGATimestamp();
+            if (nowSeconds >= nextAbsoluteDriftPrintTimeSeconds) {
+                printAbsoluteDriftDelta();
+                nextAbsoluteDriftPrintTimeSeconds += 1.0;
+                while (nextAbsoluteDriftPrintTimeSeconds <= nowSeconds) {
+                    nextAbsoluteDriftPrintTimeSeconds += 1.0;
+                }
+            }
+        }
     }
 
     /**
@@ -518,6 +535,40 @@ public class SparkAnglePositionSubsystem extends SubsystemBase {
     }
 
     /**
+     * Returns the primary relative encoder position in raw motor rotations.
+     *
+     * <p>The Spark relative encoder is configured in mechanism rotations for control,
+     * so this converts back to motor rotations for diagnostics.
+     *
+     * @return current motor rotations reported by the primary relative encoder.
+     */
+    public double getMotorPositionRotations() {
+        return encoder.getPosition() * mechanismGearRatio;
+    }
+
+    /**
+     * Prints the wrapped relative-vs-absolute encoder delta once per second.
+     *
+     * <p>The reported delta is wrapped to one absolute-encoder turn so the printed
+     * value is the shortest signed error between the relative position and the
+     * current absolute reading.
+     *
+     * @param label diagnostic label to print with the delta.
+     */
+    public void enableAbsoluteDriftMonitor(String label) {
+        Objects.requireNonNull(label, "label must not be null");
+        if (!useAbsoluteEncoder) {
+            throw new IllegalStateException(
+                    "[" + motorName + " | CAN " + canID
+                            + "] Cannot enable absolute drift monitor without absolute encoder support.");
+        }
+
+        absoluteDriftMonitorEnabled = true;
+        absoluteDriftMonitorLabel = label;
+        nextAbsoluteDriftPrintTimeSeconds = Timer.getFPGATimestamp() + 1.0;
+    }
+
+    /**
      * Returns current public-angle velocity.
      *
      * <p>The Spark relative encoder is configured in mechanism rotations/second, so this
@@ -647,8 +698,45 @@ public class SparkAnglePositionSubsystem extends SubsystemBase {
         lastSetAngleRotations = Double.NaN;
     }
 
+    private void printAbsoluteDriftDelta() {
+        double relativeMechanismRotations = encoder.getPosition();
+        double absoluteEncoderRotations = absoluteEncoder.getPosition();
+        if (!Double.isFinite(relativeMechanismRotations) || !Double.isFinite(absoluteEncoderRotations)) {
+            System.out.printf(
+                    "[%s absolute drift] invalid reading relativeMechanism=%s absolute=%s%n",
+                    absoluteDriftMonitorLabel,
+                    Double.toString(relativeMechanismRotations),
+                    Double.toString(absoluteEncoderRotations));
+            return;
+        }
+
+        double relativeAbsoluteRotations = mechanismToAbsoluteRotations(relativeMechanismRotations);
+        double wrappedRelativeAbsoluteRotations = MathUtil.inputModulus(
+                relativeAbsoluteRotations,
+                -0.5,
+                0.5);
+        double deltaAbsoluteRotations = MathUtil.inputModulus(
+                relativeAbsoluteRotations - absoluteEncoderRotations,
+                -0.5,
+                0.5);
+        double deltaMechanismRotations = absoluteToMechanismRotations(deltaAbsoluteRotations);
+        double deltaPublicDegrees = mechanismToPublicVelocityRotationsPerSecond(deltaMechanismRotations) * 360.0;
+
+        System.out.printf(
+                "[%s absolute drift] relativeWrapped=%.6f rot absolute=%.6f rot delta=%.6f rot (%.3f deg)%n",
+                absoluteDriftMonitorLabel,
+                wrappedRelativeAbsoluteRotations,
+                absoluteEncoderRotations,
+                deltaAbsoluteRotations,
+                deltaPublicDegrees);
+    }
+
     private double absoluteToMechanismRotations(double absoluteRotations) {
         return absoluteRotations * (absoluteEncoderGearRatio / mechanismGearRatio);
+    }
+
+    private double mechanismToAbsoluteRotations(double mechanismRotations) {
+        return mechanismRotations * (mechanismGearRatio / absoluteEncoderGearRatio);
     }
 
     private double publicToMechanismRotations(double publicAngleRotations) {

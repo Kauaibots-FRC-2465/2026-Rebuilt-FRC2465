@@ -81,10 +81,12 @@ public class WLEDSubsystem implements Subsystem {
         private final PreparedPlaybackPackets playback;
         private final Timer frameTimer = new Timer();
         private int currentFrameIndex;
+        private int lastSentFrameIndex;
 
         private ActivePlayback(PreparedPlaybackPackets playback) {
             this.playback = playback;
             this.currentFrameIndex = 0;
+            this.lastSentFrameIndex = -1;
             this.frameTimer.start();
             this.frameTimer.reset();
         }
@@ -149,20 +151,24 @@ public class WLEDSubsystem implements Subsystem {
             return;
         }
 
-        int packetsPerFrame = activePlayback.playback.getPacketsPerFrame();
-        int frameStartPacketIndex = activePlayback.currentFrameIndex * packetsPerFrame;
-        for (int packetOffset = 0; packetOffset < packetsPerFrame; packetOffset++) {
-            DatagramPacket packet = activePlayback.playback.packets[frameStartPacketIndex + packetOffset];
-            try {
-                socket.send(packet);
-            } catch (IOException e) {
-                DriverStation.reportError("WLED packet send failed: " + e.getMessage(), false);
-                return;
-            }
-        }
-
         double frameDurationSeconds =
                 activePlayback.playback.getFrameDisplayDurationSeconds(activePlayback.currentFrameIndex);
+
+        if (activePlayback.currentFrameIndex != activePlayback.lastSentFrameIndex) {
+            int packetsPerFrame = activePlayback.playback.getPacketsPerFrame();
+            int frameStartPacketIndex = activePlayback.currentFrameIndex * packetsPerFrame;
+            for (int packetOffset = 0; packetOffset < packetsPerFrame; packetOffset++) {
+                DatagramPacket packet = activePlayback.playback.packets[frameStartPacketIndex + packetOffset];
+                try {
+                    socket.send(packet);
+                } catch (IOException e) {
+                    DriverStation.reportError("WLED packet send failed: " + e.getMessage(), false);
+                    return;
+                }
+            }
+            activePlayback.lastSentFrameIndex = activePlayback.currentFrameIndex;
+        }
+
         if (frameDurationSeconds <= 0.0 || activePlayback.frameTimer.hasElapsed(frameDurationSeconds)) {
             activePlayback.currentFrameIndex++;
             if (activePlayback.currentFrameIndex >= activePlayback.playback.getFrameCount()) {

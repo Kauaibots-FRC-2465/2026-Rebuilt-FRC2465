@@ -95,7 +95,8 @@ public class SnowblowToAlliance extends Command {
         futureVelocityPublisher = snowblowTable.getDoubleArrayTopic("futureVelocity").publish();
         validSolutionPublisher = snowblowTable.getBooleanTopic("validSolution").publish();
         fieldTypePublisher = snowblowTable.getStringTopic(".type").publish();
-        fieldTypePublisher.set("Field2d");
+        // Debug dashboard telemetry disabled to reduce NetworkTables traffic.
+        // fieldTypePublisher.set("Field2d");
 
         facingAngleDrive.withHeadingPID(5.0, 0.0, 0.0);
         facingAngleDrive.HeadingController.enableContinuousInput(-Math.PI, Math.PI);
@@ -138,8 +139,7 @@ public class SnowblowToAlliance extends Command {
         Rotation2d preferredRobotHeading = getPreferredRobotHeading(futurePose.getRotation());
         Rotation2d robotHeadingTarget = preferredRobotHeading;
         if (updateShooterSolution(target, preferredRobotHeading)) {
-            robotHeadingTarget = Rotation2d.fromDegrees(
-                    mirrorLeftRightDegrees(movingShotSolution.getRobotHeadingDegrees()));
+            robotHeadingTarget = Rotation2d.fromDegrees(movingShotSolution.getRobotHeadingDegrees());
         }
         Rotation2d operatorPerspectiveHeadingTarget =
                 robotHeadingTarget.minus(drivetrain.getDriverPerspectiveForward());
@@ -199,33 +199,33 @@ public class SnowblowToAlliance extends Command {
                 horizontalAim.getMinimumAngle().in(Degrees),
                 horizontalAim.getMaximumAngle().in(Degrees),
                 movingShotSolution);
-        targetDistanceInchesPublisher.set(targetDistanceInches);
-        targetElevationInchesPublisher.set(ShooterConstants.COMMANDED_SNOWBLOW_TARGET_ELEVATION_INCHES);
-        validSolutionPublisher.set(hasSolution);
+        // Debug dashboard telemetry disabled to reduce NetworkTables traffic.
+        // targetDistanceInchesPublisher.set(targetDistanceInches);
+        // targetElevationInchesPublisher.set(ShooterConstants.COMMANDED_SNOWBLOW_TARGET_ELEVATION_INCHES);
+        // validSolutionPublisher.set(hasSolution);
 
         if (!hasSolution) {
-            hoodAngleDegreesPublisher.set(Double.NaN);
-            shotExitVelocityIpsPublisher.set(0.0);
-            fieldRelativeExitVelocityIpsPublisher.set(0.0);
-            flywheelCommandIpsPublisher.set(0.0);
-            shotAzimuthDegreesPublisher.set(Double.NaN);
-            turretDeltaDegreesPublisher.set(Double.NaN);
-            robotHeadingDegreesPublisher.set(preferredRobotHeading.getDegrees());
+            // hoodAngleDegreesPublisher.set(Double.NaN);
+            // shotExitVelocityIpsPublisher.set(0.0);
+            // fieldRelativeExitVelocityIpsPublisher.set(0.0);
+            // flywheelCommandIpsPublisher.set(0.0);
+            // shotAzimuthDegreesPublisher.set(Double.NaN);
+            // turretDeltaDegreesPublisher.set(Double.NaN);
+            // robotHeadingDegreesPublisher.set(preferredRobotHeading.getDegrees());
             shooter.setCoupledIPS(0.0);
             horizontalAim.setAngle(Degrees.of(0.0));
             return false;
         }
 
-        double clampedTurretDeltaDegrees = clampTurretDeltaDegrees(
-                mirrorLeftRightDegrees(movingShotSolution.getTurretDeltaDegrees()));
-        double commandedRobotHeadingDegrees = mirrorLeftRightDegrees(movingShotSolution.getRobotHeadingDegrees());
-        hoodAngleDegreesPublisher.set(movingShotSolution.getHoodAngleDegrees());
-        shotExitVelocityIpsPublisher.set(movingShotSolution.getLauncherRelativeExitVelocityIps());
-        fieldRelativeExitVelocityIpsPublisher.set(movingShotSolution.getFieldRelativeExitVelocityIps());
-        flywheelCommandIpsPublisher.set(movingShotSolution.getFlywheelCommandIps());
-        shotAzimuthDegreesPublisher.set(movingShotSolution.getShotAzimuthDegrees());
-        turretDeltaDegreesPublisher.set(clampedTurretDeltaDegrees);
-        robotHeadingDegreesPublisher.set(commandedRobotHeadingDegrees);
+        double clampedTurretDeltaDegrees = clampTurretDeltaDegrees(movingShotSolution.getTurretDeltaDegrees());
+        double commandedRobotHeadingDegrees = movingShotSolution.getRobotHeadingDegrees();
+        // hoodAngleDegreesPublisher.set(movingShotSolution.getHoodAngleDegrees());
+        // shotExitVelocityIpsPublisher.set(movingShotSolution.getLauncherRelativeExitVelocityIps());
+        // fieldRelativeExitVelocityIpsPublisher.set(movingShotSolution.getFieldRelativeExitVelocityIps());
+        // flywheelCommandIpsPublisher.set(movingShotSolution.getFlywheelCommandIps());
+        // shotAzimuthDegreesPublisher.set(movingShotSolution.getShotAzimuthDegrees());
+        // turretDeltaDegreesPublisher.set(clampedTurretDeltaDegrees);
+        // robotHeadingDegreesPublisher.set(commandedRobotHeadingDegrees);
         verticalAim.setAngle(Degrees.of(movingShotSolution.getHoodAngleDegrees()));
         horizontalAim.setAngle(Degrees.of(clampedTurretDeltaDegrees));
         shooter.setCoupledIPS(movingShotSolution.getFlywheelCommandIps());
@@ -254,15 +254,12 @@ public class SnowblowToAlliance extends Command {
                 Math.min(horizontalAim.getMaximumAngle().in(Degrees), turretDeltaDegrees));
     }
 
-    private static double mirrorLeftRightDegrees(double degrees) {
-        return -degrees;
-    }
-
     private void publishTarget(Translation2d target) {
         targetFieldPose[0] = target.getX();
         targetFieldPose[1] = target.getY();
         targetFieldPose[2] = 0.0;
-        targetPublisher.set(targetFieldPose);
+        // Debug dashboard telemetry disabled to reduce NetworkTables traffic.
+        // targetPublisher.set(targetFieldPose);
     }
 
     private void publishFutureState() {
@@ -272,20 +269,22 @@ public class SnowblowToAlliance extends Command {
         futureFieldVelocity[0] = futureState.vxMetersPerSecond;
         futureFieldVelocity[1] = futureState.vyMetersPerSecond;
         futureFieldVelocity[2] = Math.toDegrees(futureState.omegaRadiansPerSecond);
-        futurePosePublisher.set(futureFieldPose);
-        futureVelocityPublisher.set(futureFieldVelocity);
+        // Debug dashboard telemetry disabled to reduce NetworkTables traffic.
+        // futurePosePublisher.set(futureFieldPose);
+        // futureVelocityPublisher.set(futureFieldVelocity);
     }
 
     private void clearSolutionTelemetry() {
-        validSolutionPublisher.set(false);
-        targetDistanceInchesPublisher.set(Double.NaN);
-        targetElevationInchesPublisher.set(Double.NaN);
-        hoodAngleDegreesPublisher.set(Double.NaN);
-        shotExitVelocityIpsPublisher.set(0.0);
-        fieldRelativeExitVelocityIpsPublisher.set(0.0);
-        flywheelCommandIpsPublisher.set(0.0);
-        shotAzimuthDegreesPublisher.set(Double.NaN);
-        turretDeltaDegreesPublisher.set(Double.NaN);
-        robotHeadingDegreesPublisher.set(Double.NaN);
+        // Debug dashboard telemetry disabled to reduce NetworkTables traffic.
+        // validSolutionPublisher.set(false);
+        // targetDistanceInchesPublisher.set(Double.NaN);
+        // targetElevationInchesPublisher.set(Double.NaN);
+        // hoodAngleDegreesPublisher.set(Double.NaN);
+        // shotExitVelocityIpsPublisher.set(0.0);
+        // fieldRelativeExitVelocityIpsPublisher.set(0.0);
+        // flywheelCommandIpsPublisher.set(0.0);
+        // shotAzimuthDegreesPublisher.set(Double.NaN);
+        // turretDeltaDegreesPublisher.set(Double.NaN);
+        // robotHeadingDegreesPublisher.set(Double.NaN);
     }
 }

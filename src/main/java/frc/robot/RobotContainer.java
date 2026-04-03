@@ -260,9 +260,9 @@ private Command showAllianceMarquee() {
             10,
             40,
             12,
-            Degrees.of(-18),
-            Degrees.of(18),
-            false,
+            Degrees.of(-15),
+            Degrees.of(15),
+            true,
             true);
         sparkFollowerSubsystem.addFollower(
             1,
@@ -412,7 +412,8 @@ private Command showAllianceMarquee() {
 
         //hi :D
         configureBindings();
-        publishTuningTelemetry();
+        // Debug tuning telemetry disabled to reduce NetworkTables traffic.
+        // publishTuningTelemetry();
 
     }
 
@@ -432,7 +433,7 @@ private Command showAllianceMarquee() {
         shooter.setDefaultCommand(shooter.cmdSetCoupledIPS(this::getTuningShooterPower));
 
         intakePosition.setDefaultCommand(
-            intakePosition.cmdSetAngle(() -> Degrees.of(engineersController.a().getAsBoolean() ? 106 : 5.0)));
+            intakePosition.cmdSetAngle(() -> Degrees.of(engineersController.a().getAsBoolean() ? 109 : 5.0)));
         intakedrive.setDefaultCommand(intakedrive.cmdSetIPS(()->engineersController.a().getAsBoolean() ? 300.0 : 0.0)); //600 max
 
         //hood.setDefaultCommand(hood.cmdSetScaledAngle(engineersController::getLeftTriggerAxis));
@@ -504,7 +505,7 @@ private Command showAllianceMarquee() {
         );
 
         horizontalAim.setDefaultCommand(
-            horizontalAim.cmdSetScaledAngle(() -> (engineersController.getLeftX() + 1.0) / 2.0));
+            horizontalAim.cmdSetScaledAngle(() -> (1.0 - engineersController.getLeftX()) / 2.0));
 
         drivetrain.registerTelemetry(logger::telemeterize);
     }
@@ -550,18 +551,21 @@ private Command showAllianceMarquee() {
         hoodTuneAngle = Math.max(
                 MIN_HOOD_ANGLE_DEGREES,
                 Math.min(MAX_HOOD_ANGLE_DEGREES, hoodTuneAngle + deltaDegrees));
-        hoodTuneAnglePublisher.set(hoodTuneAngle);
+        // Debug tuning telemetry disabled to reduce NetworkTables traffic.
+        // hoodTuneAnglePublisher.set(hoodTuneAngle);
     }
 
     private void adjustShooterTuneSpeed(double deltaIps) {
         shooterTuneSpeed += deltaIps;
-        shooterTuneSpeedPublisher.set(shooterTuneSpeed);
+        // Debug tuning telemetry disabled to reduce NetworkTables traffic.
+        // shooterTuneSpeedPublisher.set(shooterTuneSpeed);
     }
 
     public void publishTuningTelemetry() {
-        hoodTuneAnglePublisher.set(hoodTuneAngle);
-        shooterTuneSpeedPublisher.set(shooterTuneSpeed);
-        mainFlywheelMeasuredSpeedPublisher.set(shooter.getMainFlywheelSpeedIPS());
+        // Debug tuning telemetry disabled to reduce NetworkTables traffic.
+        // hoodTuneAnglePublisher.set(hoodTuneAngle);
+        // shooterTuneSpeedPublisher.set(shooterTuneSpeed);
+        // mainFlywheelMeasuredSpeedPublisher.set(shooter.getMainFlywheelSpeedIPS());
     }
 
 }

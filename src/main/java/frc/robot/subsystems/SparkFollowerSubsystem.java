@@ -3,6 +3,7 @@ package frc.robot.subsystems;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
+import java.util.function.DoubleSupplier;
 
 import com.revrobotics.PersistMode;
 import com.revrobotics.REVLibError;
@@ -13,6 +14,7 @@ import com.revrobotics.spark.config.SparkBaseConfig.IdleMode;
 import com.revrobotics.spark.config.SparkMaxConfig;
 
 import edu.wpi.first.wpilibj.DriverStation;
+import edu.wpi.first.wpilibj.Timer;
 import edu.wpi.first.wpilibj2.command.SubsystemBase;
 
 /**
@@ -77,7 +79,26 @@ public class SparkFollowerSubsystem extends SubsystemBase {
         }
     }
 
+    private static class PositionDeltaMonitor {
+        private final FollowerEntry followerEntry;
+        private final String label;
+        private final DoubleSupplier leaderPositionRotationsSupplier;
+        private double nextPrintTimeSeconds;
+
+        private PositionDeltaMonitor(
+                FollowerEntry followerEntry,
+                String label,
+                DoubleSupplier leaderPositionRotationsSupplier,
+                double nextPrintTimeSeconds) {
+            this.followerEntry = followerEntry;
+            this.label = label;
+            this.leaderPositionRotationsSupplier = leaderPositionRotationsSupplier;
+            this.nextPrintTimeSeconds = nextPrintTimeSeconds;
+        }
+    }
+
     private final List<FollowerEntry> followers = new ArrayList<>();
+    private final List<PositionDeltaMonitor> positionDeltaMonitors = new ArrayList<>();
 
     /**
      * Creates an empty follower manager subsystem.
@@ -204,6 +225,37 @@ public class SparkFollowerSubsystem extends SubsystemBase {
                 }
             }
         }
+
+        double nowSeconds = Timer.getFPGATimestamp();
+        for (PositionDeltaMonitor monitor : positionDeltaMonitors) {
+            if (nowSeconds < monitor.nextPrintTimeSeconds) {
+                continue;
+            }
+
+            double leaderPositionRotations = monitor.leaderPositionRotationsSupplier.getAsDouble();
+            double followerPositionRotations = monitor.followerEntry.followerMotor.getEncoder().getPosition();
+
+            if (Double.isFinite(leaderPositionRotations) && Double.isFinite(followerPositionRotations)) {
+                double deltaRotations = followerPositionRotations - leaderPositionRotations;
+                System.out.printf(
+                        "[%s encoder delta] leader=%.6f rot follower=%.6f rot delta=%.6f rot%n",
+                        monitor.label,
+                        leaderPositionRotations,
+                        followerPositionRotations,
+                        deltaRotations);
+            } else {
+                System.out.printf(
+                        "[%s encoder delta] invalid reading leader=%s follower=%s%n",
+                        monitor.label,
+                        Double.toString(leaderPositionRotations),
+                        Double.toString(followerPositionRotations));
+            }
+
+            monitor.nextPrintTimeSeconds += 1.0;
+            while (monitor.nextPrintTimeSeconds <= nowSeconds) {
+                monitor.nextPrintTimeSeconds += 1.0;
+            }
+        }
     }
 
     /**
@@ -224,6 +276,38 @@ public class SparkFollowerSubsystem extends SubsystemBase {
      */
     public SparkMax getMotor(int index) {
         return followers.get(index).followerMotor;
+    }
+
+    /**
+     * Prints leader/follower encoder delta for the specified follower once per second.
+     *
+     * <p>The supplier should return leader position in the same units as the follower
+     * Spark relative encoder. For a default Spark follower this is motor rotations.
+     *
+     * @param followerCanID CAN ID of the follower to monitor.
+     * @param label diagnostic label printed with the delta.
+     * @param leaderPositionRotationsSupplier supplier for leader position in motor rotations.
+     */
+    public void addPositionDeltaMonitor(
+            int followerCanID,
+            String label,
+            DoubleSupplier leaderPositionRotationsSupplier) {
+        Objects.requireNonNull(label, "label must not be null");
+        Objects.requireNonNull(
+                leaderPositionRotationsSupplier,
+                "leaderPositionRotationsSupplier must not be null");
+
+        FollowerEntry followerEntry = findFollowerByCanID(followerCanID);
+        if (followerEntry == null) {
+            throw new IllegalArgumentException(
+                    "[" + label + "] No follower registered with CAN ID " + followerCanID + ".");
+        }
+
+        positionDeltaMonitors.add(new PositionDeltaMonitor(
+                followerEntry,
+                label,
+                leaderPositionRotationsSupplier,
+                Timer.getFPGATimestamp() + 1.0));
     }
 
     /**
@@ -292,6 +376,15 @@ public class SparkFollowerSubsystem extends SubsystemBase {
             }
         }
         return false;
+    }
+
+    private FollowerEntry findFollowerByCanID(int canID) {
+        for (FollowerEntry entry : followers) {
+            if (entry.canID == canID) {
+                return entry;
+            }
+        }
+        return null;
     }
 
     private static boolean isValidCanID(int canID) {

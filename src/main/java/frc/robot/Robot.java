@@ -42,7 +42,8 @@ public class Robot extends TimedRobot {
     public void robotPeriodic() {
         m_timeAndJoystickReplay.update();
         CommandScheduler.getInstance().run(); 
-        m_robotContainer.publishTuningTelemetry();
+        // Debug tuning telemetry disabled to reduce NetworkTables traffic.
+        // m_robotContainer.publishTuningTelemetry();
         ThrottlePrint.globalIncrement();
     }
 

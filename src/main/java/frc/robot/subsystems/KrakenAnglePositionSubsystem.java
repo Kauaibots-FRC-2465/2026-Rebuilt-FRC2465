@@ -170,8 +170,9 @@ public class KrakenAnglePositionSubsystem extends SubsystemBase {
         }
 
         Angle currentAngle = getAngle();
-        angleDegreesPublisher.set(currentAngle.in(Degrees));
-        angleRotationsPublisher.set(currentAngle.in(Rotations));
+        // Debug dashboard telemetry disabled to reduce NetworkTables traffic.
+        // angleDegreesPublisher.set(currentAngle.in(Degrees));
+        // angleRotationsPublisher.set(currentAngle.in(Rotations));
         SignalLogger.writeDouble(
                 "KrakenAnglePositionSubsystem/" + motorName + "/AngleDegrees",
                 currentAngle.in(Degrees));

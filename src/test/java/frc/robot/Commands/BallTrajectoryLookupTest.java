@@ -345,7 +345,7 @@ class BallTrajectoryLookupTest {
     }
 
     @Test
-    void movingShotTurretDeltaUsesRobotRightPositiveConvention() {
+    void movingShotTurretDeltaUsesRobotLeftPositiveConvention() {
         BallTrajectoryLookup.MovingShotSolution solution = new BallTrajectoryLookup.MovingShotSolution();
 
         boolean solved = BallTrajectoryLookup.solveMovingShot(
@@ -368,8 +368,8 @@ class BallTrajectoryLookupTest {
                 solution);
 
         assertTrue(solved, "Expected a valid stationary moving-shot solution for sign-convention test");
-        assertEquals(10.0, solution.getTurretDeltaDegrees(), 0.25,
-                "Positive turret delta should mean robot-right, matching horizontal aim public angle");
+        assertEquals(-10.0, solution.getTurretDeltaDegrees(), 0.25,
+                "Positive turret delta should mean robot-left, matching CCW-positive horizontal aim");
         assertEquals(10.0, solution.getRobotHeadingDegrees(), 0.25,
                 "Preferred heading should be preserved when the turret can absorb the full offset");
         assertEquals(0.0, solution.getShotAzimuthDegrees(), 0.25,
