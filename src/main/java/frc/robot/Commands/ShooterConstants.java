@@ -13,7 +13,7 @@ public final class ShooterConstants {
         550.0, 555.0, 565.0, 600.0, 640.0, 680.0, 720.0, 760.0,
         800.0
     };
-    static final double COMMANDED_SHOOTER_LOOKAHEAD_SECONDS = 0.05;
+    static final double COMMANDED_SHOOTER_LOOKAHEAD_SECONDS = 0.75;
     static final double COMMANDED_SNOWBLOW_TARGET_ELEVATION_INCHES = 36.0;
     static final double COMMANDED_MOVING_SHOT_HOOD_SEARCH_STEP_DEGREES = 2.5;
     static final double COMMANDED_MOVING_SHOT_FIXED_FLYWHEEL_HOOD_SEARCH_STEP_DEGREES = 0.1;
@@ -46,6 +46,17 @@ public final class ShooterConstants {
     static final double MEASURED_INITIAL_Z_BASE_INCHES = 7.5;
     static final double MEASURED_BALL_CENTER_OFFSET_INCHES = 5.0;
     static final double MEASURED_FRAME_TO_CENTER_DISTANCE_INCHES = 11.75;
+    // There are three hood-angle spaces in the shooter model:
+    // 1) commanded angle: what the code asks the mechanism to do.
+    // 2) measured actual angle: what the mechanism actually reaches after gravity / control error.
+    // 3) true angle: the physics launch angle, which is measured-actual plus the fitted global correction.
+    //
+    // Physics, LUT generation, and angle-exit scaling operate in TRUE_HOOD_ANGLES_DEGREES.
+    // Hood control and accepted-shot source data operate in commanded-angle space.
+    // Conversion must always follow:
+    // commanded -> measured actual -> true
+    // and the reverse path:
+    // true -> measured actual -> commanded
     static final double[] RAW_MEASURED_ACTUAL_ANGLE_CHANGES_DEGREES = {
         0.0, 4.754282, 9.774558, 14.761633, 19.781841,
         24.802019, 29.788951, 34.775883, 39.796061, 44.782996
@@ -54,21 +65,22 @@ public final class ShooterConstants {
     static final double DATA_COLLECTION_FITTED_HOOD_ANGLE_SLOPE_PER_DEGREE = 0.0;
     static final double DATA_COLLECTION_FITTED_HOOD_ANGLE_SLOPE_REFERENCE_DEGREES = 55.0;
     static final double[] MEASURED_ACTUAL_ANGLES_DEGREES =
+            buildActualAnglesDegrees(
+                    RAW_MEASURED_HOOD_ANGLE_AT_MECHANISM_ZERO_DEGREES,
+                    RAW_MEASURED_ACTUAL_ANGLE_CHANGES_DEGREES);
+    static final double[] TRUE_HOOD_ANGLES_DEGREES =
             applyHoodAngleModel(
-                    buildActualAnglesDegrees(
-                            RAW_MEASURED_HOOD_ANGLE_AT_MECHANISM_ZERO_DEGREES,
-                            RAW_MEASURED_ACTUAL_ANGLE_CHANGES_DEGREES),
+                    MEASURED_ACTUAL_ANGLES_DEGREES,
                     DATA_COLLECTION_FITTED_HOOD_ANGLE_OFFSET_DEGREES,
                     DATA_COLLECTION_FITTED_HOOD_ANGLE_SLOPE_PER_DEGREE,
                     DATA_COLLECTION_FITTED_HOOD_ANGLE_SLOPE_REFERENCE_DEGREES);
     public static final double MEASURED_HOOD_ANGLE_AT_MECHANISM_ZERO_DEGREES =
-            MEASURED_ACTUAL_ANGLES_DEGREES[0];
+            RAW_MEASURED_HOOD_ANGLE_AT_MECHANISM_ZERO_DEGREES;
     public static final double COMMANDED_MAXIMUM_ALLOWED_HOOD_ANGLE_DEGREES =
-            MEASURED_HOOD_ANGLE_AT_MECHANISM_ZERO_DEGREES;
+            MEASURED_HOOD_ANGLE_AT_MECHANISM_ZERO_DEGREES - COMMANDED_HOOD_ANGLE_CHANGES_DEGREES[0];
     public static final double COMMANDED_MINIMUM_ALLOWED_HOOD_ANGLE_DEGREES =
-            MEASURED_ACTUAL_ANGLES_DEGREES[MEASURED_ACTUAL_ANGLES_DEGREES.length - 1];
-    static final double[] MEASURED_ACTUAL_ANGLE_CHANGES_DEGREES =
-            buildAngleChangesDegrees(MEASURED_ACTUAL_ANGLES_DEGREES);
+            MEASURED_HOOD_ANGLE_AT_MECHANISM_ZERO_DEGREES
+                    - COMMANDED_HOOD_ANGLE_CHANGES_DEGREES[COMMANDED_HOOD_ANGLE_CHANGES_DEGREES.length - 1];
     static final double[] MEASURED_DISTANCE_GRID_COMMAND_SPEEDS_IPS = {
         200.0, 240.0, 280.0, 320.0, 360.0, 400.0, 440.0,
         480.0, 520.0, 560.0, 600.0, 640.0, 680.0, 720.0
@@ -118,9 +130,7 @@ public final class ShooterConstants {
         {365.0, 365.0, 365.0, 390.0}
     };
     static final double[][] DATA_COLLECTION_SHORT_RANGE_HOOD_ANGLES_DEGREES =
-            applyAngleOffsetDegrees(
-                    RAW_DATA_COLLECTION_SHORT_RANGE_HOOD_ANGLES_DEGREES,
-                    DATA_COLLECTION_FITTED_HOOD_ANGLE_OFFSET_DEGREES);
+            RAW_DATA_COLLECTION_SHORT_RANGE_HOOD_ANGLES_DEGREES;
 
     static final double FITTED_TRAJECTORY_DRAG_LOG_REFERENCE_SPEED_IPS = 300.0;
     static final double FITTED_TRAJECTORY_DRAG_COEFFICIENT_BASE_PER_INCH = 0.001478605;
@@ -130,9 +140,9 @@ public final class ShooterConstants {
     static final int FITTED_BALL_TRAJECTORY_LUT_MAGIC = 0x42544C54; // "BTLT"
     static final int FITTED_BALL_TRAJECTORY_LUT_VERSION = 11;
     static final double FITTED_BALL_TRAJECTORY_LUT_MIN_HOOD_ANGLE_DEGREES =
-            MEASURED_ACTUAL_ANGLES_DEGREES[MEASURED_ACTUAL_ANGLES_DEGREES.length - 1];
+            TRUE_HOOD_ANGLES_DEGREES[TRUE_HOOD_ANGLES_DEGREES.length - 1];
     static final double FITTED_BALL_TRAJECTORY_LUT_MAX_HOOD_ANGLE_DEGREES =
-            MEASURED_ACTUAL_ANGLES_DEGREES[0];
+            TRUE_HOOD_ANGLES_DEGREES[0];
     static final double FITTED_BALL_TRAJECTORY_LUT_HOOD_ANGLE_STEP_DEGREES = 0.1;
     static final int FITTED_BALL_TRAJECTORY_LUT_MAX_TARGET_DISTANCE_INCHES = 725;
     static final int FITTED_BALL_TRAJECTORY_LUT_MAX_TARGET_ELEVATION_FEET = 6;
@@ -153,7 +163,7 @@ public final class ShooterConstants {
             DATA_COLLECTION_FITTED_SPEED_MODEL_HIGH_SLOPE);
 
     static {
-        if (FITTED_COMMAND_ANGLE_EXIT_SCALES.length != MEASURED_ACTUAL_ANGLES_DEGREES.length) {
+        if (FITTED_COMMAND_ANGLE_EXIT_SCALES.length != TRUE_HOOD_ANGLES_DEGREES.length) {
             throw new IllegalStateException("Angle exit scale table must match angle count.");
         }
         if (FITTED_BALL_TRAJECTORY_LUT_MIN_HOOD_ANGLE_DEGREES
@@ -166,13 +176,11 @@ public final class ShooterConstants {
         if (MEASURED_DISTANCE_GRID_COMMAND_SPEEDS_IPS.length > COMMANDED_FLYWHEEL_SET_IPS.length) {
             throw new IllegalStateException("Distance grid row count must not exceed command speed count.");
         }
-        if (COMMANDED_HOOD_ANGLE_CHANGES_DEGREES.length != MEASURED_ACTUAL_ANGLES_DEGREES.length) {
-            throw new IllegalStateException("Commanded angle changes must match angle count.");
+        if (COMMANDED_HOOD_ANGLE_CHANGES_DEGREES.length != RAW_MEASURED_ACTUAL_ANGLE_CHANGES_DEGREES.length
+                || RAW_MEASURED_ACTUAL_ANGLE_CHANGES_DEGREES.length != MEASURED_ACTUAL_ANGLES_DEGREES.length) {
+            throw new IllegalStateException("Angle characterization tables must match angle count.");
         }
-        if (MEASURED_ACTUAL_ANGLE_CHANGES_DEGREES.length != MEASURED_ACTUAL_ANGLES_DEGREES.length) {
-            throw new IllegalStateException("Measured actual angle changes must match angle count.");
-        }
-        if (MEASURED_DISTANCE_GRID_INCHES[0].length != MEASURED_ACTUAL_ANGLES_DEGREES.length) {
+        if (MEASURED_DISTANCE_GRID_INCHES[0].length != TRUE_HOOD_ANGLES_DEGREES.length) {
             throw new IllegalStateException("Distance grid column count must match angle count.");
         }
         if (COMMANDED_FLYWHEEL_SET_IPS.length != FITTED_BALL_EXIT_IPS.length) {
@@ -184,9 +192,24 @@ public final class ShooterConstants {
                         != DATA_COLLECTION_SHORT_RANGE_COMMAND_SPEEDS_IPS.length) {
             throw new IllegalStateException("Short-range data-collection rows must match distance count.");
         }
+        for (int i = 1; i < COMMANDED_HOOD_ANGLE_CHANGES_DEGREES.length; i++) {
+            if (!(COMMANDED_HOOD_ANGLE_CHANGES_DEGREES[i] > COMMANDED_HOOD_ANGLE_CHANGES_DEGREES[i - 1])) {
+                throw new IllegalStateException("Commanded hood angle changes must remain strictly increasing.");
+            }
+        }
+        for (int i = 1; i < RAW_MEASURED_ACTUAL_ANGLE_CHANGES_DEGREES.length; i++) {
+            if (!(RAW_MEASURED_ACTUAL_ANGLE_CHANGES_DEGREES[i] > RAW_MEASURED_ACTUAL_ANGLE_CHANGES_DEGREES[i - 1])) {
+                throw new IllegalStateException("Measured actual angle changes must remain strictly increasing.");
+            }
+        }
         for (int i = 1; i < MEASURED_ACTUAL_ANGLES_DEGREES.length; i++) {
             if (!(MEASURED_ACTUAL_ANGLES_DEGREES[i] < MEASURED_ACTUAL_ANGLES_DEGREES[i - 1])) {
                 throw new IllegalStateException("Measured actual angles must remain strictly descending.");
+            }
+        }
+        for (int i = 1; i < TRUE_HOOD_ANGLES_DEGREES.length; i++) {
+            if (!(TRUE_HOOD_ANGLES_DEGREES[i] < TRUE_HOOD_ANGLES_DEGREES[i - 1])) {
+                throw new IllegalStateException("True hood angles must remain strictly descending.");
             }
         }
         for (int i = 1; i < FITTED_BALL_EXIT_IPS.length; i++) {
@@ -227,6 +250,50 @@ public final class ShooterConstants {
     private ShooterConstants() {
     }
 
+    // Full forward path used by physics-facing code.
+    static double getTrueAngleDegreesForCommandedAngle(double commandedAngleDegrees) {
+        double commandedAngleChangeDegrees = MEASURED_HOOD_ANGLE_AT_MECHANISM_ZERO_DEGREES - commandedAngleDegrees;
+        double measuredActualAngleChangeDegrees = interpolateClamped(
+                commandedAngleChangeDegrees,
+                COMMANDED_HOOD_ANGLE_CHANGES_DEGREES,
+                RAW_MEASURED_ACTUAL_ANGLE_CHANGES_DEGREES);
+        if (!Double.isFinite(measuredActualAngleChangeDegrees)) {
+            return Double.NaN;
+        }
+
+        double measuredActualAngleDegrees =
+                MEASURED_HOOD_ANGLE_AT_MECHANISM_ZERO_DEGREES - measuredActualAngleChangeDegrees;
+        return measuredActualAngleDegrees
+                + DATA_COLLECTION_FITTED_HOOD_ANGLE_OFFSET_DEGREES
+                + DATA_COLLECTION_FITTED_HOOD_ANGLE_SLOPE_PER_DEGREE
+                        * (measuredActualAngleDegrees
+                                - DATA_COLLECTION_FITTED_HOOD_ANGLE_SLOPE_REFERENCE_DEGREES);
+    }
+
+    // Full reverse path used when physics finds a true angle but the motor needs a command angle.
+    static double getCommandedAngleDegreesForTrueAngle(double trueAngleDegrees) {
+        double slopePerDegree = DATA_COLLECTION_FITTED_HOOD_ANGLE_SLOPE_PER_DEGREE;
+        double denominator = 1.0 + slopePerDegree;
+        if (Math.abs(denominator) <= 1e-9) {
+            return Double.NaN;
+        }
+
+        double measuredActualAngleDegrees = (trueAngleDegrees
+                - DATA_COLLECTION_FITTED_HOOD_ANGLE_OFFSET_DEGREES
+                + slopePerDegree * DATA_COLLECTION_FITTED_HOOD_ANGLE_SLOPE_REFERENCE_DEGREES)
+                / denominator;
+        double measuredActualAngleChangeDegrees =
+                MEASURED_HOOD_ANGLE_AT_MECHANISM_ZERO_DEGREES - measuredActualAngleDegrees;
+        double commandedAngleChangeDegrees = interpolateClamped(
+                measuredActualAngleChangeDegrees,
+                RAW_MEASURED_ACTUAL_ANGLE_CHANGES_DEGREES,
+                COMMANDED_HOOD_ANGLE_CHANGES_DEGREES);
+        if (!Double.isFinite(commandedAngleChangeDegrees)) {
+            return Double.NaN;
+        }
+        return MEASURED_HOOD_ANGLE_AT_MECHANISM_ZERO_DEGREES - commandedAngleChangeDegrees;
+    }
+
     private static double[] buildActualAnglesDegrees(
             double hoodAngleAtMechanismZeroDegrees,
             double[] commandAngleChangesDegrees) {
@@ -235,15 +302,6 @@ public final class ShooterConstants {
             actualAnglesDegrees[i] = hoodAngleAtMechanismZeroDegrees - commandAngleChangesDegrees[i];
         }
         return actualAnglesDegrees;
-    }
-
-    private static double[] buildAngleChangesDegrees(double[] actualAnglesDegrees) {
-        double[] angleChangesDegrees = new double[actualAnglesDegrees.length];
-        double mechanismZeroDegrees = actualAnglesDegrees[0];
-        for (int i = 0; i < actualAnglesDegrees.length; i++) {
-            angleChangesDegrees[i] = mechanismZeroDegrees - actualAnglesDegrees[i];
-        }
-        return angleChangesDegrees;
     }
 
     private static double[] applyHoodAngleModel(
@@ -260,15 +318,46 @@ public final class ShooterConstants {
         return correctedAnglesDegrees;
     }
 
-    private static double[][] applyAngleOffsetDegrees(double[][] rawAnglesDegrees, double angleOffsetDegrees) {
-        double[][] correctedAnglesDegrees = new double[rawAnglesDegrees.length][];
-        for (int row = 0; row < rawAnglesDegrees.length; row++) {
-            correctedAnglesDegrees[row] = rawAnglesDegrees[row].clone();
-            for (int col = 0; col < correctedAnglesDegrees[row].length; col++) {
-                correctedAnglesDegrees[row][col] += angleOffsetDegrees;
+    private static double interpolateClamped(
+            double x,
+            double[] sampleXs,
+            double[] sampleYs) {
+        if (!Double.isFinite(x) || sampleXs.length != sampleYs.length || sampleXs.length == 0) {
+            return Double.NaN;
+        }
+
+        for (int i = 0; i < sampleXs.length; i++) {
+            if (Math.abs(x - sampleXs[i]) <= 1e-9) {
+                return sampleYs[i];
             }
         }
-        return correctedAnglesDegrees;
+
+        boolean ascending = sampleXs[0] <= sampleXs[sampleXs.length - 1];
+        if (ascending) {
+            if (x <= sampleXs[0]) {
+                return sampleYs[0];
+            }
+            if (x >= sampleXs[sampleXs.length - 1]) {
+                return sampleYs[sampleYs.length - 1];
+            }
+        } else {
+            if (x >= sampleXs[0]) {
+                return sampleYs[0];
+            }
+            if (x <= sampleXs[sampleXs.length - 1]) {
+                return sampleYs[sampleYs.length - 1];
+            }
+        }
+
+        for (int i = 1; i < sampleXs.length; i++) {
+            double x0 = sampleXs[i - 1];
+            double x1 = sampleXs[i];
+            if (x >= Math.min(x0, x1) - 1e-9 && x <= Math.max(x0, x1) + 1e-9) {
+                double ratio = (x - x0) / (x1 - x0);
+                return sampleYs[i - 1] + ratio * (sampleYs[i] - sampleYs[i - 1]);
+            }
+        }
+        return Double.NaN;
     }
 
     private static double[] buildBallExitIpsFromSpeedModel(

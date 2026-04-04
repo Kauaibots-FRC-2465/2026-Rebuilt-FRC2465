@@ -64,7 +64,7 @@ class DataCollectionModelTest {
             double correctedLaunchAngleDegrees = getCorrectedLaunchAngleDegrees(shot.hoodAngleDegrees());
             double angleExitScale = interpolateDescending(
                     correctedLaunchAngleDegrees,
-                    ShooterConstants.MEASURED_ACTUAL_ANGLES_DEGREES,
+                    ShooterConstants.TRUE_HOOD_ANGLES_DEGREES,
                     ShooterConstants.FITTED_COMMAND_ANGLE_EXIT_SCALES);
             double baseBallExitIps = FlywheelBallExitInterpolator.getBallExitIpsForSetIps(shot.commandedFlywheelIps());
             double correctedBallExitIps = baseBallExitIps * angleExitScale;
@@ -282,11 +282,7 @@ class DataCollectionModelTest {
     }
 
     private static double getCorrectedLaunchAngleDegrees(double fileHoodAngleDegrees) {
-        return fileHoodAngleDegrees
-                + ShooterConstants.DATA_COLLECTION_FITTED_HOOD_ANGLE_OFFSET_DEGREES
-                + ShooterConstants.DATA_COLLECTION_FITTED_HOOD_ANGLE_SLOPE_PER_DEGREE
-                        * (fileHoodAngleDegrees
-                                - ShooterConstants.DATA_COLLECTION_FITTED_HOOD_ANGLE_SLOPE_REFERENCE_DEGREES);
+        return ShooterConstants.getTrueAngleDegreesForCommandedAngle(fileHoodAngleDegrees);
     }
 
     private static LutDistancePrediction predictTargetDistanceFromLut(
@@ -362,7 +358,7 @@ class DataCollectionModelTest {
 
         double angleExitScale = interpolateDescending(
                 correctedLaunchAngleDegrees,
-                ShooterConstants.MEASURED_ACTUAL_ANGLES_DEGREES,
+                ShooterConstants.TRUE_HOOD_ANGLES_DEGREES,
                 ShooterConstants.FITTED_COMMAND_ANGLE_EXIT_SCALES);
         if (!(angleExitScale > 0.0)) {
             return Double.NaN;

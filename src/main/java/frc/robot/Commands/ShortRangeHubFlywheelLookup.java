@@ -2,6 +2,8 @@ package frc.robot.Commands;
 
 final class ShortRangeHubFlywheelLookup {
     private static final double EPSILON = 1e-9;
+    // This empirical 6 ft-elevation lookup intentionally stays in commanded-angle space only.
+    // Do not run these hood angles through the measured-actual / true-angle conversions.
     private static final double TARGET_ELEVATION_INCHES =
             ShooterConstants.DATA_COLLECTION_SHORT_RANGE_TARGET_ELEVATION_INCHES;
     private static final double MIN_DISTANCE_INCHES =

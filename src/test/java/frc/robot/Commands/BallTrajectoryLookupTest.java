@@ -86,7 +86,7 @@ class BallTrajectoryLookupTest {
                     continue;
                 }
 
-                double angleDegrees = ShooterConstants.MEASURED_ACTUAL_ANGLES_DEGREES[col];
+                double angleDegrees = ShooterConstants.TRUE_HOOD_ANGLES_DEGREES[col];
                 double effectiveExitVelocityIps =
                         TABLE_BALL_EXIT_IPS[row]
                                 * ShooterConstants.FITTED_COMMAND_ANGLE_EXIT_SCALES[col];
@@ -160,7 +160,7 @@ class BallTrajectoryLookupTest {
         List<HeightDiscrepancy> worstDiscrepanciesByAngle = new ArrayList<>();
         HeightDiscrepancy worstOverall = null;
 
-        for (double angleDegrees : ShooterConstants.MEASURED_ACTUAL_ANGLES_DEGREES) {
+        for (double angleDegrees : ShooterConstants.TRUE_HOOD_ANGLES_DEGREES) {
             HeightDiscrepancy worstForAngle = null;
             for (int elevationIndex = 0;
                     elevationIndex <= ShooterConstants.FITTED_BALL_TRAJECTORY_LUT_MAX_TARGET_ELEVATION_FEET;
@@ -360,8 +360,8 @@ class BallTrajectoryLookupTest {
         BallTrajectoryLookup.MovingShotSolution solution = new BallTrajectoryLookup.MovingShotSolution();
 
         boolean solved = BallTrajectoryLookup.solveMovingShot(
-                ShooterConstants.FITTED_BALL_TRAJECTORY_LUT_MIN_HOOD_ANGLE_DEGREES,
-                ShooterConstants.FITTED_BALL_TRAJECTORY_LUT_MAX_HOOD_ANGLE_DEGREES,
+                ShooterConstants.COMMANDED_MINIMUM_ALLOWED_HOOD_ANGLE_DEGREES,
+                ShooterConstants.COMMANDED_MAXIMUM_ALLOWED_HOOD_ANGLE_DEGREES,
                 ShooterConstants.COMMANDED_MOVING_SHOT_HOOD_SEARCH_STEP_DEGREES,
                 true,
                 0.0,
@@ -437,7 +437,7 @@ class BallTrajectoryLookupTest {
     }
 
     private static double getAngleExitScale(double hoodAngleDegrees) {
-        double[] sampleAnglesDegrees = ShooterConstants.MEASURED_ACTUAL_ANGLES_DEGREES;
+        double[] sampleAnglesDegrees = ShooterConstants.TRUE_HOOD_ANGLES_DEGREES;
         double[] angleExitScales = ShooterConstants.FITTED_COMMAND_ANGLE_EXIT_SCALES;
 
         for (int i = 0; i < sampleAnglesDegrees.length; i++) {

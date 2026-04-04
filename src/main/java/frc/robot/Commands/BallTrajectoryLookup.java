@@ -24,8 +24,12 @@ public final class BallTrajectoryLookup {
             ShooterConstants.FITTED_TRAJECTORY_DRAG_COEFFICIENT_LOG_SLOPE_PER_INCH;
     private static final double MAGNUS_PER_SPIN_INCH = ShooterConstants.FITTED_TRAJECTORY_MAGNUS_PER_SPIN_INCH;
     private static final double[] ANGLE_SCALE_SAMPLE_ANGLES_DEGREES =
-            ShooterConstants.MEASURED_ACTUAL_ANGLES_DEGREES;
+            ShooterConstants.TRUE_HOOD_ANGLES_DEGREES;
     private static final double[] ANGLE_EXIT_SCALES = ShooterConstants.FITTED_COMMAND_ANGLE_EXIT_SCALES;
+    private static final double MIN_COMMANDED_HOOD_ANGLE_DEGREES =
+            ShooterConstants.COMMANDED_MINIMUM_ALLOWED_HOOD_ANGLE_DEGREES;
+    private static final double MAX_COMMANDED_HOOD_ANGLE_DEGREES =
+            ShooterConstants.COMMANDED_MAXIMUM_ALLOWED_HOOD_ANGLE_DEGREES;
     private static final double MAX_FLYWHEEL_COMMAND_IPS =
             ShooterConstants.COMMANDED_FLYWHEEL_SET_IPS[ShooterConstants.COMMANDED_FLYWHEEL_SET_IPS.length - 1];
     private static final double MIN_FLYWHEEL_COMMAND_IPS = ShooterConstants.COMMANDED_FLYWHEEL_SET_IPS[0];
@@ -310,8 +314,8 @@ public final class BallTrajectoryLookup {
             return false;
         }
 
-        double clampedMinHoodAngleDegrees = Math.max(LUT_MIN_HOOD_ANGLE_DEGREES, minHoodAngleDegrees);
-        double clampedMaxHoodAngleDegrees = Math.min(LUT_MAX_HOOD_ANGLE_DEGREES, maxHoodAngleDegrees);
+        double clampedMinHoodAngleDegrees = Math.max(MIN_COMMANDED_HOOD_ANGLE_DEGREES, minHoodAngleDegrees);
+        double clampedMaxHoodAngleDegrees = Math.min(MAX_COMMANDED_HOOD_ANGLE_DEGREES, maxHoodAngleDegrees);
         if (clampedMinHoodAngleDegrees > clampedMaxHoodAngleDegrees) {
             return false;
         }
@@ -406,8 +410,8 @@ public final class BallTrajectoryLookup {
             return FixedFlywheelShotStatus.NO_SOLUTION;
         }
 
-        double clampedMinHoodAngleDegrees = Math.max(LUT_MIN_HOOD_ANGLE_DEGREES, minHoodAngleDegrees);
-        double clampedMaxHoodAngleDegrees = Math.min(LUT_MAX_HOOD_ANGLE_DEGREES, maxHoodAngleDegrees);
+        double clampedMinHoodAngleDegrees = Math.max(MIN_COMMANDED_HOOD_ANGLE_DEGREES, minHoodAngleDegrees);
+        double clampedMaxHoodAngleDegrees = Math.min(MAX_COMMANDED_HOOD_ANGLE_DEGREES, maxHoodAngleDegrees);
         if (clampedMinHoodAngleDegrees > clampedMaxHoodAngleDegrees) {
             return FixedFlywheelShotStatus.NO_SOLUTION;
         }
@@ -590,8 +594,15 @@ public final class BallTrajectoryLookup {
         }
         out.invalidate();
 
+        // Moving-shot solves accept commanded hood angles because the caller is driving the mechanism.
+        // Physics and LUT access use the corresponding true launch angle internally.
+        double trueHoodAngleDegrees = ShooterConstants.getTrueAngleDegreesForCommandedAngle(hoodAngleDegrees);
+        if (!Double.isFinite(trueHoodAngleDegrees)) {
+            return false;
+        }
+
         double candidateMaximumBallZElevationInches = getMaximumBallZElevationInches(
-                hoodAngleDegrees,
+                trueHoodAngleDegrees,
                 targetRadialDistanceInches,
                 targetElevationInches);
         if (!Double.isFinite(candidateMaximumBallZElevationInches)
@@ -600,14 +611,14 @@ public final class BallTrajectoryLookup {
         }
 
         double fieldRelativeExitVelocityIps = getRequiredExitVelocityIps(
-                hoodAngleDegrees,
+                trueHoodAngleDegrees,
                 targetRadialDistanceInches,
                 targetElevationInches);
         if (!Double.isFinite(fieldRelativeExitVelocityIps)) {
             return false;
         }
 
-        double hoodAngleRadians = Math.toRadians(hoodAngleDegrees);
+        double hoodAngleRadians = Math.toRadians(trueHoodAngleDegrees);
         double fieldHorizontalExitVelocityIps = fieldRelativeExitVelocityIps * Math.cos(hoodAngleRadians);
         double launcherRelativeFieldVxIps =
                 fieldHorizontalExitVelocityIps * Math.cos(targetAzimuthRadians) - robotFieldVxIps;
@@ -619,7 +630,7 @@ public final class BallTrajectoryLookup {
                 launcherRelativeHorizontalExitVelocityIps,
                 fieldRelativeExitVelocityIps * Math.sin(hoodAngleRadians));
         double flywheelCommandIps =
-                getEstimatedFlywheelCommandIps(hoodAngleDegrees, launcherRelativeExitVelocityIps);
+                getEstimatedFlywheelCommandIps(trueHoodAngleDegrees, launcherRelativeExitVelocityIps);
         if (!Double.isFinite(flywheelCommandIps)) {
             return false;
         }

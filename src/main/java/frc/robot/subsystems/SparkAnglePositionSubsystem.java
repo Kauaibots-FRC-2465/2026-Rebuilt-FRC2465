@@ -66,6 +66,7 @@ public class SparkAnglePositionSubsystem extends SubsystemBase {
     // Mechanism model
     private final double mechanismGearRatio;
     private final double absoluteEncoderGearRatio;
+    private final double positionKp;
     private final double referenceAngleAtMechanismZeroRotations;
     private final double publicToMechanismSlope;
     private final double minimumPublicAngleRotations;
@@ -352,6 +353,7 @@ public class SparkAnglePositionSubsystem extends SubsystemBase {
         this.motorName = motorName;
         this.mechanismGearRatio = mechanismGearRatio;
         this.absoluteEncoderGearRatio = absoluteEncoderGearRatio;
+        this.positionKp = kP;
         this.referenceAngleAtMechanismZeroRotations = referenceAngleAtMechanismZeroRotations;
         this.publicToMechanismSlope = publicAngleIncreasesWithMechanism ? 1.0 : -1.0;
         this.minimumPublicAngleRotations = minimumPublicAngleRotations;
@@ -403,6 +405,10 @@ public class SparkAnglePositionSubsystem extends SubsystemBase {
         cfg.closedLoop.feedbackSensor(FeedbackSensor.kPrimaryEncoder);
         cfg.closedLoop.pid(kP*mechanismGearRatio, 0.0, kD*mechanismGearRatio);
         System.out.println("Added "+motorName+"as SparkAnglePositionSubsystem");
+    }
+
+    public double getPositionKp() {
+        return positionKp;
     }
 
     @Override

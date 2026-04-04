@@ -9,15 +9,15 @@ import org.junit.jupiter.api.Test;
 class ShortRangeHubFlywheelLookupTest {
     @Test
     void exactDataPointsReturnRecordedCommandSpeeds() {
-        assertEquals(365.0, ShortRangeHubFlywheelLookup.getFlywheelCommandIps(218.0, correctedAngle(50.6)), 1e-9);
-        assertEquals(330.0, ShortRangeHubFlywheelLookup.getFlywheelCommandIps(170.0, correctedAngle(45.6)), 1e-9);
-        assertEquals(285.0, ShortRangeHubFlywheelLookup.getFlywheelCommandIps(59.0, correctedAngle(76.6)), 1e-9);
+        assertEquals(365.0, ShortRangeHubFlywheelLookup.getFlywheelCommandIps(218.0, 50.6), 1e-9);
+        assertEquals(330.0, ShortRangeHubFlywheelLookup.getFlywheelCommandIps(170.0, 45.6), 1e-9);
+        assertEquals(285.0, ShortRangeHubFlywheelLookup.getFlywheelCommandIps(59.0, 76.6), 1e-9);
     }
 
     @Test
     void lookupInterpolatesWithinAndAcrossDistanceRows() {
-        assertEquals(350.0, ShortRangeHubFlywheelLookup.getFlywheelCommandIps(170.0, correctedAngle(58.1)), 1e-9);
-        assertEquals(317.5, ShortRangeHubFlywheelLookup.getFlywheelCommandIps(110.0, correctedAngle(65.6)), 1e-9);
+        assertEquals(350.0, ShortRangeHubFlywheelLookup.getFlywheelCommandIps(170.0, 58.1), 1e-9);
+        assertEquals(317.5, ShortRangeHubFlywheelLookup.getFlywheelCommandIps(110.0, 65.6), 1e-9);
     }
 
     @Test
@@ -32,9 +32,5 @@ class ShortRangeHubFlywheelLookupTest {
         assertFalse(ShortRangeHubFlywheelLookup.isApplicable(40.0, ShooterConstants.COMMANDED_SCORE_IN_HUB_TARGET_ELEVATION_INCHES));
         assertFalse(ShortRangeHubFlywheelLookup.isApplicable(230.0, ShooterConstants.COMMANDED_SCORE_IN_HUB_TARGET_ELEVATION_INCHES));
         assertFalse(ShortRangeHubFlywheelLookup.isApplicable(170.0, ShooterConstants.COMMANDED_SNOWBLOW_TARGET_ELEVATION_INCHES));
-    }
-
-    private static double correctedAngle(double rawAngleDegrees) {
-        return rawAngleDegrees + ShooterConstants.DATA_COLLECTION_FITTED_HOOD_ANGLE_OFFSET_DEGREES;
     }
 }

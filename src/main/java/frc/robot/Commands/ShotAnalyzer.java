@@ -24,7 +24,7 @@ public final class ShotAnalyzer {
     private static final double ANGLE_FIT_INITIAL_STEP_DEGREES = 0.25;
     private static final double DRAG_LOG_REFERENCE_SPEED_IPS =
             ShooterConstants.FITTED_TRAJECTORY_DRAG_LOG_REFERENCE_SPEED_IPS;
-    private static final double[] ANGLES_DEGREES = ShooterConstants.MEASURED_ACTUAL_ANGLES_DEGREES;
+    private static final double[] ANGLES_DEGREES = ShooterConstants.TRUE_HOOD_ANGLES_DEGREES;
     private static final double[] ANGLE_EXIT_SCALES = ShooterConstants.FITTED_COMMAND_ANGLE_EXIT_SCALES;
     private static final double[][] DISTANCE_GRID_INCHES = ShooterConstants.MEASURED_DISTANCE_GRID_INCHES;
     private static final double[] COMMAND_SPEEDS_IPS =
@@ -1151,8 +1151,8 @@ public final class ShotAnalyzer {
                 globalFit.dragCoefficientLogSlopePerInch());
         System.out.printf("  FITTED_TRAJECTORY_MAGNUS_PER_SPIN_INCH = %.9f%n",
                 globalFit.magnusPerSpinInch());
-        System.out.printf("  MEASURED_ACTUAL_ANGLES_DEGREES = %s%n", formatArray(ANGLES_DEGREES, 3));
-        System.out.printf("  FITTED_ACTUAL_ANGLES_DEGREES = %s%n", formatArray(globalFit.fittedAnglesDegrees(), 3));
+        System.out.printf("  TRUE_HOOD_ANGLES_DEGREES = %s%n", formatArray(ANGLES_DEGREES, 3));
+        System.out.printf("  FITTED_TRUE_HOOD_ANGLES_DEGREES = %s%n", formatArray(globalFit.fittedAnglesDegrees(), 3));
         System.out.printf("  FITTED_COMMAND_ANGLE_EXIT_SCALES = %s%n", formatAngleScales(globalFit));
         System.out.printf("  derivedCommandTableSpeedsIps = %s%n", formatArray(COMMAND_SPEEDS_IPS, 0));
         System.out.printf("  derivedTableBallExitIps = %s%n", formatArray(SHOT_EXIT_SPEEDS_IPS, 3));

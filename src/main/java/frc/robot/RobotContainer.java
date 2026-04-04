@@ -124,6 +124,7 @@ public class RobotContainer implements Subsystem {
     private final CommandXboxController driversController = new CommandXboxController(0);
     private final CommandXboxController engineersController = new CommandXboxController(1);
     private final CommandXboxController testController = new CommandXboxController(2);
+    private final CommandXboxController testController2 = new CommandXboxController(3);
 
     public final CommandSwerveDrivetrain drivetrain = TunerConstants.createDrivetrain();
     
@@ -300,7 +301,7 @@ private Command showAllianceMarquee() {
             MotorData.HOOD.name,
             150.0/10.0*22.0/32.0*5.0*5.0,
             5.0*5.0,
-            .2, //0.06,
+            .06,//.2, //0.06,
             0.0,
             10,
             40,
@@ -537,6 +538,7 @@ private Command showAllianceMarquee() {
         //engineersController.leftBumper().onTrue(
         //    new HoodTimingCharacterization(verticalAim)
         //);
+        testController2.y().onTrue(new HoodRestPositionCharacterization(verticalAim));
         // Idle while the robot is disabled. This ensures the configured
         // neutral mode is applied to the drive motors while disabled.
         final var idle = new SwerveRequest.Idle();

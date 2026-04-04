@@ -162,7 +162,7 @@ public final class DataCollectionShotAnalyzer {
         System.out.printf("where kCd(|v|) = kBase + kLog * ln(|v| / %.1f ips)%n",
                 DRAG_LOG_REFERENCE_SPEED_IPS);
         System.out.printf(
-                "Assumption: manual data-collection hood angles use theta_true = theta_file + a with total correction clamped within +/- %.1f deg, per-angle exit scales are seeded by interpolation from current constants, linear drag fixed at zero, continuous log-speed Cd model, one global Magnus coefficient; flywheel command-to-exit uses one piecewise-linear model with a knee at %.1f ips%n",
+                "Assumption: manual data-collection hood angles use theta_true = theta_measured(commanded) + a with total correction clamped within +/- %.1f deg, per-angle exit scales are seeded by interpolation from current constants, linear drag fixed at zero, continuous log-speed Cd model, one global Magnus coefficient; flywheel command-to-exit uses one piecewise-linear model with a knee at %.1f ips%n",
                 ANGLE_FIT_LIMIT_DEGREES,
                 SPEED_MODEL_KNEE_COMMAND_IPS);
         System.out.printf("Seed constants: dragBase=%.9f, dragLogSlope=%.9f, magnus=%.9f%n",
@@ -1451,8 +1451,8 @@ public final class DataCollectionShotAnalyzer {
         System.out.printf("  FITTED_SPEED_MODEL_INTERCEPT_IPS = %.6f%n", globalFit.speedModelInterceptIps());
         System.out.printf("  FITTED_SPEED_MODEL_LOW_SLOPE = %.6f%n", globalFit.speedModelLowSlope());
         System.out.printf("  FITTED_SPEED_MODEL_HIGH_SLOPE = %.6f%n", globalFit.speedModelHighSlope());
-        System.out.printf("  MEASURED_ACTUAL_ANGLES_DEGREES = %s%n", formatArray(ANGLES_DEGREES, 3));
-        System.out.printf("  FITTED_ACTUAL_ANGLES_DEGREES = %s%n", formatArray(globalFit.fittedAnglesDegrees(), 3));
+        System.out.printf("  DATA_COLLECTION_COMMANDED_HOOD_ANGLES_DEGREES = %s%n", formatArray(ANGLES_DEGREES, 3));
+        System.out.printf("  FITTED_TRUE_HOOD_ANGLES_DEGREES = %s%n", formatArray(globalFit.fittedAnglesDegrees(), 3));
         System.out.printf("  FITTED_COMMAND_ANGLE_EXIT_SCALES = %s%n", formatAngleScales(globalFit));
         System.out.printf("  dataCollectionCommandSpeedsIps = %s%n", formatArray(COMMAND_SPEEDS_IPS, 0));
         System.out.printf("  seededBallExitIpsFromLegacySpeedModel = %s%n", formatArray(SHOT_EXIT_SPEEDS_IPS, 3));
@@ -1501,9 +1501,9 @@ public final class DataCollectionShotAnalyzer {
                 globalFit.speedModelLowSlope());
         System.out.printf("static final double DATA_COLLECTION_FITTED_SPEED_MODEL_HIGH_SLOPE = %.6f;%n",
                 globalFit.speedModelHighSlope());
-        System.out.printf("static final double[] DATA_COLLECTION_EXPECTED_HOOD_ANGLES_DEGREES = %s;%n",
+        System.out.printf("static final double[] DATA_COLLECTION_COMMANDED_HOOD_ANGLES_DEGREES = %s;%n",
                 formatJavaArray(ANGLES_DEGREES, 6));
-        System.out.printf("static final double[] DATA_COLLECTION_FITTED_HOOD_ANGLES_DEGREES = %s;%n",
+        System.out.printf("static final double[] DATA_COLLECTION_FITTED_TRUE_HOOD_ANGLES_DEGREES = %s;%n",
                 formatJavaArray(globalFit.fittedAnglesDegrees(), 6));
         System.out.printf("static final double[] DATA_COLLECTION_FITTED_ANGLE_EXIT_SCALES = %s;%n",
                 formatJavaArray(globalFit.angleExitScales(), 6));
@@ -1599,8 +1599,9 @@ public final class DataCollectionShotAnalyzer {
         double clampedSlopePerDegree = clampAngleSlope(hoodAngleSlopePerDegree);
         double[] fittedAnglesDegrees = ANGLES_DEGREES.clone();
         for (int i = 0; i < fittedAnglesDegrees.length; i++) {
+            fittedAnglesDegrees[i] = ShooterConstants.getTrueAngleDegreesForCommandedAngle(ANGLES_DEGREES[i]);
             double correctionDegrees = clampedOffsetDegrees
-                    + clampedSlopePerDegree * (ANGLES_DEGREES[i] - ANGLE_SLOPE_REFERENCE_DEGREES);
+                    + clampedSlopePerDegree * (fittedAnglesDegrees[i] - ANGLE_SLOPE_REFERENCE_DEGREES);
             correctionDegrees = clampAngle(correctionDegrees, -ANGLE_FIT_LIMIT_DEGREES, ANGLE_FIT_LIMIT_DEGREES);
             fittedAnglesDegrees[i] += correctionDegrees;
         }
@@ -1628,8 +1629,8 @@ public final class DataCollectionShotAnalyzer {
         double[] seedAngleExitScales = new double[uniqueAnglesDegrees.length];
         for (int i = 0; i < uniqueAnglesDegrees.length; i++) {
             seedAngleExitScales[i] = interpolateDescending(
-                    uniqueAnglesDegrees[i],
-                    ShooterConstants.MEASURED_ACTUAL_ANGLES_DEGREES,
+                    ShooterConstants.getTrueAngleDegreesForCommandedAngle(uniqueAnglesDegrees[i]),
+                    ShooterConstants.TRUE_HOOD_ANGLES_DEGREES,
                     ShooterConstants.FITTED_COMMAND_ANGLE_EXIT_SCALES);
         }
 

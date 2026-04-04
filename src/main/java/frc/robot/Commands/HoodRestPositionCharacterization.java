@@ -27,6 +27,7 @@ public class HoodRestPositionCharacterization extends Command {
     private static final double SAMPLE_WAIT_SECONDS = 0.5;
     private static final double START_TOLERANCE_DEGREES = 1.0;
     private static final String OUTPUT_FILE_PREFIX = "hood_rest_characterization";
+    private static final String KP_FILENAME_LABEL_PREFIX = "_kp";
 
     private record SamplePoint(
             int sampleIndex,
@@ -79,8 +80,9 @@ public class HoodRestPositionCharacterization extends Command {
 
         outputPath = Filesystem.getOperatingDirectory().toPath().resolve(String.format(
                 Locale.US,
-                "%s_%d.csv",
+                "%s%s_%d.csv",
                 OUTPUT_FILE_PREFIX,
+                formatKpFilenameSuffix(verticalAim.getPositionKp()),
                 System.currentTimeMillis()));
 
         csvBuffer.append(
@@ -205,7 +207,14 @@ public class HoodRestPositionCharacterization extends Command {
                 samplePoints.size(),
                 samplePoint.commandedAngleChangeDegrees(),
                 samplePoint.commandedPublicAngleDegrees(),
-                measuredPublicAngleDegrees,
-                commandedMinusMeasuredChangeDegrees);
+                    measuredPublicAngleDegrees,
+                    commandedMinusMeasuredChangeDegrees);
+    }
+
+    private static String formatKpFilenameSuffix(double kP) {
+        String kpText = String.format(Locale.US, "%.3f", kP)
+                .replace('-', 'm')
+                .replace('.', 'p');
+        return KP_FILENAME_LABEL_PREFIX + kpText;
     }
 }

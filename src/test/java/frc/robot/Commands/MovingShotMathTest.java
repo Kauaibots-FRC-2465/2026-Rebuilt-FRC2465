@@ -29,8 +29,8 @@ class MovingShotMathTest {
 
         boolean solved = MovingShotMath.solveMovingShotAtClosestHoodAngle(
                 preferredHoodAngleDegrees,
-                BallTrajectoryLookup.LUT_MIN_HOOD_ANGLE_DEGREES,
-                BallTrajectoryLookup.LUT_MAX_HOOD_ANGLE_DEGREES,
+                ShooterConstants.COMMANDED_MINIMUM_ALLOWED_HOOD_ANGLE_DEGREES,
+                ShooterConstants.COMMANDED_MAXIMUM_ALLOWED_HOOD_ANGLE_DEGREES,
                 SEARCH_STEP_DEGREES,
                 0.0,
                 0.0,
