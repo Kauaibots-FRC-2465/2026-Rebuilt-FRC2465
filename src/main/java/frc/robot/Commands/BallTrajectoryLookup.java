@@ -139,6 +139,25 @@ public final class BallTrajectoryLookup {
             robotHeadingDegrees = Double.NaN;
         }
 
+        public void copyFrom(MovingShotSolution other) {
+            if (other == null || !other.valid) {
+                invalidate();
+                return;
+            }
+
+            set(
+                    other.hoodAngleDegrees,
+                    other.targetRadialDistanceInches,
+                    other.targetElevationInches,
+                    other.maximumBallZElevationInches,
+                    other.fieldRelativeExitVelocityIps,
+                    other.launcherRelativeExitVelocityIps,
+                    other.flywheelCommandIps,
+                    other.shotAzimuthDegrees,
+                    other.turretDeltaDegrees,
+                    other.robotHeadingDegrees);
+        }
+
         void set(
                 double hoodAngleDegrees,
                 double targetRadialDistanceInches,
@@ -162,6 +181,13 @@ public final class BallTrajectoryLookup {
             this.turretDeltaDegrees = turretDeltaDegrees;
             this.robotHeadingDegrees = robotHeadingDegrees;
         }
+    }
+
+    public enum FixedFlywheelShotStatus {
+        VALID,
+        TOO_SLOW,
+        TOO_FAST,
+        NO_SOLUTION
     }
 
     private static final class LookupTables {
@@ -315,69 +341,199 @@ public final class BallTrajectoryLookup {
                         ? hoodAngleDegrees >= clampedMinHoodAngleDegrees - 1e-9
                         : hoodAngleDegrees <= clampedMaxHoodAngleDegrees + 1e-9;
                 hoodAngleDegrees += hoodAngleStepDirectionDegrees) {
-            double candidateMaximumBallZElevationInches = getMaximumBallZElevationInches(
-                    hoodAngleDegrees,
-                    targetRadialDistanceInches,
-                    targetElevationInches);
-            if (!Double.isFinite(candidateMaximumBallZElevationInches)
-                    || candidateMaximumBallZElevationInches > maximumBallZElevationInches) {
-                continue;
-            }
-
-            double fieldRelativeExitVelocityIps = getRequiredExitVelocityIps(
-                    hoodAngleDegrees,
-                    targetRadialDistanceInches,
-                    targetElevationInches);
-            if (!Double.isFinite(fieldRelativeExitVelocityIps)) {
-                continue;
-            }
-
-            double hoodAngleRadians = Math.toRadians(hoodAngleDegrees);
-            double fieldHorizontalExitVelocityIps = fieldRelativeExitVelocityIps * Math.cos(hoodAngleRadians);
-            double launcherRelativeFieldVxIps =
-                    fieldHorizontalExitVelocityIps * Math.cos(targetAzimuthRadians) - robotFieldVxIps;
-            double launcherRelativeFieldVyIps =
-                    fieldHorizontalExitVelocityIps * Math.sin(targetAzimuthRadians) - robotFieldVyIps;
-            double launcherRelativeHorizontalExitVelocityIps =
-                    Math.hypot(launcherRelativeFieldVxIps, launcherRelativeFieldVyIps);
-            double launcherRelativeExitVelocityIps = Math.hypot(
-                    launcherRelativeHorizontalExitVelocityIps,
-                    fieldRelativeExitVelocityIps * Math.sin(hoodAngleRadians));
-            double flywheelCommandIps =
-                    getEstimatedFlywheelCommandIps(hoodAngleDegrees, launcherRelativeExitVelocityIps);
-            if (!Double.isFinite(flywheelCommandIps)) {
-                continue;
-            }
-
-            double shotAzimuthRadians = Math.atan2(
-                    launcherRelativeFieldVyIps,
-                    launcherRelativeFieldVxIps);
-            // Horizontal aim public angle is positive toward robot-left (CCW).
-            double desiredTurretDeltaDegrees = Math.toDegrees(MathUtil.inputModulus(
-                    shotAzimuthRadians - baselineRobotHeadingRadians,
-                    -Math.PI,
-                    Math.PI));
-            double turretDeltaDegrees = Math.max(
-                    minTurretAngleDegrees,
-                    Math.min(maxTurretAngleDegrees, desiredTurretDeltaDegrees));
-            double robotHeadingDegrees = Math.toDegrees(MathUtil.angleModulus(
-                    shotAzimuthRadians - Math.toRadians(turretDeltaDegrees)));
-
-            out.set(
+            if (populateMovingShotSolutionForHoodAngle(
                     hoodAngleDegrees,
                     targetRadialDistanceInches,
                     targetElevationInches,
-                    candidateMaximumBallZElevationInches,
-                    fieldRelativeExitVelocityIps,
-                    launcherRelativeExitVelocityIps,
-                    flywheelCommandIps,
-                    Math.toDegrees(shotAzimuthRadians),
-                    turretDeltaDegrees,
-                    robotHeadingDegrees);
-            return true;
+                    maximumBallZElevationInches,
+                    robotFieldVxIps,
+                    robotFieldVyIps,
+                    targetAzimuthRadians,
+                    baselineRobotHeadingRadians,
+                    minTurretAngleDegrees,
+                    maxTurretAngleDegrees,
+                    out)) {
+                return true;
+            }
         }
 
         return false;
+    }
+
+    public static FixedFlywheelShotStatus solveMovingShotForFlywheelCommand(
+            double minHoodAngleDegrees,
+            double maxHoodAngleDegrees,
+            double hoodAngleStepDegrees,
+            boolean searchHighToLow,
+            double futureRobotXMeters,
+            double futureRobotYMeters,
+            double futureRobotHeadingRadians,
+            double robotFieldVxMetersPerSecond,
+            double robotFieldVyMetersPerSecond,
+            double targetXMeters,
+            double targetYMeters,
+            double targetElevationInches,
+            double maximumBallZElevationInches,
+            double preferredRobotHeadingRadians,
+            double minTurretAngleDegrees,
+            double maxTurretAngleDegrees,
+            double availableFlywheelCommandIps,
+            MovingShotSolution out) {
+        if (out == null) {
+            throw new IllegalArgumentException("MovingShotSolution output must not be null.");
+        }
+        out.invalidate();
+
+        if (!Double.isFinite(availableFlywheelCommandIps)) {
+            return FixedFlywheelShotStatus.NO_SOLUTION;
+        }
+        if (!Double.isFinite(minHoodAngleDegrees)
+                || !Double.isFinite(maxHoodAngleDegrees)
+                || !Double.isFinite(hoodAngleStepDegrees)
+                || hoodAngleStepDegrees <= 0.0
+                || !Double.isFinite(futureRobotXMeters)
+                || !Double.isFinite(futureRobotYMeters)
+                || !Double.isFinite(futureRobotHeadingRadians)
+                || !Double.isFinite(robotFieldVxMetersPerSecond)
+                || !Double.isFinite(robotFieldVyMetersPerSecond)
+                || !Double.isFinite(targetXMeters)
+                || !Double.isFinite(targetYMeters)
+                || !Double.isFinite(targetElevationInches)
+                || !Double.isFinite(maximumBallZElevationInches)
+                || !Double.isFinite(minTurretAngleDegrees)
+                || !Double.isFinite(maxTurretAngleDegrees)
+                || minTurretAngleDegrees > maxTurretAngleDegrees) {
+            return FixedFlywheelShotStatus.NO_SOLUTION;
+        }
+
+        double clampedMinHoodAngleDegrees = Math.max(LUT_MIN_HOOD_ANGLE_DEGREES, minHoodAngleDegrees);
+        double clampedMaxHoodAngleDegrees = Math.min(LUT_MAX_HOOD_ANGLE_DEGREES, maxHoodAngleDegrees);
+        if (clampedMinHoodAngleDegrees > clampedMaxHoodAngleDegrees) {
+            return FixedFlywheelShotStatus.NO_SOLUTION;
+        }
+
+        double targetDxMeters = targetXMeters - futureRobotXMeters;
+        double targetDyMeters = targetYMeters - futureRobotYMeters;
+        double targetDistanceMeters = Math.hypot(targetDxMeters, targetDyMeters);
+        if (!(targetDistanceMeters > 0.0)) {
+            return FixedFlywheelShotStatus.NO_SOLUTION;
+        }
+
+        double targetRadialDistanceInches = Inches.convertFrom(targetDistanceMeters, Meters);
+        double robotFieldVxIps = Inches.convertFrom(robotFieldVxMetersPerSecond, Meters);
+        double robotFieldVyIps = Inches.convertFrom(robotFieldVyMetersPerSecond, Meters);
+        double targetAzimuthRadians = Math.atan2(targetDyMeters, targetDxMeters);
+        double baselineRobotHeadingRadians = Double.isFinite(preferredRobotHeadingRadians)
+                ? preferredRobotHeadingRadians
+                : futureRobotHeadingRadians;
+
+        MovingShotSolution candidate = new MovingShotSolution();
+        MovingShotSolution previousCandidate = new MovingShotSolution();
+        MovingShotSolution closestCandidate = new MovingShotSolution();
+        MovingShotSolution shallowestCandidate = new MovingShotSolution();
+        MovingShotSolution steepestCandidate = new MovingShotSolution();
+        boolean hasPreviousCandidate = false;
+        boolean sawPositiveDiff = false;
+        boolean sawNegativeDiff = false;
+        double previousDiffIps = Double.NaN;
+        double closestAbsDiffIps = Double.POSITIVE_INFINITY;
+        double hoodAngleStepDirectionDegrees = searchHighToLow
+                ? -hoodAngleStepDegrees
+                : hoodAngleStepDegrees;
+
+        for (double hoodAngleDegrees = searchHighToLow
+                ? clampedMaxHoodAngleDegrees
+                : clampedMinHoodAngleDegrees;
+                searchHighToLow
+                        ? hoodAngleDegrees >= clampedMinHoodAngleDegrees - 1e-9
+                        : hoodAngleDegrees <= clampedMaxHoodAngleDegrees + 1e-9;
+                hoodAngleDegrees += hoodAngleStepDirectionDegrees) {
+            if (!populateMovingShotSolutionForHoodAngle(
+                    hoodAngleDegrees,
+                    targetRadialDistanceInches,
+                    targetElevationInches,
+                    maximumBallZElevationInches,
+                    robotFieldVxIps,
+                    robotFieldVyIps,
+                    targetAzimuthRadians,
+                    baselineRobotHeadingRadians,
+                    minTurretAngleDegrees,
+                    maxTurretAngleDegrees,
+                    candidate)) {
+                continue;
+            }
+
+            if (!steepestCandidate.isValid()
+                    || candidate.getHoodAngleDegrees() > steepestCandidate.getHoodAngleDegrees()) {
+                steepestCandidate.copyFrom(candidate);
+            }
+            if (!shallowestCandidate.isValid()
+                    || candidate.getHoodAngleDegrees() < shallowestCandidate.getHoodAngleDegrees()) {
+                shallowestCandidate.copyFrom(candidate);
+            }
+
+            double diffIps = candidate.getFlywheelCommandIps() - availableFlywheelCommandIps;
+            double absDiffIps = Math.abs(diffIps);
+            if (absDiffIps < closestAbsDiffIps) {
+                closestAbsDiffIps = absDiffIps;
+                closestCandidate.copyFrom(candidate);
+            }
+
+            if (Math.abs(diffIps) <= 1e-9) {
+                out.copyFrom(candidate);
+                return FixedFlywheelShotStatus.VALID;
+            }
+            if (diffIps > 0.0) {
+                sawPositiveDiff = true;
+            } else if (diffIps < 0.0) {
+                sawNegativeDiff = true;
+            }
+
+            if (hasPreviousCandidate && haveOppositeSigns(previousDiffIps, diffIps)) {
+                double interpolatedHoodAngleDegrees = interpolateHoodAngleForFlywheelCommand(
+                        previousCandidate.getHoodAngleDegrees(),
+                        previousCandidate.getFlywheelCommandIps(),
+                        candidate.getHoodAngleDegrees(),
+                        candidate.getFlywheelCommandIps(),
+                        availableFlywheelCommandIps);
+                if (populateMovingShotSolutionForHoodAngle(
+                        interpolatedHoodAngleDegrees,
+                        targetRadialDistanceInches,
+                        targetElevationInches,
+                        maximumBallZElevationInches,
+                        robotFieldVxIps,
+                        robotFieldVyIps,
+                        targetAzimuthRadians,
+                        baselineRobotHeadingRadians,
+                        minTurretAngleDegrees,
+                        maxTurretAngleDegrees,
+                        out)) {
+                    return FixedFlywheelShotStatus.VALID;
+                }
+
+                out.copyFrom(absDiffIps <= Math.abs(previousDiffIps) ? candidate : previousCandidate);
+                return FixedFlywheelShotStatus.VALID;
+            }
+
+            previousCandidate.copyFrom(candidate);
+            previousDiffIps = diffIps;
+            hasPreviousCandidate = true;
+        }
+
+        if (closestCandidate.isValid() && sawPositiveDiff && sawNegativeDiff) {
+            out.copyFrom(closestCandidate);
+            return FixedFlywheelShotStatus.VALID;
+        }
+        if (shallowestCandidate.isValid() && sawPositiveDiff && !sawNegativeDiff) {
+            out.copyFrom(shallowestCandidate);
+            return FixedFlywheelShotStatus.TOO_SLOW;
+        }
+        if (steepestCandidate.isValid() && sawNegativeDiff && !sawPositiveDiff) {
+            out.copyFrom(steepestCandidate);
+            return FixedFlywheelShotStatus.TOO_FAST;
+        }
+
+        return FixedFlywheelShotStatus.NO_SOLUTION;
     }
 
     public static boolean solveMovingShot(
@@ -415,6 +571,84 @@ public final class BallTrajectoryLookup {
                 minTurretAngleDegrees,
                 maxTurretAngleDegrees,
                 out);
+    }
+
+    private static boolean populateMovingShotSolutionForHoodAngle(
+            double hoodAngleDegrees,
+            double targetRadialDistanceInches,
+            double targetElevationInches,
+            double maximumBallZElevationInches,
+            double robotFieldVxIps,
+            double robotFieldVyIps,
+            double targetAzimuthRadians,
+            double baselineRobotHeadingRadians,
+            double minTurretAngleDegrees,
+            double maxTurretAngleDegrees,
+            MovingShotSolution out) {
+        if (out == null) {
+            throw new IllegalArgumentException("MovingShotSolution output must not be null.");
+        }
+        out.invalidate();
+
+        double candidateMaximumBallZElevationInches = getMaximumBallZElevationInches(
+                hoodAngleDegrees,
+                targetRadialDistanceInches,
+                targetElevationInches);
+        if (!Double.isFinite(candidateMaximumBallZElevationInches)
+                || candidateMaximumBallZElevationInches > maximumBallZElevationInches) {
+            return false;
+        }
+
+        double fieldRelativeExitVelocityIps = getRequiredExitVelocityIps(
+                hoodAngleDegrees,
+                targetRadialDistanceInches,
+                targetElevationInches);
+        if (!Double.isFinite(fieldRelativeExitVelocityIps)) {
+            return false;
+        }
+
+        double hoodAngleRadians = Math.toRadians(hoodAngleDegrees);
+        double fieldHorizontalExitVelocityIps = fieldRelativeExitVelocityIps * Math.cos(hoodAngleRadians);
+        double launcherRelativeFieldVxIps =
+                fieldHorizontalExitVelocityIps * Math.cos(targetAzimuthRadians) - robotFieldVxIps;
+        double launcherRelativeFieldVyIps =
+                fieldHorizontalExitVelocityIps * Math.sin(targetAzimuthRadians) - robotFieldVyIps;
+        double launcherRelativeHorizontalExitVelocityIps =
+                Math.hypot(launcherRelativeFieldVxIps, launcherRelativeFieldVyIps);
+        double launcherRelativeExitVelocityIps = Math.hypot(
+                launcherRelativeHorizontalExitVelocityIps,
+                fieldRelativeExitVelocityIps * Math.sin(hoodAngleRadians));
+        double flywheelCommandIps =
+                getEstimatedFlywheelCommandIps(hoodAngleDegrees, launcherRelativeExitVelocityIps);
+        if (!Double.isFinite(flywheelCommandIps)) {
+            return false;
+        }
+
+        double shotAzimuthRadians = Math.atan2(
+                launcherRelativeFieldVyIps,
+                launcherRelativeFieldVxIps);
+        double desiredTurretDeltaDegrees = Math.toDegrees(MathUtil.inputModulus(
+                shotAzimuthRadians - baselineRobotHeadingRadians,
+                -Math.PI,
+                Math.PI));
+        double turretDeltaDegrees = Math.max(
+                minTurretAngleDegrees,
+                Math.min(maxTurretAngleDegrees, desiredTurretDeltaDegrees));
+        double robotHeadingDegrees = Math.toDegrees(MathUtil.angleModulus(
+                shotAzimuthRadians - Math.toRadians(turretDeltaDegrees)));
+
+        out.set(
+                hoodAngleDegrees,
+                targetRadialDistanceInches,
+                targetElevationInches,
+                candidateMaximumBallZElevationInches,
+                fieldRelativeExitVelocityIps,
+                launcherRelativeExitVelocityIps,
+                flywheelCommandIps,
+                Math.toDegrees(shotAzimuthRadians),
+                turretDeltaDegrees,
+                robotHeadingDegrees);
+        return true;
     }
 
     static double solveRequiredExitVelocityIpsExact(
@@ -1034,6 +1268,24 @@ public final class BallTrajectoryLookup {
         }
         double interpolation = (targetX - x0) / (x1 - x0);
         return value0 + interpolation * (value1 - value0);
+    }
+
+    private static double interpolateHoodAngleForFlywheelCommand(
+            double hoodAngle1Degrees,
+            double flywheelCommand1Ips,
+            double hoodAngle2Degrees,
+            double flywheelCommand2Ips,
+            double targetFlywheelCommandIps) {
+        if (Math.abs(flywheelCommand2Ips - flywheelCommand1Ips) <= 1e-9) {
+            return hoodAngle2Degrees;
+        }
+        double interpolation =
+                (targetFlywheelCommandIps - flywheelCommand1Ips) / (flywheelCommand2Ips - flywheelCommand1Ips);
+        return hoodAngle1Degrees + (hoodAngle2Degrees - hoodAngle1Degrees) * interpolation;
+    }
+
+    private static boolean haveOppositeSigns(double value1, double value2) {
+        return (value1 < 0.0 && value2 > 0.0) || (value1 > 0.0 && value2 < 0.0);
     }
 
     private static boolean isBetween(double value, double bound1, double bound2) {

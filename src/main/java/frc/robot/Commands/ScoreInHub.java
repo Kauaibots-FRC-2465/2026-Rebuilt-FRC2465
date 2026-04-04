@@ -5,6 +5,7 @@ import static edu.wpi.first.units.Units.Inches;
 import static edu.wpi.first.units.Units.Meters;
 
 import java.util.Objects;
+import java.util.function.DoubleSupplier;
 import java.util.function.Supplier;
 
 import com.ctre.phoenix6.swerve.SwerveRequest;
@@ -13,7 +14,6 @@ import edu.wpi.first.math.geometry.Pose2d;
 import edu.wpi.first.math.geometry.Rotation2d;
 import edu.wpi.first.math.geometry.Translation2d;
 import edu.wpi.first.networktables.BooleanPublisher;
-import edu.wpi.first.networktables.DoubleArrayPublisher;
 import edu.wpi.first.networktables.DoublePublisher;
 import edu.wpi.first.networktables.NetworkTable;
 import edu.wpi.first.networktables.NetworkTableInstance;
@@ -28,6 +28,7 @@ import frc.robot.subsystems.PoseEstimatorSubsystem;
 import frc.robot.subsystems.ShooterSubsystem;
 import frc.robot.subsystems.SparkAnglePositionSubsystem;
 import frc.robot.utility.SlowCallMonitor;
+import frc.robot.utility.TuningDashboard;
 
 /**
  * Drives while solving a moving shot into the fixed hub target.
@@ -45,9 +46,9 @@ public class ScoreInHub extends Command {
     private final SparkAnglePositionSubsystem verticalAim;
     private final ShooterSubsystem shooter;
     private final Supplier<SwerveRequest> driveRequestSupplier;
+    private final DoubleSupplier azimuthTrimDegreesSupplier;
     private final SwerveRequest.FieldCentricFacingAngle facingAngleDrive =
             new SwerveRequest.FieldCentricFacingAngle();
-    private final DoubleArrayPublisher targetPublisher;
     private final DoublePublisher targetDistanceInchesPublisher;
     private final DoublePublisher targetElevationInchesPublisher;
     private final DoublePublisher hoodAngleDegreesPublisher;
@@ -57,15 +58,16 @@ public class ScoreInHub extends Command {
     private final DoublePublisher shotAzimuthDegreesPublisher;
     private final DoublePublisher turretDeltaDegreesPublisher;
     private final DoublePublisher robotHeadingDegreesPublisher;
-    private final DoubleArrayPublisher futurePosePublisher;
-    private final DoubleArrayPublisher futureVelocityPublisher;
+    private final edu.wpi.first.networktables.DoubleArrayPublisher futurePosePublisher;
+    private final edu.wpi.first.networktables.DoubleArrayPublisher futureVelocityPublisher;
     private final BooleanPublisher validSolutionPublisher;
     private final StringPublisher fieldTypePublisher;
     private final PoseEstimatorSubsystem.PredictedFusedState futureState =
             new PoseEstimatorSubsystem.PredictedFusedState();
+    private final BallTrajectoryLookup.MovingShotSolution idealMovingShotSolution =
+            new BallTrajectoryLookup.MovingShotSolution();
     private final BallTrajectoryLookup.MovingShotSolution movingShotSolution =
             new BallTrajectoryLookup.MovingShotSolution();
-    private final double[] targetFieldPose = new double[3];
     private final double[] futureFieldPose = new double[3];
     private final double[] futureFieldVelocity = new double[3];
     private Translation2d lastFieldRelativeDriveDirection = new Translation2d();
@@ -81,7 +83,8 @@ public class ScoreInHub extends Command {
             SparkAnglePositionSubsystem horizontalAim,
             SparkAnglePositionSubsystem verticalAim,
             ShooterSubsystem shooter,
-            Supplier<SwerveRequest> driveRequestSupplier) {
+            Supplier<SwerveRequest> driveRequestSupplier,
+            DoubleSupplier azimuthTrimDegreesSupplier) {
         this.drivetrain = Objects.requireNonNull(drivetrain, "drivetrain must not be null");
         this.poseEstimator = Objects.requireNonNull(poseEstimator, "poseEstimator must not be null");
         this.horizontalAim = Objects.requireNonNull(horizontalAim, "horizontalAim must not be null");
@@ -89,8 +92,9 @@ public class ScoreInHub extends Command {
         this.shooter = Objects.requireNonNull(shooter, "shooter must not be null");
         this.driveRequestSupplier =
                 Objects.requireNonNull(driveRequestSupplier, "driveRequestSupplier must not be null");
+        this.azimuthTrimDegreesSupplier =
+                Objects.requireNonNull(azimuthTrimDegreesSupplier, "azimuthTrimDegreesSupplier must not be null");
         NetworkTable scoreTable = NetworkTableInstance.getDefault().getTable("ScoreInHub");
-        targetPublisher = scoreTable.getDoubleArrayTopic("target").publish();
         targetDistanceInchesPublisher = scoreTable.getDoubleTopic("targetDistanceInches").publish();
         targetElevationInchesPublisher = scoreTable.getDoubleTopic("targetElevationInches").publish();
         hoodAngleDegreesPublisher = scoreTable.getDoubleTopic("hoodAngleDegrees").publish();
@@ -141,7 +145,10 @@ public class ScoreInHub extends Command {
 
         updateLastDriveDirection(fieldCentricRequest);
         long predictionStartMicros = SlowCallMonitor.nowMicros();
-        if (!poseEstimator.getPredictedFusedState(
+        if (!MovingShotMath.predictFutureStateFromCommand(
+                poseEstimator,
+                drivetrain.getDriverPerspectiveForward(),
+                fieldCentricRequest,
                 ShooterConstants.COMMANDED_SHOOTER_LOOKAHEAD_SECONDS,
                 futureState)) {
             predictionMicros = SlowCallMonitor.nowMicros() - predictionStartMicros;
@@ -181,7 +188,7 @@ public class ScoreInHub extends Command {
         Rotation2d robotHeadingTarget = preferredRobotHeading;
         long solutionStartMicros = SlowCallMonitor.nowMicros();
         if (updateShooterSolution(target, preferredRobotHeading)) {
-            robotHeadingTarget = lastValidRobotHeadingTarget;
+            robotHeadingTarget = Rotation2d.fromDegrees(movingShotSolution.getRobotHeadingDegrees());
         } else if (shouldHoldLastSolution()) {
             applyHeldShotCommand(fieldCentricRequest);
             long totalMicros = SlowCallMonitor.nowMicros() - executeStartMicros;
@@ -254,13 +261,15 @@ public class ScoreInHub extends Command {
             Translation2d target,
             Rotation2d preferredRobotHeading) {
         long functionStartMicros = SlowCallMonitor.nowMicros();
+        double minimumHoodAngleDegrees = verticalAim.getMinimumAngle().in(Degrees);
+        double maximumHoodAngleDegrees = verticalAim.getMaximumAngle().in(Degrees);
         double targetDistanceInches = Inches.convertFrom(
                 target.getDistance(new Translation2d(futureState.xMeters, futureState.yMeters)),
                 Meters);
         long solverStartMicros = SlowCallMonitor.nowMicros();
-        boolean hasSolution = BallTrajectoryLookup.solveMovingShot(
-                verticalAim.getMinimumAngle().in(Degrees),
-                verticalAim.getMaximumAngle().in(Degrees),
+        boolean hasIdealSolution = BallTrajectoryLookup.solveMovingShot(
+                minimumHoodAngleDegrees,
+                MovingShotMath.getIdealMaximumHoodAngleDegrees(verticalAim),
                 ShooterConstants.COMMANDED_MOVING_SHOT_HOOD_SEARCH_STEP_DEGREES,
                 true,
                 futureState.xMeters,
@@ -275,14 +284,54 @@ public class ScoreInHub extends Command {
                 preferredRobotHeading.getRadians(),
                 horizontalAim.getMinimumAngle().in(Degrees),
                 horizontalAim.getMaximumAngle().in(Degrees),
-                movingShotSolution);
+                idealMovingShotSolution);
+        if (!hasIdealSolution) {
+            long solverMicros = SlowCallMonitor.nowMicros() - solverStartMicros;
+            long totalMicros = SlowCallMonitor.nowMicros() - functionStartMicros;
+            if (SlowCallMonitor.isSlow(totalMicros, SLOW_SOLVER_THRESHOLD_MS)
+                    || SlowCallMonitor.isSlow(solverMicros, SLOW_SOLVER_THRESHOLD_MS)) {
+                SlowCallMonitor.print(
+                        "ScoreInHub.updateShooterSolution",
+                        totalMicros,
+                        String.format(
+                                "hasIdealSolution=false distance=%.1f in solveMovingShot=%.3f ms",
+                                targetDistanceInches,
+                                SlowCallMonitor.toMillis(solverMicros)));
+            }
+            return false;
+        }
+
+        double idealFlywheelCommandIps = idealMovingShotSolution.getFlywheelCommandIps();
+        double predictedFlywheelCommandIps = MovingShotMath.predictFlywheelSpeedIps(
+                shooter.getMainFlywheelSpeedIPS(),
+                idealFlywheelCommandIps);
+        BallTrajectoryLookup.FixedFlywheelShotStatus fixedFlywheelStatus =
+                BallTrajectoryLookup.solveMovingShotForFlywheelCommand(
+                        minimumHoodAngleDegrees,
+                        maximumHoodAngleDegrees,
+                        ShooterConstants.COMMANDED_MOVING_SHOT_FIXED_FLYWHEEL_HOOD_SEARCH_STEP_DEGREES,
+                        true,
+                        futureState.xMeters,
+                        futureState.yMeters,
+                        futureState.headingRadians,
+                        futureState.vxMetersPerSecond,
+                        futureState.vyMetersPerSecond,
+                        target.getX(),
+                        target.getY(),
+                        ShooterConstants.COMMANDED_SCORE_IN_HUB_TARGET_ELEVATION_INCHES,
+                        ShooterConstants.COMMANDED_MAXIMUM_SHOOTING_HEIGHT_INCHES,
+                        preferredRobotHeading.getRadians(),
+                        horizontalAim.getMinimumAngle().in(Degrees),
+                        horizontalAim.getMaximumAngle().in(Degrees),
+                        predictedFlywheelCommandIps,
+                        movingShotSolution);
         long solverMicros = SlowCallMonitor.nowMicros() - solverStartMicros;
         // Debug dashboard telemetry disabled to reduce NetworkTables traffic.
         // targetDistanceInchesPublisher.set(targetDistanceInches);
         // targetElevationInchesPublisher.set(ShooterConstants.COMMANDED_SCORE_IN_HUB_TARGET_ELEVATION_INCHES);
         // validSolutionPublisher.set(hasSolution);
 
-        if (!hasSolution) {
+        if (fixedFlywheelStatus == BallTrajectoryLookup.FixedFlywheelShotStatus.NO_SOLUTION) {
             // hoodAngleDegreesPublisher.set(Double.NaN);
             // shotExitVelocityIpsPublisher.set(0.0);
             // fieldRelativeExitVelocityIpsPublisher.set(0.0);
@@ -297,14 +346,21 @@ public class ScoreInHub extends Command {
                         "ScoreInHub.updateShooterSolution",
                         totalMicros,
                         String.format(
-                                "hasSolution=false distance=%.1f in solveMovingShot=%.3f ms",
+                                "hasFinalSolution=false distance=%.1f in solveMovingShot=%.3f ms",
                                 targetDistanceInches,
                                 SlowCallMonitor.toMillis(solverMicros)));
             }
             return false;
         }
 
-        double clampedTurretDeltaDegrees = clampTurretDeltaDegrees(movingShotSolution.getTurretDeltaDegrees());
+        double commandedHoodAngleDegrees = switch (fixedFlywheelStatus) {
+            case TOO_SLOW -> minimumHoodAngleDegrees;
+            case TOO_FAST -> maximumHoodAngleDegrees;
+            case VALID -> movingShotSolution.getHoodAngleDegrees();
+            case NO_SOLUTION -> Double.NaN;
+        };
+        double clampedTurretDeltaDegrees = clampTurretDeltaDegrees(
+                movingShotSolution.getTurretDeltaDegrees() + azimuthTrimDegreesSupplier.getAsDouble());
         // hoodAngleDegreesPublisher.set(movingShotSolution.getHoodAngleDegrees());
         // shotExitVelocityIpsPublisher.set(movingShotSolution.getLauncherRelativeExitVelocityIps());
         // fieldRelativeExitVelocityIpsPublisher.set(movingShotSolution.getFieldRelativeExitVelocityIps());
@@ -312,14 +368,18 @@ public class ScoreInHub extends Command {
         // shotAzimuthDegreesPublisher.set(movingShotSolution.getShotAzimuthDegrees());
         // turretDeltaDegreesPublisher.set(clampedTurretDeltaDegrees);
         // robotHeadingDegreesPublisher.set(movingShotSolution.getRobotHeadingDegrees());
-        verticalAim.setAngle(Degrees.of(movingShotSolution.getHoodAngleDegrees()));
+        verticalAim.setAngle(Degrees.of(commandedHoodAngleDegrees));
         horizontalAim.setAngle(Degrees.of(clampedTurretDeltaDegrees));
-        shooter.setCoupledIPS(movingShotSolution.getFlywheelCommandIps());
-        lastValidRobotHeadingTarget = Rotation2d.fromDegrees(movingShotSolution.getRobotHeadingDegrees());
-        lastValidTurretDeltaDegrees = clampedTurretDeltaDegrees;
-        lastValidFlywheelCommandIps = movingShotSolution.getFlywheelCommandIps();
-        lastValidSolutionTimestampSeconds = Timer.getFPGATimestamp();
-        hasLatchedValidSolution = true;
+        shooter.setCoupledIPS(idealFlywheelCommandIps);
+        if (fixedFlywheelStatus == BallTrajectoryLookup.FixedFlywheelShotStatus.VALID) {
+            lastValidRobotHeadingTarget = Rotation2d.fromDegrees(movingShotSolution.getRobotHeadingDegrees());
+            lastValidTurretDeltaDegrees = clampedTurretDeltaDegrees;
+            lastValidFlywheelCommandIps = idealFlywheelCommandIps;
+            lastValidSolutionTimestampSeconds = Timer.getFPGATimestamp();
+            hasLatchedValidSolution = true;
+        } else {
+            hasLatchedValidSolution = false;
+        }
         long totalMicros = SlowCallMonitor.nowMicros() - functionStartMicros;
         if (SlowCallMonitor.isSlow(totalMicros, SLOW_SOLVER_THRESHOLD_MS)
                 || SlowCallMonitor.isSlow(solverMicros, SLOW_SOLVER_THRESHOLD_MS)) {
@@ -327,7 +387,8 @@ public class ScoreInHub extends Command {
                     "ScoreInHub.updateShooterSolution",
                     totalMicros,
                     String.format(
-                            "hasSolution=true distance=%.1f in solveMovingShot=%.3f ms",
+                            "status=%s distance=%.1f in solveMovingShot=%.3f ms",
+                            fixedFlywheelStatus,
                             targetDistanceInches,
                             SlowCallMonitor.toMillis(solverMicros)));
         }
@@ -357,11 +418,7 @@ public class ScoreInHub extends Command {
     }
 
     private void publishTarget(Translation2d target) {
-        targetFieldPose[0] = target.getX();
-        targetFieldPose[1] = target.getY();
-        targetFieldPose[2] = 0.0;
-        // Debug dashboard telemetry disabled to reduce NetworkTables traffic.
-        // targetPublisher.set(targetFieldPose);
+        TuningDashboard.publishShootingTarget(target);
     }
 
     private void publishFutureState() {

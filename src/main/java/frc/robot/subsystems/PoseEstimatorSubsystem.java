@@ -216,7 +216,7 @@ public class PoseEstimatorSubsystem extends SubsystemBase {
             return valid;
         }
 
-        void setInvalid() {
+        public void setInvalid() {
             xMeters = Double.NaN;
             yMeters = Double.NaN;
             headingRadians = Double.NaN;
@@ -227,7 +227,7 @@ public class PoseEstimatorSubsystem extends SubsystemBase {
             valid = false;
         }
 
-        void set(
+        public void set(
                 double xMeters,
                 double yMeters,
                 double headingRadians,
