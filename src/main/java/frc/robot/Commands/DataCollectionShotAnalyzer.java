@@ -162,8 +162,7 @@ public final class DataCollectionShotAnalyzer {
         System.out.printf("where kCd(|v|) = kBase + kLog * ln(|v| / %.1f ips)%n",
                 DRAG_LOG_REFERENCE_SPEED_IPS);
         System.out.printf(
-                "Assumption: manual data-collection hood angles use theta_true = theta_file + a + b*(theta_file - %.1f) with total correction clamped within +/- %.1f deg, per-angle exit scales are seeded by interpolation from current constants, linear drag fixed at zero, continuous log-speed Cd model, one global Magnus coefficient; flywheel command-to-exit uses one piecewise-linear model with a knee at %.1f ips%n",
-                ANGLE_SLOPE_REFERENCE_DEGREES,
+                "Assumption: manual data-collection hood angles use theta_true = theta_file + a with total correction clamped within +/- %.1f deg, per-angle exit scales are seeded by interpolation from current constants, linear drag fixed at zero, continuous log-speed Cd model, one global Magnus coefficient; flywheel command-to-exit uses one piecewise-linear model with a knee at %.1f ips%n",
                 ANGLE_FIT_LIMIT_DEGREES,
                 SPEED_MODEL_KNEE_COMMAND_IPS);
         System.out.printf("Seed constants: dragBase=%.9f, dragLogSlope=%.9f, magnus=%.9f%n",
@@ -187,10 +186,8 @@ public final class DataCollectionShotAnalyzer {
         System.out.printf("Best drag coefficient log slope: %.9f 1/in%n", globalFit.dragCoefficientLogSlopePerInch());
         System.out.printf("Best global Magnus coefficient: %.9f 1/in^2%n", globalFit.magnusPerSpinInch());
         System.out.printf(
-                "Best hood-angle model: offset %+,.6f deg, slope %+,.6f deg/deg about %.1f deg%n",
-                globalFit.hoodAngleOffsetDegrees(),
-                globalFit.hoodAngleSlopePerDegree(),
-                ANGLE_SLOPE_REFERENCE_DEGREES);
+                "Best hood-angle model: offset %+,.6f deg%n",
+                globalFit.hoodAngleOffsetDegrees());
         System.out.printf(
                 "Best speed model: exit = %.6f + slope*cmd with slope %.6f below %.0f ips and %.6f above%n",
                 globalFit.speedModelInterceptIps(),
@@ -332,7 +329,6 @@ public final class DataCollectionShotAnalyzer {
 
         for (int pass = 0; pass < FIT_PASS_COUNT; pass++) {
             double targetHoodAngleOffset = findBestHoodAngleOffset(SAMPLES_BY_ANGLE, currentState);
-            double targetHoodAngleSlope = findBestHoodAngleSlope(SAMPLES_BY_ANGLE, currentState);
             double targetDragBase = findBestDragCoefficientBase(SAMPLES_BY_ANGLE, currentState);
             double targetDragLogSlope = findBestDragCoefficientLogSlope(SAMPLES_BY_ANGLE, currentState);
             double targetMagnus = findBestMagnus(SAMPLES_BY_ANGLE, currentState);
@@ -343,7 +339,7 @@ public final class DataCollectionShotAnalyzer {
             currentState = moveToward(
                     currentState,
                     targetHoodAngleOffset,
-                    targetHoodAngleSlope,
+                    0.0,
                     targetDragBase,
                     targetDragLogSlope,
                     targetMagnus,
@@ -401,10 +397,7 @@ public final class DataCollectionShotAnalyzer {
                         currentState.hoodAngleOffsetDegrees(),
                         clampAngle(targetHoodAngleOffsetDegrees, -ANGLE_FIT_LIMIT_DEGREES, ANGLE_FIT_LIMIT_DEGREES),
                         FIT_MOVE_FRACTION),
-                moveToward(
-                        currentState.hoodAngleSlopePerDegree(),
-                        clampAngleSlope(targetHoodAngleSlopePerDegree),
-                        FIT_MOVE_FRACTION),
+                0.0,
                 updatedSpeedModelInterceptIps,
                 updatedSpeedModelLowSlope,
                 updatedSpeedModelHighSlope,

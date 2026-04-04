@@ -395,10 +395,14 @@ private Command showAllianceMarquee() {
                 shooter,
                 testController);
         testShootingCommand = new TestShootingCommand(
+            drivetrain,
             poseEstimatorSubsystem,
             horizontalAim,
             verticalAim,
+            intakePosition,
             shooter,
+            intakedrive,
+            this::getDriverDriveRequest,
             this::getShooterAzimuthTrimDegrees);
         scoreInHubCommand = new ScoreInHub(
             drivetrain,
@@ -487,14 +491,14 @@ private Command showAllianceMarquee() {
         verticalAim.setDefaultCommand(verticalAim.cmdSetAngle(this::getHoodTuningAngle));
         testController.povUp().onTrue(Commands.runOnce(() -> {
             if (CommandScheduler.getInstance().isScheduled(testShootingCommand)) {
-                testShootingCommand.trimHoodDown();
+                testShootingCommand.trimHoodUp();
             } else {
                 adjustHoodTuneAngle(HOOD_TUNE_ANGLE_STEP_DEGREES);
             }
         }));
         testController.povDown().onTrue(Commands.runOnce(() -> {
             if (CommandScheduler.getInstance().isScheduled(testShootingCommand)) {
-                testShootingCommand.trimHoodUp();
+                testShootingCommand.trimHoodDown();
             } else {
                 adjustHoodTuneAngle(-HOOD_TUNE_ANGLE_STEP_DEGREES);
             }

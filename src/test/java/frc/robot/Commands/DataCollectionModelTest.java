@@ -45,11 +45,11 @@ class DataCollectionModelTest {
             double errorInches) {
     }
 
-    private record CommandRegressionError(
+    private record LutDistanceSampleError(
             AcceptedShot shot,
             double currentPredictedCommandedFlywheelIps,
-            double predictedFlywheelChangeIps,
-            double acceptedCommandDeltaIps) {
+            double predictedTargetCenterDistanceInches,
+            double errorInches) {
     }
 
     @Test
@@ -61,8 +61,9 @@ class DataCollectionModelTest {
         DistanceSampleError worstBelow150 = null;
 
         for (AcceptedShot shot : acceptedShots) {
+            double correctedLaunchAngleDegrees = getCorrectedLaunchAngleDegrees(shot.hoodAngleDegrees());
             double angleExitScale = interpolateDescending(
-                    shot.hoodAngleDegrees(),
+                    correctedLaunchAngleDegrees,
                     ShooterConstants.MEASURED_ACTUAL_ANGLES_DEGREES,
                     ShooterConstants.FITTED_COMMAND_ANGLE_EXIT_SCALES);
             double baseBallExitIps = FlywheelBallExitInterpolator.getBallExitIpsForSetIps(shot.commandedFlywheelIps());
@@ -71,7 +72,7 @@ class DataCollectionModelTest {
                     correctedBallExitIps,
                     shot.commandedFlywheelIps(),
                     angleExitScale,
-                    shot.hoodAngleDegrees(),
+                    correctedLaunchAngleDegrees,
                     shot.targetHeightInches(),
                     ShooterConstants.FITTED_TRAJECTORY_DRAG_COEFFICIENT_BASE_PER_INCH,
                     ShooterConstants.FITTED_TRAJECTORY_DRAG_COEFFICIENT_LOG_SLOPE_PER_INCH,
@@ -154,79 +155,63 @@ class DataCollectionModelTest {
     }
 
     @Test
-    void acceptedDataCollectionRequestsKeepSimilarReportedFlywheelCommands() throws IOException {
+    void acceptedDataCollectionDistancesMatchLutModelWithinExpectedError() throws IOException {
         List<AcceptedShot> acceptedShots = loadAcceptedShots();
-        BallTrajectoryLookup.MovingShotSolution solution = new BallTrajectoryLookup.MovingShotSolution();
-        List<CommandRegressionError> sampleErrors = new ArrayList<>(acceptedShots.size());
+        List<LutDistanceSampleError> sampleErrors = new ArrayList<>(acceptedShots.size());
         List<AcceptedShot> unsolvedShots = new ArrayList<>();
+        LutDistanceSampleError worstOverall = null;
+        LutDistanceSampleError worstBelow150 = null;
 
         for (AcceptedShot shot : acceptedShots) {
-            // Accepted data-collection CSV rows store robot-center to hub-center distance,
-            // which matches BallTrajectoryLookup.solveMovingShot's target-distance convention.
-            boolean solved = BallTrajectoryLookup.solveMovingShot(
-                    shot.hoodAngleDegrees(),
-                    shot.hoodAngleDegrees(),
-                    0.1,
-                    true,
-                    0.0,
-                    0.0,
-                    0.0,
-                    0.0,
-                    0.0,
-                    Inches.of(shot.targetCenterDistanceInches()).in(Meters),
-                    0.0,
+            double correctedLaunchAngleDegrees = getCorrectedLaunchAngleDegrees(shot.hoodAngleDegrees());
+            LutDistancePrediction lutDistancePrediction = predictTargetDistanceFromLut(
+                    correctedLaunchAngleDegrees,
                     shot.targetHeightInches(),
-                    UNBOUNDED_MAXIMUM_BALL_HEIGHT_INCHES,
-                    0.0,
-                    -18.0,
-                    18.0,
-                    solution);
-            if (!solved) {
+                    shot.commandedFlywheelIps());
+            if (!Double.isFinite(lutDistancePrediction.predictedTargetCenterDistanceInches())) {
                 unsolvedShots.add(shot);
                 continue;
             }
 
-            double currentPredictedCommandedFlywheelIps = solution.getFlywheelCommandIps();
-            double predictedFlywheelChangeIps =
-                    currentPredictedCommandedFlywheelIps - shot.predictedCommandedFlywheelIpsAtAcceptance();
-            double acceptedCommandDeltaIps = currentPredictedCommandedFlywheelIps - shot.commandedFlywheelIps();
-            sampleErrors.add(new CommandRegressionError(
+            double errorInches =
+                    lutDistancePrediction.predictedTargetCenterDistanceInches() - shot.targetCenterDistanceInches();
+            LutDistanceSampleError sampleError = new LutDistanceSampleError(
                     shot,
-                    currentPredictedCommandedFlywheelIps,
-                    predictedFlywheelChangeIps,
-                    acceptedCommandDeltaIps));
+                    lutDistancePrediction.predictedCommandedFlywheelIps(),
+                    lutDistancePrediction.predictedTargetCenterDistanceInches(),
+                    errorInches);
+            sampleErrors.add(sampleError);
+
+            if (worstOverall == null || Math.abs(sampleError.errorInches()) > Math.abs(worstOverall.errorInches())) {
+                worstOverall = sampleError;
+            }
+
+            if (shot.targetCenterDistanceInches() < SHORT_RANGE_THRESHOLD_INCHES
+                    && (worstBelow150 == null
+                            || Math.abs(sampleError.errorInches()) > Math.abs(worstBelow150.errorInches()))) {
+                worstBelow150 = sampleError;
+            }
         }
 
         sampleErrors.sort(Comparator.comparingDouble(
-                sampleError -> -Math.abs(sampleError.predictedFlywheelChangeIps())));
-        double meanAbsoluteChangeIps = sampleErrors.stream()
-                .mapToDouble(sampleError -> Math.abs(sampleError.predictedFlywheelChangeIps()))
-                .average()
-                .orElseThrow();
-        double rmseIps = Math.sqrt(sampleErrors.stream()
-                .mapToDouble(sampleError -> sampleError.predictedFlywheelChangeIps()
-                        * sampleError.predictedFlywheelChangeIps())
-                .average()
-                .orElseThrow());
-        CommandRegressionError worstSample = sampleErrors.get(0);
-        long highErrorCount = sampleErrors.stream()
-                .filter(sampleError -> Math.abs(sampleError.predictedFlywheelChangeIps()) > 25.0)
-                .count();
+                sampleError -> -Math.abs(sampleError.errorInches())));
 
-        System.out.println("Data-collection LUT flywheel-command regression:");
+        System.out.println("Data-collection LUT distance comparison:");
         System.out.printf(
-                "Mean absolute reported-command change: %.3f ips | RMSE: %.3f ips | Worst: %.3f ips at %.0f in, %.1f deg (accepted predicted %.3f, current predicted %.3f)%n",
-                meanAbsoluteChangeIps,
-                rmseIps,
-                Math.abs(worstSample.predictedFlywheelChangeIps()),
-                worstSample.shot().targetCenterDistanceInches(),
-                worstSample.shot().hoodAngleDegrees(),
-                worstSample.shot().predictedCommandedFlywheelIpsAtAcceptance(),
-                worstSample.currentPredictedCommandedFlywheelIps());
+                "Largest error below %d in: %.3f in at range %.3f in, hood angle %.1f deg (command %.1f ips, LUT predicted %.3f in)%n",
+                SHORT_RANGE_THRESHOLD_INCHES,
+                Math.abs(worstBelow150.errorInches()),
+                worstBelow150.shot().targetCenterDistanceInches(),
+                worstBelow150.shot().hoodAngleDegrees(),
+                worstBelow150.shot().commandedFlywheelIps(),
+                worstBelow150.predictedTargetCenterDistanceInches());
         System.out.printf(
-                "Samples above 25 ips reported-command change: %d / %d%n",
-                highErrorCount,
-                sampleErrors.size());
+                "Largest error overall: %.3f in at range %.3f in, hood angle %.1f deg (command %.1f ips, LUT predicted %.3f in)%n",
+                Math.abs(worstOverall.errorInches()),
+                worstOverall.shot().targetCenterDistanceInches(),
+                worstOverall.shot().hoodAngleDegrees(),
+                worstOverall.shot().commandedFlywheelIps(),
+                worstOverall.predictedTargetCenterDistanceInches());
         System.out.printf(
                 "Unsolved accepted requests: %d / %d%n",
                 unsolvedShots.size(),
@@ -240,30 +225,32 @@ class DataCollectionModelTest {
                     unsolvedShot.commandedFlywheelIps());
         }
 
-        System.out.println("Top LUT command changes:");
+        System.out.println("Top LUT distance errors:");
         for (int i = 0; i < Math.min(MAX_REPORTED_ERRORS, sampleErrors.size()); i++) {
-            CommandRegressionError sampleError = sampleErrors.get(i);
+            LutDistanceSampleError sampleError = sampleErrors.get(i);
             System.out.printf(
-                    "  distance %.0f in | hood %.1f deg | accepted predicted %.3f ips | current predicted %.3f ips | change %+,.3f ips | accepted-command delta %+,.3f ips%n",
+                    "  distance %.0f in | hood %.1f deg | command %.1f ips | LUT predicted command %.3f ips | LUT predicted distance %.3f in | error %+,.3f in%n",
                     sampleError.shot().targetCenterDistanceInches(),
                     sampleError.shot().hoodAngleDegrees(),
-                    sampleError.shot().predictedCommandedFlywheelIpsAtAcceptance(),
+                    sampleError.shot().commandedFlywheelIps(),
                     sampleError.currentPredictedCommandedFlywheelIps(),
-                    sampleError.predictedFlywheelChangeIps(),
-                    sampleError.acceptedCommandDeltaIps());
+                    sampleError.predictedTargetCenterDistanceInches(),
+                    sampleError.errorInches());
         }
 
         assertFalse(sampleErrors.isEmpty(), "Expected at least one accepted data-collection request");
-        assertTrue(meanAbsoluteChangeIps < 35.0,
-                "Expected mean absolute reported-command change to stay within the current mid-30s ips baseline");
-        assertTrue(rmseIps < 42.0,
-                "Expected LUT-command-change RMSE to stay within the current low-40s ips baseline");
-        assertTrue(Math.abs(worstSample.predictedFlywheelChangeIps()) < 100.0,
-                "Expected worst-case reported-command change to stay below the current ~100 ips bound");
-        assertTrue(highErrorCount <= 28,
-                "Expected the count of requests above 25 ips command change to stay near the current high-20s baseline");
+        assertTrue(worstBelow150 != null, "Expected at least one short-range accepted request");
+        assertTrue(Math.abs(worstBelow150.errorInches()) < 25.0,
+                "Expected short-range LUT worst distance error to stay within the current mid-20s-inch bound");
+        assertTrue(Math.abs(worstOverall.errorInches()) < 40.0,
+                "Expected overall LUT worst distance error to stay within the current ~40-inch bound");
         assertTrue(unsolvedShots.size() <= 6,
                 "Expected only a small number of accepted fixed-angle requests to fall outside the current LUT envelope");
+    }
+
+    private record LutDistancePrediction(
+            double predictedCommandedFlywheelIps,
+            double predictedTargetCenterDistanceInches) {
     }
 
     private static List<AcceptedShot> loadAcceptedShots() throws IOException {
@@ -292,6 +279,97 @@ class DataCollectionModelTest {
             }
             return acceptedShots;
         }
+    }
+
+    private static double getCorrectedLaunchAngleDegrees(double fileHoodAngleDegrees) {
+        return fileHoodAngleDegrees
+                + ShooterConstants.DATA_COLLECTION_FITTED_HOOD_ANGLE_OFFSET_DEGREES
+                + ShooterConstants.DATA_COLLECTION_FITTED_HOOD_ANGLE_SLOPE_PER_DEGREE
+                        * (fileHoodAngleDegrees
+                                - ShooterConstants.DATA_COLLECTION_FITTED_HOOD_ANGLE_SLOPE_REFERENCE_DEGREES);
+    }
+
+    private static LutDistancePrediction predictTargetDistanceFromLut(
+            double correctedLaunchAngleDegrees,
+            double targetHeightInches,
+            double commandedFlywheelIps) {
+        double bestPredictedCommandedFlywheelIps = Double.NaN;
+        double bestTargetCenterDistanceInches = Double.NaN;
+        double bestAbsCommandErrorIps = Double.POSITIVE_INFINITY;
+        double previousDistanceInches = Double.NaN;
+        double previousCommandErrorIps = Double.NaN;
+        double previousPredictedCommandedFlywheelIps = Double.NaN;
+
+        for (int distanceInches = 1;
+                distanceInches <= ShooterConstants.FITTED_BALL_TRAJECTORY_LUT_MAX_TARGET_DISTANCE_INCHES;
+                distanceInches++) {
+            double predictedCommandedFlywheelIps = getPredictedCommandedFlywheelIpsForLutRequest(
+                    correctedLaunchAngleDegrees,
+                    distanceInches,
+                    targetHeightInches);
+            if (!Double.isFinite(predictedCommandedFlywheelIps)) {
+                continue;
+            }
+
+            double commandErrorIps = predictedCommandedFlywheelIps - commandedFlywheelIps;
+            double absCommandErrorIps = Math.abs(commandErrorIps);
+            if (absCommandErrorIps < bestAbsCommandErrorIps) {
+                bestAbsCommandErrorIps = absCommandErrorIps;
+                bestTargetCenterDistanceInches = distanceInches;
+                bestPredictedCommandedFlywheelIps = predictedCommandedFlywheelIps;
+            }
+
+            if (Double.isFinite(previousCommandErrorIps)
+                    && haveOppositeSigns(previousCommandErrorIps, commandErrorIps)) {
+                double interpolatedDistanceInches = interpolateValue(
+                        previousCommandErrorIps,
+                        previousDistanceInches,
+                        commandErrorIps,
+                        distanceInches,
+                        0.0);
+                double interpolatedPredictedCommandedFlywheelIps = interpolateValue(
+                        previousDistanceInches,
+                        previousPredictedCommandedFlywheelIps,
+                        distanceInches,
+                        predictedCommandedFlywheelIps,
+                        interpolatedDistanceInches);
+                return new LutDistancePrediction(
+                        interpolatedPredictedCommandedFlywheelIps,
+                        interpolatedDistanceInches);
+            }
+
+            previousDistanceInches = distanceInches;
+            previousCommandErrorIps = commandErrorIps;
+            previousPredictedCommandedFlywheelIps = predictedCommandedFlywheelIps;
+        }
+
+        return new LutDistancePrediction(
+                bestPredictedCommandedFlywheelIps,
+                bestTargetCenterDistanceInches);
+    }
+
+    private static double getPredictedCommandedFlywheelIpsForLutRequest(
+            double correctedLaunchAngleDegrees,
+            double targetCenterDistanceInches,
+            double targetHeightInches) {
+        double correctedExitVelocityIps = BallTrajectoryLookup.getRequiredExitVelocityIps(
+                correctedLaunchAngleDegrees,
+                targetCenterDistanceInches,
+                targetHeightInches);
+        if (!Double.isFinite(correctedExitVelocityIps)) {
+            return Double.NaN;
+        }
+
+        double angleExitScale = interpolateDescending(
+                correctedLaunchAngleDegrees,
+                ShooterConstants.MEASURED_ACTUAL_ANGLES_DEGREES,
+                ShooterConstants.FITTED_COMMAND_ANGLE_EXIT_SCALES);
+        if (!(angleExitScale > 0.0)) {
+            return Double.NaN;
+        }
+
+        double baseExitVelocityIps = correctedExitVelocityIps / angleExitScale;
+        return FlywheelBallExitInterpolator.getSetIpsForBallExitIps(baseExitVelocityIps);
     }
 
     private static double simulateDescendingDistanceAtTargetHeight(
@@ -402,5 +480,9 @@ class DataCollectionModelTest {
         }
 
         return Double.NaN;
+    }
+
+    private static boolean haveOppositeSigns(double value1, double value2) {
+        return (value1 < 0.0 && value2 > 0.0) || (value1 > 0.0 && value2 < 0.0);
     }
 }

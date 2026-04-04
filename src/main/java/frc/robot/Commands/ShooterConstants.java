@@ -50,8 +50,8 @@ public final class ShooterConstants {
         0.0, 4.754282, 9.774558, 14.761633, 19.781841,
         24.802019, 29.788951, 34.775883, 39.796061, 44.782996
     };
-    static final double DATA_COLLECTION_FITTED_HOOD_ANGLE_OFFSET_DEGREES = 2.435120;
-    static final double DATA_COLLECTION_FITTED_HOOD_ANGLE_SLOPE_PER_DEGREE = -0.059725;
+    static final double DATA_COLLECTION_FITTED_HOOD_ANGLE_OFFSET_DEGREES = 3.130175;
+    static final double DATA_COLLECTION_FITTED_HOOD_ANGLE_SLOPE_PER_DEGREE = 0.0;
     static final double DATA_COLLECTION_FITTED_HOOD_ANGLE_SLOPE_REFERENCE_DEGREES = 55.0;
     static final double[] MEASURED_ACTUAL_ANGLES_DEGREES =
             applyHoodAngleModel(
@@ -66,7 +66,7 @@ public final class ShooterConstants {
     public static final double COMMANDED_MAXIMUM_ALLOWED_HOOD_ANGLE_DEGREES =
             MEASURED_HOOD_ANGLE_AT_MECHANISM_ZERO_DEGREES;
     public static final double COMMANDED_MINIMUM_ALLOWED_HOOD_ANGLE_DEGREES =
-            COMMANDED_MAXIMUM_ALLOWED_HOOD_ANGLE_DEGREES - COMMANDED_HOOD_CHARACTERIZATION_MAX_ANGLE_CHANGE_DEGREES;
+            MEASURED_ACTUAL_ANGLES_DEGREES[MEASURED_ACTUAL_ANGLES_DEGREES.length - 1];
     static final double[] MEASURED_ACTUAL_ANGLE_CHANGES_DEGREES =
             buildAngleChangesDegrees(MEASURED_ACTUAL_ANGLES_DEGREES);
     static final double[] MEASURED_DISTANCE_GRID_COMMAND_SPEEDS_IPS = {
@@ -89,14 +89,46 @@ public final class ShooterConstants {
         {  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,527.0},
         {  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,558.0}
     };
+    static final double DATA_COLLECTION_SHORT_RANGE_TARGET_ELEVATION_INCHES =
+            COMMANDED_SCORE_IN_HUB_TARGET_ELEVATION_INCHES;
+    static final double DATA_COLLECTION_SHORT_RANGE_MIN_DISTANCE_INCHES = 59.0;
+    static final double DATA_COLLECTION_SHORT_RANGE_MAX_DISTANCE_INCHES = 218.0;
+    static final double DATA_COLLECTION_SHORT_RANGE_EMPIRICAL_MAX_DISTANCE_INCHES = 118.0;
+    static final double[] DATA_COLLECTION_SHORT_RANGE_DISTANCES_INCHES = {
+        59.0, 74.0, 98.0, 122.0, 146.0, 170.0, 194.0, 218.0
+    };
+    static final double[][] RAW_DATA_COLLECTION_SHORT_RANGE_HOOD_ANGLES_DEGREES = {
+        {73.6, 74.6, 76.6},
+        {67.6, 73.6, 78.6},
+        {60.6, 65.6, 70.6, 74.6},
+        {60.6, 65.6, 70.6},
+        {50.6, 65.6, 68.6},
+        {45.6, 50.6, 55.6, 60.6, 65.6},
+        {41.6, 46.6, 51.6, 56.6, 61.6},
+        {40.6, 45.6, 50.6, 55.6}
+    };
+    static final double[][] DATA_COLLECTION_SHORT_RANGE_COMMAND_SPEEDS_IPS = {
+        {290.0, 285.0, 285.0},
+        {275.0, 310.0, 355.0},
+        {290.0, 305.0, 325.0, 370.0},
+        {305.0, 330.0, 360.0},
+        {315.0, 355.0, 370.0},
+        {330.0, 335.0, 340.0, 360.0, 385.0},
+        {345.0, 350.0, 355.0, 360.0, 385.0},
+        {365.0, 365.0, 365.0, 390.0}
+    };
+    static final double[][] DATA_COLLECTION_SHORT_RANGE_HOOD_ANGLES_DEGREES =
+            applyAngleOffsetDegrees(
+                    RAW_DATA_COLLECTION_SHORT_RANGE_HOOD_ANGLES_DEGREES,
+                    DATA_COLLECTION_FITTED_HOOD_ANGLE_OFFSET_DEGREES);
 
     static final double FITTED_TRAJECTORY_DRAG_LOG_REFERENCE_SPEED_IPS = 300.0;
-    static final double FITTED_TRAJECTORY_DRAG_COEFFICIENT_BASE_PER_INCH = 0.001561795;
-    static final double FITTED_TRAJECTORY_DRAG_COEFFICIENT_LOG_SLOPE_PER_INCH = 0.000189238;
-    static final double FITTED_TRAJECTORY_MAGNUS_PER_SPIN_INCH = 0.000000142;
+    static final double FITTED_TRAJECTORY_DRAG_COEFFICIENT_BASE_PER_INCH = 0.001478605;
+    static final double FITTED_TRAJECTORY_DRAG_COEFFICIENT_LOG_SLOPE_PER_INCH = 0.001253866;
+    static final double FITTED_TRAJECTORY_MAGNUS_PER_SPIN_INCH = 0.000001518;
     static final String FITTED_BALL_TRAJECTORY_LUT_FILENAME = "ball_trajectory_lut.bin";
     static final int FITTED_BALL_TRAJECTORY_LUT_MAGIC = 0x42544C54; // "BTLT"
-    static final int FITTED_BALL_TRAJECTORY_LUT_VERSION = 10;
+    static final int FITTED_BALL_TRAJECTORY_LUT_VERSION = 11;
     static final double FITTED_BALL_TRAJECTORY_LUT_MIN_HOOD_ANGLE_DEGREES =
             MEASURED_ACTUAL_ANGLES_DEGREES[MEASURED_ACTUAL_ANGLES_DEGREES.length - 1];
     static final double FITTED_BALL_TRAJECTORY_LUT_MAX_HOOD_ANGLE_DEGREES =
@@ -106,13 +138,13 @@ public final class ShooterConstants {
     static final int FITTED_BALL_TRAJECTORY_LUT_MAX_TARGET_ELEVATION_FEET = 6;
     static final double FITTED_BALL_TRAJECTORY_LUT_ELEVATION_STEP_INCHES = 12.0;
     static final double[] FITTED_COMMAND_ANGLE_EXIT_SCALES = {
-        1.114997, 1.1197695, 1.124542, 1.131481, 1.13842,
-        1.151291, 1.173797, 1.198627, 1.220792, 1.247873
+        1.116222, 1.121208, 1.127102, 1.134462, 1.144857,
+        1.163928, 1.189291, 1.213764, 1.241142, 1.247873
     };
     static final double DATA_COLLECTION_FITTED_SPEED_MODEL_KNEE_COMMAND_IPS = 410.0;
-    static final double DATA_COLLECTION_FITTED_SPEED_MODEL_INTERCEPT_IPS = -50.427731;
-    static final double DATA_COLLECTION_FITTED_SPEED_MODEL_LOW_SLOPE = 1.044882;
-    static final double DATA_COLLECTION_FITTED_SPEED_MODEL_HIGH_SLOPE = 0.429810;
+    static final double DATA_COLLECTION_FITTED_SPEED_MODEL_INTERCEPT_IPS = -51.359884;
+    static final double DATA_COLLECTION_FITTED_SPEED_MODEL_LOW_SLOPE = 1.031398;
+    static final double DATA_COLLECTION_FITTED_SPEED_MODEL_HIGH_SLOPE = 0.444485;
     static final double[] FITTED_BALL_EXIT_IPS = buildBallExitIpsFromSpeedModel(
             COMMANDED_FLYWHEEL_SET_IPS,
             DATA_COLLECTION_FITTED_SPEED_MODEL_KNEE_COMMAND_IPS,
@@ -146,6 +178,12 @@ public final class ShooterConstants {
         if (COMMANDED_FLYWHEEL_SET_IPS.length != FITTED_BALL_EXIT_IPS.length) {
             throw new IllegalStateException("Flywheel set IPS and ball exit IPS tables must match.");
         }
+        if (DATA_COLLECTION_SHORT_RANGE_DISTANCES_INCHES.length
+                != DATA_COLLECTION_SHORT_RANGE_HOOD_ANGLES_DEGREES.length
+                || DATA_COLLECTION_SHORT_RANGE_DISTANCES_INCHES.length
+                        != DATA_COLLECTION_SHORT_RANGE_COMMAND_SPEEDS_IPS.length) {
+            throw new IllegalStateException("Short-range data-collection rows must match distance count.");
+        }
         for (int i = 1; i < MEASURED_ACTUAL_ANGLES_DEGREES.length; i++) {
             if (!(MEASURED_ACTUAL_ANGLES_DEGREES[i] < MEASURED_ACTUAL_ANGLES_DEGREES[i - 1])) {
                 throw new IllegalStateException("Measured actual angles must remain strictly descending.");
@@ -154,6 +192,34 @@ public final class ShooterConstants {
         for (int i = 1; i < FITTED_BALL_EXIT_IPS.length; i++) {
             if (!(FITTED_BALL_EXIT_IPS[i] > FITTED_BALL_EXIT_IPS[i - 1])) {
                 throw new IllegalStateException("Ball exit IPS table must remain strictly increasing.");
+            }
+        }
+        for (int i = 1; i < DATA_COLLECTION_SHORT_RANGE_DISTANCES_INCHES.length; i++) {
+            if (!(DATA_COLLECTION_SHORT_RANGE_DISTANCES_INCHES[i]
+                    > DATA_COLLECTION_SHORT_RANGE_DISTANCES_INCHES[i - 1])) {
+                throw new IllegalStateException("Short-range data-collection distances must remain strictly increasing.");
+            }
+        }
+        if (DATA_COLLECTION_SHORT_RANGE_EMPIRICAL_MAX_DISTANCE_INCHES < DATA_COLLECTION_SHORT_RANGE_MIN_DISTANCE_INCHES
+                || DATA_COLLECTION_SHORT_RANGE_EMPIRICAL_MAX_DISTANCE_INCHES > DATA_COLLECTION_SHORT_RANGE_MAX_DISTANCE_INCHES) {
+            throw new IllegalStateException("Empirical short-range limit must fall inside the short-range table.");
+        }
+        for (int row = 0; row < DATA_COLLECTION_SHORT_RANGE_DISTANCES_INCHES.length; row++) {
+            double[] hoodAnglesDegrees = DATA_COLLECTION_SHORT_RANGE_HOOD_ANGLES_DEGREES[row];
+            double[] commandSpeedsIps = DATA_COLLECTION_SHORT_RANGE_COMMAND_SPEEDS_IPS[row];
+            if (hoodAnglesDegrees.length != commandSpeedsIps.length) {
+                throw new IllegalStateException("Short-range hood and speed row lengths must match.");
+            }
+            if (hoodAnglesDegrees.length < 2) {
+                throw new IllegalStateException("Each short-range row must have at least two points.");
+            }
+            for (int col = 0; col < hoodAnglesDegrees.length; col++) {
+                if (!Double.isFinite(hoodAnglesDegrees[col]) || !Double.isFinite(commandSpeedsIps[col])) {
+                    throw new IllegalStateException("Short-range rows must contain only finite values.");
+                }
+                if (col > 0 && !(hoodAnglesDegrees[col] > hoodAnglesDegrees[col - 1])) {
+                    throw new IllegalStateException("Short-range hood angles must remain strictly increasing within each row.");
+                }
             }
         }
     }
@@ -190,6 +256,17 @@ public final class ShooterConstants {
             correctedAnglesDegrees[i] += hoodAngleOffsetDegrees
                     + hoodAngleSlopePerDegree
                             * (rawActualAnglesDegrees[i] - hoodAngleSlopeReferenceDegrees);
+        }
+        return correctedAnglesDegrees;
+    }
+
+    private static double[][] applyAngleOffsetDegrees(double[][] rawAnglesDegrees, double angleOffsetDegrees) {
+        double[][] correctedAnglesDegrees = new double[rawAnglesDegrees.length][];
+        for (int row = 0; row < rawAnglesDegrees.length; row++) {
+            correctedAnglesDegrees[row] = rawAnglesDegrees[row].clone();
+            for (int col = 0; col < correctedAnglesDegrees[row].length; col++) {
+                correctedAnglesDegrees[row][col] += angleOffsetDegrees;
+            }
         }
         return correctedAnglesDegrees;
     }

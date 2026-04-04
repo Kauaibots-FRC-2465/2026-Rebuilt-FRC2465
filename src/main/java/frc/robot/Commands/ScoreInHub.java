@@ -39,6 +39,7 @@ public class ScoreInHub extends Command {
     private static final double SLOW_SOLVER_THRESHOLD_MS = 5.0;
     private static final double SLOW_SET_CONTROL_THRESHOLD_MS = 2.0;
     private static final double TRANSIENT_SOLUTION_HOLD_SECONDS = 0.25;
+    private static final boolean ENABLE_SPEED_UP_ACCELERATION_LIMIT = false;
     private static final double SPEED_UP_ACCELERATION_LIMIT_METERS_PER_SECOND_SQUARED = 0.1524;
 
     private final CommandSwerveDrivetrain drivetrain;
@@ -319,29 +320,38 @@ public class ScoreInHub extends Command {
         }
 
         double idealFlywheelCommandIps = idealMovingShotSolution.getFlywheelCommandIps();
-        double predictedFlywheelCommandIps = MovingShotMath.predictFlywheelSpeedIps(
-                shooter.getMainFlywheelSpeedIPS(),
-                idealFlywheelCommandIps);
-        BallTrajectoryLookup.FixedFlywheelShotStatus fixedFlywheelStatus =
-                BallTrajectoryLookup.solveMovingShotForFlywheelCommand(
-                        minimumHoodAngleDegrees,
-                        maximumHoodAngleDegrees,
-                        ShooterConstants.COMMANDED_MOVING_SHOT_FIXED_FLYWHEEL_HOOD_SEARCH_STEP_DEGREES,
-                        true,
-                        futureState.xMeters,
-                        futureState.yMeters,
-                        futureState.headingRadians,
-                        futureState.vxMetersPerSecond,
-                        futureState.vyMetersPerSecond,
-                        target.getX(),
-                        target.getY(),
-                        ShooterConstants.COMMANDED_SCORE_IN_HUB_TARGET_ELEVATION_INCHES,
-                        ShooterConstants.COMMANDED_MAXIMUM_SHOOTING_HEIGHT_INCHES,
-                        preferredRobotHeading.getRadians(),
-                        horizontalAim.getMinimumAngle().in(Degrees),
-                        horizontalAim.getMaximumAngle().in(Degrees),
-                        predictedFlywheelCommandIps,
-                        movingShotSolution);
+        boolean useEmpiricalMovingShotModel = MovingShotMath.shouldUseEmpiricalHubMovingShotModel(
+                targetDistanceInches,
+                ShooterConstants.COMMANDED_SCORE_IN_HUB_TARGET_ELEVATION_INCHES);
+        BallTrajectoryLookup.FixedFlywheelShotStatus fixedFlywheelStatus;
+        if (useEmpiricalMovingShotModel) {
+            movingShotSolution.copyFrom(idealMovingShotSolution);
+            fixedFlywheelStatus = BallTrajectoryLookup.FixedFlywheelShotStatus.VALID;
+        } else {
+            double predictedFlywheelCommandIps = MovingShotMath.predictFlywheelSpeedIps(
+                    shooter.getMainFlywheelSpeedIPS(),
+                    idealFlywheelCommandIps);
+            fixedFlywheelStatus =
+                    BallTrajectoryLookup.solveMovingShotForFlywheelCommand(
+                            minimumHoodAngleDegrees,
+                            maximumHoodAngleDegrees,
+                            ShooterConstants.COMMANDED_MOVING_SHOT_FIXED_FLYWHEEL_HOOD_SEARCH_STEP_DEGREES,
+                            true,
+                            futureState.xMeters,
+                            futureState.yMeters,
+                            futureState.headingRadians,
+                            futureState.vxMetersPerSecond,
+                            futureState.vyMetersPerSecond,
+                            target.getX(),
+                            target.getY(),
+                            ShooterConstants.COMMANDED_SCORE_IN_HUB_TARGET_ELEVATION_INCHES,
+                            ShooterConstants.COMMANDED_MAXIMUM_SHOOTING_HEIGHT_INCHES,
+                            preferredRobotHeading.getRadians(),
+                            horizontalAim.getMinimumAngle().in(Degrees),
+                            horizontalAim.getMaximumAngle().in(Degrees),
+                            predictedFlywheelCommandIps,
+                            movingShotSolution);
+        }
         long solverMicros = SlowCallMonitor.nowMicros() - solverStartMicros;
         // Debug dashboard telemetry disabled to reduce NetworkTables traffic.
         // targetDistanceInchesPublisher.set(targetDistanceInches);
@@ -509,10 +519,15 @@ public class ScoreInHub extends Command {
     private Translation2d limitTranslationalAcceleration(SwerveRequest.FieldCentric fieldCentricRequest) {
         double requestedVelocityXMetersPerSecond = fieldCentricRequest.VelocityX;
         double requestedVelocityYMetersPerSecond = fieldCentricRequest.VelocityY;
-        double currentTimestampSeconds = Timer.getFPGATimestamp();
         Translation2d requestedVelocity = new Translation2d(
                 requestedVelocityXMetersPerSecond,
                 requestedVelocityYMetersPerSecond);
+        if (!ENABLE_SPEED_UP_ACCELERATION_LIMIT) {
+            lastVelocityLimitTimestampSeconds = Double.NaN;
+            return requestedVelocity;
+        }
+
+        double currentTimestampSeconds = Timer.getFPGATimestamp();
 
         if (!Double.isFinite(lastVelocityLimitTimestampSeconds)) {
             lastVelocityLimitTimestampSeconds = currentTimestampSeconds;
