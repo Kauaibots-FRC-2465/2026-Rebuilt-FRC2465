@@ -2,8 +2,6 @@ package frc.robot.Commands;
 
 import java.util.Objects;
 
-import com.ctre.phoenix6.swerve.SwerveRequest;
-
 import edu.wpi.first.math.MathUtil;
 import edu.wpi.first.math.geometry.Pose2d;
 import edu.wpi.first.math.geometry.Rotation2d;
@@ -19,12 +17,12 @@ final class MovingShotMath {
     static boolean predictFutureStateFromCommand(
             PoseEstimatorSubsystem poseEstimator,
             Rotation2d driverPerspectiveForward,
-            SwerveRequest.FieldCentric fieldCentricRequest,
+            double commandedVelocityXMetersPerSecond,
+            double commandedVelocityYMetersPerSecond,
             double lookaheadSeconds,
             PoseEstimatorSubsystem.PredictedFusedState out) {
         Objects.requireNonNull(poseEstimator, "poseEstimator must not be null");
         Objects.requireNonNull(driverPerspectiveForward, "driverPerspectiveForward must not be null");
-        Objects.requireNonNull(fieldCentricRequest, "fieldCentricRequest must not be null");
         Objects.requireNonNull(out, "out must not be null");
 
         if (!Double.isFinite(lookaheadSeconds) || lookaheadSeconds < 0.0) {
@@ -39,8 +37,8 @@ final class MovingShotMath {
         }
 
         Translation2d fieldRelativeVelocity = new Translation2d(
-                fieldCentricRequest.VelocityX,
-                fieldCentricRequest.VelocityY).rotateBy(driverPerspectiveForward);
+                commandedVelocityXMetersPerSecond,
+                commandedVelocityYMetersPerSecond).rotateBy(driverPerspectiveForward);
         // These aim commands replace driver yaw-rate control with a heading target,
         // so predict translation from the commanded field velocity but keep the
         // current fused heading instead of integrating the raw stick rotational rate.
@@ -104,5 +102,70 @@ final class MovingShotMath {
         return Math.max(
                 minimumHoodAngleDegrees,
                 maximumHoodAngleDegrees - ShooterConstants.COMMANDED_MOVING_SHOT_HOOD_LIMIT_HEADROOM_DEGREES);
+    }
+
+    static boolean solveIdealMovingShotWithUpperHoodFallback(
+            SparkAnglePositionSubsystem verticalAim,
+            double hoodAngleStepDegrees,
+            double futureRobotXMeters,
+            double futureRobotYMeters,
+            double futureRobotHeadingRadians,
+            double robotFieldVxMetersPerSecond,
+            double robotFieldVyMetersPerSecond,
+            double targetXMeters,
+            double targetYMeters,
+            double targetElevationInches,
+            double maximumBallZElevationInches,
+            double preferredRobotHeadingRadians,
+            double minTurretAngleDegrees,
+            double maxTurretAngleDegrees,
+            BallTrajectoryLookup.MovingShotSolution out) {
+        Objects.requireNonNull(verticalAim, "verticalAim must not be null");
+        Objects.requireNonNull(out, "out must not be null");
+
+        double minimumHoodAngleDegrees = verticalAim.getMinimumAngle().in(edu.wpi.first.units.Units.Degrees);
+        double maximumHoodAngleDegrees = verticalAim.getMaximumAngle().in(edu.wpi.first.units.Units.Degrees);
+        double idealMaximumHoodAngleDegrees = getIdealMaximumHoodAngleDegrees(verticalAim);
+
+        boolean hasPreferredSolution = BallTrajectoryLookup.solveMovingShot(
+                minimumHoodAngleDegrees,
+                idealMaximumHoodAngleDegrees,
+                hoodAngleStepDegrees,
+                true,
+                futureRobotXMeters,
+                futureRobotYMeters,
+                futureRobotHeadingRadians,
+                robotFieldVxMetersPerSecond,
+                robotFieldVyMetersPerSecond,
+                targetXMeters,
+                targetYMeters,
+                targetElevationInches,
+                maximumBallZElevationInches,
+                preferredRobotHeadingRadians,
+                minTurretAngleDegrees,
+                maxTurretAngleDegrees,
+                out);
+        if (hasPreferredSolution || idealMaximumHoodAngleDegrees >= maximumHoodAngleDegrees - 1e-9) {
+            return hasPreferredSolution;
+        }
+
+        return BallTrajectoryLookup.solveMovingShot(
+                idealMaximumHoodAngleDegrees,
+                maximumHoodAngleDegrees,
+                hoodAngleStepDegrees,
+                false,
+                futureRobotXMeters,
+                futureRobotYMeters,
+                futureRobotHeadingRadians,
+                robotFieldVxMetersPerSecond,
+                robotFieldVyMetersPerSecond,
+                targetXMeters,
+                targetYMeters,
+                targetElevationInches,
+                maximumBallZElevationInches,
+                preferredRobotHeadingRadians,
+                minTurretAngleDegrees,
+                maxTurretAngleDegrees,
+                out);
     }
 }

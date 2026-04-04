@@ -31,8 +31,16 @@ public final class DataCollectionShotAnalyzer {
     private static final double FIXED_LINEAR_DRAG_PER_SECOND = 0.0;
     private static final double ANGLE_FIT_LIMIT_DEGREES = 5.0;
     private static final double ANGLE_FIT_INITIAL_STEP_DEGREES = 0.25;
+    private static final double ANGLE_SLOPE_REFERENCE_DEGREES = 55.0;
+    private static final double ANGLE_SLOPE_LIMIT_PER_DEGREE = 0.12;
+    private static final double ANGLE_SLOPE_INITIAL_STEP_PER_DEGREE = 0.01;
     private static final double DRAG_LOG_REFERENCE_SPEED_IPS =
             ShooterConstants.FITTED_TRAJECTORY_DRAG_LOG_REFERENCE_SPEED_IPS;
+    private static final double SPEED_MODEL_KNEE_COMMAND_IPS =
+            ShooterConstants.MEASURED_BACKSPIN_CANCEL_LIMIT_COMMAND_IPS;
+    private static final double LEGACY_SPEED_MODEL_INTERCEPT_IPS = -63.0;
+    private static final double LEGACY_SPEED_MODEL_LOW_SLOPE = 1.01;
+    private static final double LEGACY_SPEED_MODEL_HIGH_SLOPE = 0.40;
     private static final DataSet DATA_SET = loadDataSet();
     private static final double[] ANGLES_DEGREES = DATA_SET.anglesDegrees();
     private static final double[] ANGLE_EXIT_SCALES = DATA_SET.seedAngleExitScales();
@@ -72,14 +80,15 @@ public final class DataCollectionShotAnalyzer {
             double angleDegrees,
             double commandSpeedIps,
             double shotExitSpeedIps,
-            double measuredDistanceInches,
+            double targetDistanceInches,
+            double targetHeightInches,
             double weight) {
     }
 
     private record SampleError(
             Sample sample,
             double fittedAngleDegrees,
-            double predictedDistanceInches,
+            double predictedTargetDistanceInches,
             double errorInches) {
     }
 
@@ -105,7 +114,11 @@ public final class DataCollectionShotAnalyzer {
             double dragCoefficientBasePerInch,
             double dragCoefficientLogSlopePerInch,
             double magnusPerSpinInch,
-            double globalAngleOffsetDegrees,
+            double hoodAngleOffsetDegrees,
+            double hoodAngleSlopePerDegree,
+            double speedModelInterceptIps,
+            double speedModelLowSlope,
+            double speedModelHighSlope,
             double[] angleExitScales,
             double[] rowExitSpeedCorrectionsIps) {
     }
@@ -115,7 +128,11 @@ public final class DataCollectionShotAnalyzer {
             double dragCoefficientBasePerInch,
             double dragCoefficientLogSlopePerInch,
             double magnusPerSpinInch,
-            double globalAngleOffsetDegrees,
+            double hoodAngleOffsetDegrees,
+            double hoodAngleSlopePerDegree,
+            double speedModelInterceptIps,
+            double speedModelLowSlope,
+            double speedModelHighSlope,
             double[] fittedAnglesDegrees,
             double[] angleExitScales,
             double[] rowExitSpeedCorrectionsIps,
@@ -145,12 +162,20 @@ public final class DataCollectionShotAnalyzer {
         System.out.printf("where kCd(|v|) = kBase + kLog * ln(|v| / %.1f ips)%n",
                 DRAG_LOG_REFERENCE_SPEED_IPS);
         System.out.printf(
-                "Assumption: manual data-collection hood angles share one fitted global offset within +/- %.1f deg of measured geometry, per-angle exit scales are seeded by interpolation from current constants, linear drag fixed at zero, continuous log-speed Cd model, one global Magnus coefficient; each commanded-speed row gets its own exit-speed correction%n",
-                ANGLE_FIT_LIMIT_DEGREES);
+                "Assumption: manual data-collection hood angles use theta_true = theta_file + a + b*(theta_file - %.1f) with total correction clamped within +/- %.1f deg, per-angle exit scales are seeded by interpolation from current constants, linear drag fixed at zero, continuous log-speed Cd model, one global Magnus coefficient; flywheel command-to-exit uses one piecewise-linear model with a knee at %.1f ips%n",
+                ANGLE_SLOPE_REFERENCE_DEGREES,
+                ANGLE_FIT_LIMIT_DEGREES,
+                SPEED_MODEL_KNEE_COMMAND_IPS);
         System.out.printf("Seed constants: dragBase=%.9f, dragLogSlope=%.9f, magnus=%.9f%n",
                 ShooterConstants.FITTED_TRAJECTORY_DRAG_COEFFICIENT_BASE_PER_INCH,
                 ShooterConstants.FITTED_TRAJECTORY_DRAG_COEFFICIENT_LOG_SLOPE_PER_INCH,
                 ShooterConstants.FITTED_TRAJECTORY_MAGNUS_PER_SPIN_INCH);
+        System.out.printf(
+                "Legacy repeated-shot speed model seed: exit = %.3f + slope*cmd with slope %.3f below %.0f ips and %.3f above%n",
+                LEGACY_SPEED_MODEL_INTERCEPT_IPS,
+                LEGACY_SPEED_MODEL_LOW_SLOPE,
+                SPEED_MODEL_KNEE_COMMAND_IPS,
+                LEGACY_SPEED_MODEL_HIGH_SLOPE);
         System.out.printf("Coupled fit: %d passes, each fitted variable moves %.2f of the way toward its current best target per pass%n",
                 FIT_PASS_COUNT,
                 FIT_MOVE_FRACTION);
@@ -161,38 +186,48 @@ public final class DataCollectionShotAnalyzer {
         System.out.printf("Best drag coefficient base: %.9f 1/in%n", globalFit.dragCoefficientBasePerInch());
         System.out.printf("Best drag coefficient log slope: %.9f 1/in%n", globalFit.dragCoefficientLogSlopePerInch());
         System.out.printf("Best global Magnus coefficient: %.9f 1/in^2%n", globalFit.magnusPerSpinInch());
-        System.out.printf("Best global hood-angle offset: %+,.6f deg%n", globalFit.globalAngleOffsetDegrees());
+        System.out.printf(
+                "Best hood-angle model: offset %+,.6f deg, slope %+,.6f deg/deg about %.1f deg%n",
+                globalFit.hoodAngleOffsetDegrees(),
+                globalFit.hoodAngleSlopePerDegree(),
+                ANGLE_SLOPE_REFERENCE_DEGREES);
+        System.out.printf(
+                "Best speed model: exit = %.6f + slope*cmd with slope %.6f below %.0f ips and %.6f above%n",
+                globalFit.speedModelInterceptIps(),
+                globalFit.speedModelLowSlope(),
+                SPEED_MODEL_KNEE_COMMAND_IPS,
+                globalFit.speedModelHighSlope());
         System.out.println();
 
-        System.out.println("Per-row exit-speed corrections:");
+        System.out.println("Derived exit-speed table from fitted speed model:");
+        double[] correctedBallExitIps = buildFullCorrectedBallExitIps(globalFit.rowExitSpeedCorrectionsIps());
         for (int row = 0; row < COMMAND_SPEEDS_IPS.length; row++) {
-            double correctionIps = globalFit.rowExitSpeedCorrectionsIps()[row];
-            if (Math.abs(correctionIps) >= 0.01) {
-                System.out.printf(
-                        "  command %.0f ips -> %+,.3f exit ips%n",
-                        COMMAND_SPEEDS_IPS[row],
-                        correctionIps);
-            }
+            System.out.printf(
+                    "  command %.0f ips -> seed %.3f ips -> fitted %.3f ips (%+,.3f)%n",
+                    COMMAND_SPEEDS_IPS[row],
+                    SHOT_EXIT_SPEEDS_IPS[row],
+                    correctedBallExitIps[row],
+                    globalFit.rowExitSpeedCorrectionsIps()[row]);
         }
         System.out.println();
 
         SampleError worstBelow150 = globalFit.worstBelow150SampleError();
         SampleError worstOverall = globalFit.worstSampleError();
         System.out.printf(
-                "Largest error below 150 in: %.3f in at range %.3f in, hood angle %.1f deg (command %.0f ips, predicted %.3f in, error %+,.3f in)%n",
+                "Largest distance error below 150 in: %.3f in at range %.3f in, hood angle %.1f deg (command %.0f ips, predicted distance %.3f in, error %+,.3f in)%n",
                 Math.abs(worstBelow150.errorInches()),
-                worstBelow150.sample().measuredDistanceInches(),
+                worstBelow150.sample().targetDistanceInches(),
                 worstBelow150.fittedAngleDegrees(),
                 worstBelow150.sample().commandSpeedIps(),
-                worstBelow150.predictedDistanceInches(),
+                worstBelow150.predictedTargetDistanceInches(),
                 worstBelow150.errorInches());
         System.out.printf(
-                "Largest error overall: %.3f in at range %.3f in, hood angle %.1f deg (command %.0f ips, predicted %.3f in, error %+,.3f in)%n",
+                "Largest distance error overall: %.3f in at range %.3f in, hood angle %.1f deg (command %.0f ips, predicted distance %.3f in, error %+,.3f in)%n",
                 Math.abs(worstOverall.errorInches()),
-                worstOverall.sample().measuredDistanceInches(),
+                worstOverall.sample().targetDistanceInches(),
                 worstOverall.fittedAngleDegrees(),
                 worstOverall.sample().commandSpeedIps(),
-                worstOverall.predictedDistanceInches(),
+                worstOverall.predictedTargetDistanceInches(),
                 worstOverall.errorInches());
         System.out.println();
 
@@ -211,11 +246,12 @@ public final class DataCollectionShotAnalyzer {
                     fit.weightedRmseInches(),
                     fit.maxAbsErrorInches());
             System.out.printf(
-                    "  Worst sample: command %.0f ips, exit %.3f ips, measured %.3f in, predicted %.3f in, error %+,.3f in, weight %.3f%n",
+                    "  Worst sample: command %.0f ips, exit %.3f ips, target range %.3f in, target z %.3f in, predicted range %.3f in, error %+,.3f in, weight %.3f%n",
                     worst.sample().commandSpeedIps(),
                     worst.sample().shotExitSpeedIps(),
-                    worst.sample().measuredDistanceInches(),
-                    worst.predictedDistanceInches(),
+                    worst.sample().targetDistanceInches(),
+                    worst.sample().targetHeightInches(),
+                    worst.predictedTargetDistanceInches(),
                     worst.errorInches(),
                     worst.sample().weight());
         }
@@ -226,12 +262,13 @@ public final class DataCollectionShotAnalyzer {
                 .sorted(Comparator.comparingDouble(
                         sampleError -> -Math.abs(sampleError.errorInches())))
                 .forEach(sampleError -> System.out.printf(
-                        "hood angle %.1f deg | range %.3f in | command %.0f ips | exit %.3f ips | predicted %.3f in | error %+,.3f in | abs %.3f in | weight %.3f%n",
+                        "hood angle %.1f deg | range %.3f in | target z %.3f in | command %.0f ips | exit %.3f ips | predicted range %.3f in | error %+,.3f in | abs %.3f in | weight %.3f%n",
                         sampleError.fittedAngleDegrees(),
-                        sampleError.sample().measuredDistanceInches(),
+                        sampleError.sample().targetDistanceInches(),
+                        sampleError.sample().targetHeightInches(),
                         sampleError.sample().commandSpeedIps(),
                         sampleError.sample().shotExitSpeedIps(),
-                        sampleError.predictedDistanceInches(),
+                        sampleError.predictedTargetDistanceInches(),
                         sampleError.errorInches(),
                         Math.abs(sampleError.errorInches()),
                         sampleError.sample().weight()));
@@ -267,38 +304,52 @@ public final class DataCollectionShotAnalyzer {
     }
 
     private static double calculateWeight(double measuredDistanceInches) {
-        if (measuredDistanceInches <= 120.0) {
+        if (measuredDistanceInches <= 200.0) {
             return 1.0;
         }
 
-        double beyondPreferredRange = measuredDistanceInches - 120.0;
+        double beyondPreferredRange = measuredDistanceInches - 200.0;
         double taperedWeight = 1.0 / (1.0 + beyondPreferredRange / 60.0);
         return Math.max(0.15, taperedWeight);
     }
 
     private static GlobalFitResult fitGlobalModel() {
+        double[] initialRowCorrections = buildRowCorrectionsFromSpeedModel(
+                LEGACY_SPEED_MODEL_INTERCEPT_IPS,
+                LEGACY_SPEED_MODEL_LOW_SLOPE,
+                LEGACY_SPEED_MODEL_HIGH_SLOPE);
         FitState currentState = new FitState(
                 ShooterConstants.FITTED_TRAJECTORY_DRAG_COEFFICIENT_BASE_PER_INCH,
                 ShooterConstants.FITTED_TRAJECTORY_DRAG_COEFFICIENT_LOG_SLOPE_PER_INCH,
                 ShooterConstants.FITTED_TRAJECTORY_MAGNUS_PER_SPIN_INCH,
                 0.0,
+                0.0,
+                LEGACY_SPEED_MODEL_INTERCEPT_IPS,
+                LEGACY_SPEED_MODEL_LOW_SLOPE,
+                LEGACY_SPEED_MODEL_HIGH_SLOPE,
                 ANGLE_EXIT_SCALES.clone(),
-                new double[COMMAND_SPEEDS_IPS.length]);
+                initialRowCorrections);
 
         for (int pass = 0; pass < FIT_PASS_COUNT; pass++) {
-            double targetGlobalAngleOffset = findBestGlobalAngleOffset(SAMPLES_BY_ANGLE, currentState);
+            double targetHoodAngleOffset = findBestHoodAngleOffset(SAMPLES_BY_ANGLE, currentState);
+            double targetHoodAngleSlope = findBestHoodAngleSlope(SAMPLES_BY_ANGLE, currentState);
             double targetDragBase = findBestDragCoefficientBase(SAMPLES_BY_ANGLE, currentState);
             double targetDragLogSlope = findBestDragCoefficientLogSlope(SAMPLES_BY_ANGLE, currentState);
             double targetMagnus = findBestMagnus(SAMPLES_BY_ANGLE, currentState);
-            double[] targetRowCorrections = findBestRowCorrections(SAMPLES_BY_ROW, currentState);
+            double targetSpeedModelIntercept = findBestSpeedModelIntercept(SAMPLES_BY_ANGLE, currentState);
+            double targetSpeedModelLowSlope = findBestSpeedModelLowSlope(SAMPLES_BY_ANGLE, currentState);
+            double targetSpeedModelHighSlope = findBestSpeedModelHighSlope(SAMPLES_BY_ANGLE, currentState);
 
             currentState = moveToward(
                     currentState,
-                    targetGlobalAngleOffset,
+                    targetHoodAngleOffset,
+                    targetHoodAngleSlope,
                     targetDragBase,
                     targetDragLogSlope,
                     targetMagnus,
-                    targetRowCorrections);
+                    targetSpeedModelIntercept,
+                    targetSpeedModelLowSlope,
+                    targetSpeedModelHighSlope);
         }
 
         return evaluateGlobalModel(SAMPLES_BY_ANGLE, currentState);
@@ -306,18 +357,32 @@ public final class DataCollectionShotAnalyzer {
 
     private static FitState moveToward(
             FitState currentState,
-            double targetGlobalAngleOffsetDegrees,
+            double targetHoodAngleOffsetDegrees,
+            double targetHoodAngleSlopePerDegree,
             double targetDragCoefficientBasePerInch,
             double targetDragCoefficientLogSlopePerInch,
             double targetMagnusPerSpinInch,
-            double[] targetRowExitCorrectionsIps) {
-        double[] updatedRowCorrections = currentState.rowExitSpeedCorrectionsIps().clone();
-        for (int i = 0; i < updatedRowCorrections.length; i++) {
-            updatedRowCorrections[i] = moveToward(
-                    updatedRowCorrections[i],
-                    targetRowExitCorrectionsIps[i],
-                    FIT_MOVE_FRACTION);
-        }
+            double targetSpeedModelInterceptIps,
+            double targetSpeedModelLowSlope,
+            double targetSpeedModelHighSlope) {
+        double updatedSpeedModelInterceptIps = moveToward(
+                currentState.speedModelInterceptIps(),
+                targetSpeedModelInterceptIps,
+                FIT_MOVE_FRACTION);
+        double updatedSpeedModelLowSlope = moveToward(
+                currentState.speedModelLowSlope(),
+                targetSpeedModelLowSlope,
+                FIT_MOVE_FRACTION);
+        double updatedSpeedModelHighSlope = moveToward(
+                currentState.speedModelHighSlope(),
+                Math.min(targetSpeedModelLowSlope, targetSpeedModelHighSlope),
+                FIT_MOVE_FRACTION);
+        updatedSpeedModelLowSlope = Math.max(0.20, updatedSpeedModelLowSlope);
+        updatedSpeedModelHighSlope = Math.max(0.10, Math.min(updatedSpeedModelLowSlope, updatedSpeedModelHighSlope));
+        double[] updatedRowCorrections = buildRowCorrectionsFromSpeedModel(
+                updatedSpeedModelInterceptIps,
+                updatedSpeedModelLowSlope,
+                updatedSpeedModelHighSlope);
 
         return new FitState(
                 moveToward(
@@ -333,9 +398,16 @@ public final class DataCollectionShotAnalyzer {
                         targetMagnusPerSpinInch,
                         FIT_MOVE_FRACTION),
                 moveToward(
-                        currentState.globalAngleOffsetDegrees(),
-                        clampAngle(targetGlobalAngleOffsetDegrees, -ANGLE_FIT_LIMIT_DEGREES, ANGLE_FIT_LIMIT_DEGREES),
+                        currentState.hoodAngleOffsetDegrees(),
+                        clampAngle(targetHoodAngleOffsetDegrees, -ANGLE_FIT_LIMIT_DEGREES, ANGLE_FIT_LIMIT_DEGREES),
                         FIT_MOVE_FRACTION),
+                moveToward(
+                        currentState.hoodAngleSlopePerDegree(),
+                        clampAngleSlope(targetHoodAngleSlopePerDegree),
+                        FIT_MOVE_FRACTION),
+                updatedSpeedModelInterceptIps,
+                updatedSpeedModelLowSlope,
+                updatedSpeedModelHighSlope,
                 currentState.angleExitScales().clone(),
                 updatedRowCorrections);
     }
@@ -350,7 +422,8 @@ public final class DataCollectionShotAnalyzer {
         double bestDragBase = currentState.dragCoefficientBasePerInch();
         double bestScore = scoreGlobalModel(
                 samplesByAngle,
-                currentState.globalAngleOffsetDegrees(),
+                currentState.hoodAngleOffsetDegrees(),
+                currentState.hoodAngleSlopePerDegree(),
                 currentState.angleExitScales(),
                 currentState.rowExitSpeedCorrectionsIps(),
                 bestDragBase,
@@ -362,7 +435,8 @@ public final class DataCollectionShotAnalyzer {
                 candidateDragBase += 0.00015) {
             double candidateScore = scoreGlobalModel(
                     samplesByAngle,
-                    currentState.globalAngleOffsetDegrees(),
+                    currentState.hoodAngleOffsetDegrees(),
+                    currentState.hoodAngleSlopePerDegree(),
                     currentState.angleExitScales(),
                     currentState.rowExitSpeedCorrectionsIps(),
                     candidateDragBase,
@@ -380,7 +454,8 @@ public final class DataCollectionShotAnalyzer {
                 double candidateDragBase = Math.max(0.0, bestDragBase + offset * refinementStep);
                 double candidateScore = scoreGlobalModel(
                         samplesByAngle,
-                        currentState.globalAngleOffsetDegrees(),
+                        currentState.hoodAngleOffsetDegrees(),
+                        currentState.hoodAngleSlopePerDegree(),
                         currentState.angleExitScales(),
                         currentState.rowExitSpeedCorrectionsIps(),
                         candidateDragBase,
@@ -403,7 +478,8 @@ public final class DataCollectionShotAnalyzer {
         double bestDragLogSlope = currentState.dragCoefficientLogSlopePerInch();
         double bestScore = scoreGlobalModel(
                 samplesByAngle,
-                currentState.globalAngleOffsetDegrees(),
+                currentState.hoodAngleOffsetDegrees(),
+                currentState.hoodAngleSlopePerDegree(),
                 currentState.angleExitScales(),
                 currentState.rowExitSpeedCorrectionsIps(),
                 currentState.dragCoefficientBasePerInch(),
@@ -415,7 +491,8 @@ public final class DataCollectionShotAnalyzer {
                 candidateDragLogSlope += 0.00010) {
             double candidateScore = scoreGlobalModel(
                     samplesByAngle,
-                    currentState.globalAngleOffsetDegrees(),
+                    currentState.hoodAngleOffsetDegrees(),
+                    currentState.hoodAngleSlopePerDegree(),
                     currentState.angleExitScales(),
                     currentState.rowExitSpeedCorrectionsIps(),
                     currentState.dragCoefficientBasePerInch(),
@@ -433,7 +510,8 @@ public final class DataCollectionShotAnalyzer {
                 double candidateDragLogSlope = bestDragLogSlope + offset * refinementStep;
                 double candidateScore = scoreGlobalModel(
                         samplesByAngle,
-                        currentState.globalAngleOffsetDegrees(),
+                        currentState.hoodAngleOffsetDegrees(),
+                        currentState.hoodAngleSlopePerDegree(),
                         currentState.angleExitScales(),
                         currentState.rowExitSpeedCorrectionsIps(),
                         currentState.dragCoefficientBasePerInch(),
@@ -456,7 +534,8 @@ public final class DataCollectionShotAnalyzer {
         double bestMagnus = currentState.magnusPerSpinInch();
         double bestScore = scoreGlobalModel(
                 samplesByAngle,
-                currentState.globalAngleOffsetDegrees(),
+                currentState.hoodAngleOffsetDegrees(),
+                currentState.hoodAngleSlopePerDegree(),
                 currentState.angleExitScales(),
                 currentState.rowExitSpeedCorrectionsIps(),
                 currentState.dragCoefficientBasePerInch(),
@@ -468,7 +547,8 @@ public final class DataCollectionShotAnalyzer {
                 candidateMagnus += 0.00000025) {
             double candidateScore = scoreGlobalModel(
                     samplesByAngle,
-                    currentState.globalAngleOffsetDegrees(),
+                    currentState.hoodAngleOffsetDegrees(),
+                    currentState.hoodAngleSlopePerDegree(),
                     currentState.angleExitScales(),
                     currentState.rowExitSpeedCorrectionsIps(),
                     currentState.dragCoefficientBasePerInch(),
@@ -486,7 +566,8 @@ public final class DataCollectionShotAnalyzer {
                 double candidateMagnus = Math.max(0.0, bestMagnus + offset * refinementStep);
                 double candidateScore = scoreGlobalModel(
                         samplesByAngle,
-                        currentState.globalAngleOffsetDegrees(),
+                        currentState.hoodAngleOffsetDegrees(),
+                        currentState.hoodAngleSlopePerDegree(),
                         currentState.angleExitScales(),
                         currentState.rowExitSpeedCorrectionsIps(),
                         currentState.dragCoefficientBasePerInch(),
@@ -503,13 +584,14 @@ public final class DataCollectionShotAnalyzer {
         return bestMagnus;
     }
 
-    private static double findBestGlobalAngleOffset(
+    private static double findBestHoodAngleOffset(
             List<List<Sample>> samplesByAngle,
             FitState currentState) {
-        double bestOffsetDegrees = currentState.globalAngleOffsetDegrees();
+        double bestOffsetDegrees = currentState.hoodAngleOffsetDegrees();
         double bestScore = scoreGlobalModel(
                 samplesByAngle,
                 bestOffsetDegrees,
+                currentState.hoodAngleSlopePerDegree(),
                 currentState.angleExitScales(),
                 currentState.rowExitSpeedCorrectionsIps(),
                 currentState.dragCoefficientBasePerInch(),
@@ -522,6 +604,7 @@ public final class DataCollectionShotAnalyzer {
             double candidateScore = scoreGlobalModel(
                     samplesByAngle,
                     candidateOffsetDegrees,
+                    currentState.hoodAngleSlopePerDegree(),
                     currentState.angleExitScales(),
                     currentState.rowExitSpeedCorrectionsIps(),
                     currentState.dragCoefficientBasePerInch(),
@@ -543,6 +626,7 @@ public final class DataCollectionShotAnalyzer {
                 double candidateScore = scoreGlobalModel(
                         samplesByAngle,
                         candidateOffsetDegrees,
+                        currentState.hoodAngleSlopePerDegree(),
                         currentState.angleExitScales(),
                         currentState.rowExitSpeedCorrectionsIps(),
                         currentState.dragCoefficientBasePerInch(),
@@ -559,10 +643,234 @@ public final class DataCollectionShotAnalyzer {
         return bestOffsetDegrees;
     }
 
+    private static double findBestHoodAngleSlope(
+            List<List<Sample>> samplesByAngle,
+            FitState currentState) {
+        double bestSlopePerDegree = currentState.hoodAngleSlopePerDegree();
+        double bestScore = scoreGlobalModel(
+                samplesByAngle,
+                currentState.hoodAngleOffsetDegrees(),
+                bestSlopePerDegree,
+                currentState.angleExitScales(),
+                currentState.rowExitSpeedCorrectionsIps(),
+                currentState.dragCoefficientBasePerInch(),
+                currentState.dragCoefficientLogSlopePerInch(),
+                currentState.magnusPerSpinInch());
+
+        for (double candidateSlopePerDegree = -ANGLE_SLOPE_LIMIT_PER_DEGREE;
+                candidateSlopePerDegree <= ANGLE_SLOPE_LIMIT_PER_DEGREE + 1e-9;
+                candidateSlopePerDegree += ANGLE_SLOPE_INITIAL_STEP_PER_DEGREE) {
+            double candidateScore = scoreGlobalModel(
+                    samplesByAngle,
+                    currentState.hoodAngleOffsetDegrees(),
+                    candidateSlopePerDegree,
+                    currentState.angleExitScales(),
+                    currentState.rowExitSpeedCorrectionsIps(),
+                    currentState.dragCoefficientBasePerInch(),
+                    currentState.dragCoefficientLogSlopePerInch(),
+                    currentState.magnusPerSpinInch());
+            if (candidateScore < bestScore) {
+                bestScore = candidateScore;
+                bestSlopePerDegree = candidateSlopePerDegree;
+            }
+        }
+
+        double refinementStepPerDegree = ANGLE_SLOPE_INITIAL_STEP_PER_DEGREE * 0.5;
+        for (int refinement = 0; refinement < 6; refinement++) {
+            for (int offset = -3; offset <= 3; offset++) {
+                double candidateSlopePerDegree = clampAngleSlope(
+                        bestSlopePerDegree + offset * refinementStepPerDegree);
+                double candidateScore = scoreGlobalModel(
+                        samplesByAngle,
+                        currentState.hoodAngleOffsetDegrees(),
+                        candidateSlopePerDegree,
+                        currentState.angleExitScales(),
+                        currentState.rowExitSpeedCorrectionsIps(),
+                        currentState.dragCoefficientBasePerInch(),
+                        currentState.dragCoefficientLogSlopePerInch(),
+                        currentState.magnusPerSpinInch());
+                if (candidateScore < bestScore) {
+                    bestScore = candidateScore;
+                    bestSlopePerDegree = candidateSlopePerDegree;
+                }
+            }
+            refinementStepPerDegree *= 0.5;
+        }
+
+        return bestSlopePerDegree;
+    }
+
+    private static double findBestSpeedModelIntercept(
+            List<List<Sample>> samplesByAngle,
+            FitState currentState) {
+        double bestInterceptIps = currentState.speedModelInterceptIps();
+        double bestScore = scoreGlobalModelForSpeedModel(
+                samplesByAngle,
+                currentState,
+                bestInterceptIps,
+                currentState.speedModelLowSlope(),
+                currentState.speedModelHighSlope());
+
+        for (double candidateInterceptIps = -120.0;
+                candidateInterceptIps <= 0.0;
+                candidateInterceptIps += 4.0) {
+            double candidateScore = scoreGlobalModelForSpeedModel(
+                    samplesByAngle,
+                    currentState,
+                    candidateInterceptIps,
+                    currentState.speedModelLowSlope(),
+                    currentState.speedModelHighSlope());
+            if (candidateScore < bestScore) {
+                bestScore = candidateScore;
+                bestInterceptIps = candidateInterceptIps;
+            }
+        }
+
+        double refinementStepIps = 2.0;
+        for (int refinement = 0; refinement < 6; refinement++) {
+            for (int offset = -3; offset <= 3; offset++) {
+                double candidateInterceptIps = bestInterceptIps + offset * refinementStepIps;
+                double candidateScore = scoreGlobalModelForSpeedModel(
+                        samplesByAngle,
+                        currentState,
+                        candidateInterceptIps,
+                        currentState.speedModelLowSlope(),
+                        currentState.speedModelHighSlope());
+                if (candidateScore < bestScore) {
+                    bestScore = candidateScore;
+                    bestInterceptIps = candidateInterceptIps;
+                }
+            }
+            refinementStepIps *= 0.5;
+        }
+
+        return bestInterceptIps;
+    }
+
+    private static double findBestSpeedModelLowSlope(
+            List<List<Sample>> samplesByAngle,
+            FitState currentState) {
+        double bestLowSlope = currentState.speedModelLowSlope();
+        double bestScore = scoreGlobalModelForSpeedModel(
+                samplesByAngle,
+                currentState,
+                currentState.speedModelInterceptIps(),
+                bestLowSlope,
+                currentState.speedModelHighSlope());
+
+        for (double candidateLowSlope = 0.80;
+                candidateLowSlope <= 1.20 + 1e-9;
+                candidateLowSlope += 0.02) {
+            double candidateHighSlope = Math.min(candidateLowSlope, currentState.speedModelHighSlope());
+            double candidateScore = scoreGlobalModelForSpeedModel(
+                    samplesByAngle,
+                    currentState,
+                    currentState.speedModelInterceptIps(),
+                    candidateLowSlope,
+                    candidateHighSlope);
+            if (candidateScore < bestScore) {
+                bestScore = candidateScore;
+                bestLowSlope = candidateLowSlope;
+            }
+        }
+
+        double refinementStep = 0.01;
+        for (int refinement = 0; refinement < 6; refinement++) {
+            for (int offset = -3; offset <= 3; offset++) {
+                double candidateLowSlope = Math.max(0.20, bestLowSlope + offset * refinementStep);
+                double candidateHighSlope = Math.min(candidateLowSlope, currentState.speedModelHighSlope());
+                double candidateScore = scoreGlobalModelForSpeedModel(
+                        samplesByAngle,
+                        currentState,
+                        currentState.speedModelInterceptIps(),
+                        candidateLowSlope,
+                        candidateHighSlope);
+                if (candidateScore < bestScore) {
+                    bestScore = candidateScore;
+                    bestLowSlope = candidateLowSlope;
+                }
+            }
+            refinementStep *= 0.5;
+        }
+
+        return bestLowSlope;
+    }
+
+    private static double findBestSpeedModelHighSlope(
+            List<List<Sample>> samplesByAngle,
+            FitState currentState) {
+        double bestHighSlope = Math.min(currentState.speedModelHighSlope(), currentState.speedModelLowSlope());
+        double bestScore = scoreGlobalModelForSpeedModel(
+                samplesByAngle,
+                currentState,
+                currentState.speedModelInterceptIps(),
+                currentState.speedModelLowSlope(),
+                bestHighSlope);
+
+        for (double candidateHighSlope = 0.10;
+                candidateHighSlope <= currentState.speedModelLowSlope() + 1e-9;
+                candidateHighSlope += 0.02) {
+            double candidateScore = scoreGlobalModelForSpeedModel(
+                    samplesByAngle,
+                    currentState,
+                    currentState.speedModelInterceptIps(),
+                    currentState.speedModelLowSlope(),
+                    candidateHighSlope);
+            if (candidateScore < bestScore) {
+                bestScore = candidateScore;
+                bestHighSlope = candidateHighSlope;
+            }
+        }
+
+        double refinementStep = 0.01;
+        for (int refinement = 0; refinement < 6; refinement++) {
+            for (int offset = -3; offset <= 3; offset++) {
+                double candidateHighSlope = Math.max(
+                        0.10,
+                        Math.min(currentState.speedModelLowSlope(), bestHighSlope + offset * refinementStep));
+                double candidateScore = scoreGlobalModelForSpeedModel(
+                        samplesByAngle,
+                        currentState,
+                        currentState.speedModelInterceptIps(),
+                        currentState.speedModelLowSlope(),
+                        candidateHighSlope);
+                if (candidateScore < bestScore) {
+                    bestScore = candidateScore;
+                    bestHighSlope = candidateHighSlope;
+                }
+            }
+            refinementStep *= 0.5;
+        }
+
+        return bestHighSlope;
+    }
+
+    private static double scoreGlobalModelForSpeedModel(
+            List<List<Sample>> samplesByAngle,
+            FitState currentState,
+            double speedModelInterceptIps,
+            double speedModelLowSlope,
+            double speedModelHighSlope) {
+        return scoreGlobalModel(
+                samplesByAngle,
+                currentState.hoodAngleOffsetDegrees(),
+                currentState.hoodAngleSlopePerDegree(),
+                currentState.angleExitScales(),
+                buildRowCorrectionsFromSpeedModel(
+                        speedModelInterceptIps,
+                        speedModelLowSlope,
+                        Math.min(speedModelLowSlope, speedModelHighSlope)),
+                currentState.dragCoefficientBasePerInch(),
+                currentState.dragCoefficientLogSlopePerInch(),
+                currentState.magnusPerSpinInch());
+    }
+
     private static double[] findBestRowCorrections(
             List<List<Sample>> samplesByRow,
             FitState currentState) {
-        double[] fittedAnglesDegrees = buildFittedAnglesDegrees(currentState.globalAngleOffsetDegrees());
+        double[] fittedAnglesDegrees = buildFittedAnglesDegrees(
+                currentState.hoodAngleOffsetDegrees(),
+                currentState.hoodAngleSlopePerDegree());
         double[] bestRowCorrections = currentState.rowExitSpeedCorrectionsIps().clone();
         for (int rowIndex = 0; rowIndex < bestRowCorrections.length; rowIndex++) {
             bestRowCorrections[rowIndex] = findBestRowCorrection(
@@ -581,7 +889,9 @@ public final class DataCollectionShotAnalyzer {
     private static GlobalFitResult evaluateGlobalModel(
             List<List<Sample>> samplesByAngle,
             FitState fitState) {
-        double[] fittedAnglesDegrees = buildFittedAnglesDegrees(fitState.globalAngleOffsetDegrees());
+        double[] fittedAnglesDegrees = buildFittedAnglesDegrees(
+                fitState.hoodAngleOffsetDegrees(),
+                fitState.hoodAngleSlopePerDegree());
         List<AngleFit> angleFits = new ArrayList<>(ANGLES_DEGREES.length);
         double totalObjectiveScore = 0.0;
         SampleError worstSampleError = null;
@@ -613,7 +923,7 @@ public final class DataCollectionShotAnalyzer {
             }
 
             for (SampleError sampleError : fit.sampleErrors()) {
-                if (sampleError.sample().measuredDistanceInches() < 150.0) {
+                if (sampleError.sample().targetDistanceInches() < 150.0) {
                     if (worstBelow150SampleError == null
                             || Math.abs(sampleError.errorInches())
                                     > Math.abs(worstBelow150SampleError.errorInches())) {
@@ -628,7 +938,11 @@ public final class DataCollectionShotAnalyzer {
                 fitState.dragCoefficientBasePerInch(),
                 fitState.dragCoefficientLogSlopePerInch(),
                 fitState.magnusPerSpinInch(),
-                fitState.globalAngleOffsetDegrees(),
+                fitState.hoodAngleOffsetDegrees(),
+                fitState.hoodAngleSlopePerDegree(),
+                fitState.speedModelInterceptIps(),
+                fitState.speedModelLowSlope(),
+                fitState.speedModelHighSlope(),
                 fittedAnglesDegrees,
                 fitState.angleExitScales().clone(),
                 fitState.rowExitSpeedCorrectionsIps().clone(),
@@ -640,13 +954,16 @@ public final class DataCollectionShotAnalyzer {
 
     private static double scoreGlobalModel(
             List<List<Sample>> samplesByAngle,
-            double globalAngleOffsetDegrees,
+            double hoodAngleOffsetDegrees,
+            double hoodAngleSlopePerDegree,
             double[] angleScales,
             double[] rowExitSpeedCorrectionsIps,
             double dragCoefficientBasePerInch,
             double dragCoefficientLogSlopePerInch,
             double magnusPerSpinInch) {
-        double[] fittedAnglesDegrees = buildFittedAnglesDegrees(globalAngleOffsetDegrees);
+        double[] fittedAnglesDegrees = buildFittedAnglesDegrees(
+                hoodAngleOffsetDegrees,
+                hoodAngleSlopePerDegree);
         double totalObjectiveScore = 0.0;
         for (int angleIndex = 0; angleIndex < samplesByAngle.size(); angleIndex++) {
             totalObjectiveScore += scoreSamples(
@@ -814,21 +1131,22 @@ public final class DataCollectionShotAnalyzer {
                     1.0,
                     sample.shotExitSpeedIps() * exitVelocityScaleFactor + rowCorrectionIps);
             double effectiveExitSpeedScaleFactor = correctedShotExitSpeedIps / sample.shotExitSpeedIps();
-            double predictedDistanceInches = simulateGroundDistance(
+            double predictedTargetDistanceInches = simulateDescendingDistanceAtTargetHeight(
                     correctedShotExitSpeedIps,
                     sample.commandSpeedIps(),
                     effectiveExitSpeedScaleFactor,
                     angleDegrees,
+                    sample.targetHeightInches(),
                     linearDragPerSecond,
                     dragCoefficientBasePerInch,
                     dragCoefficientLogSlopePerInch,
                     magnusPerSpinInch);
 
-            if (!Double.isFinite(predictedDistanceInches)) {
-                predictedDistanceInches = sample.measuredDistanceInches() + NO_HIT_PENALTY_INCHES;
+            if (!Double.isFinite(predictedTargetDistanceInches)) {
+                predictedTargetDistanceInches = sample.targetDistanceInches() + NO_HIT_PENALTY_INCHES;
             }
 
-            double errorInches = predictedDistanceInches - sample.measuredDistanceInches();
+            double errorInches = predictedTargetDistanceInches - sample.targetDistanceInches();
             weightedSquaredErrorSum += sample.weight() * errorInches * errorInches;
             weightSum += sample.weight();
             maxAbsError = Math.max(maxAbsError, Math.abs(errorInches));
@@ -859,26 +1177,27 @@ public final class DataCollectionShotAnalyzer {
                     1.0,
                     sample.shotExitSpeedIps() * exitVelocityScaleFactor + rowCorrectionIps);
             double effectiveExitSpeedScaleFactor = correctedShotExitSpeedIps / sample.shotExitSpeedIps();
-            double predictedDistanceInches = simulateGroundDistance(
+            double predictedTargetDistanceInches = simulateDescendingDistanceAtTargetHeight(
                     correctedShotExitSpeedIps,
                     sample.commandSpeedIps(),
                     effectiveExitSpeedScaleFactor,
                     angleDegrees,
+                    sample.targetHeightInches(),
                     linearDragPerSecond,
                     dragCoefficientBasePerInch,
                     dragCoefficientLogSlopePerInch,
                     magnusPerSpinInch);
 
-            if (!Double.isFinite(predictedDistanceInches)) {
-                predictedDistanceInches = sample.measuredDistanceInches() + NO_HIT_PENALTY_INCHES;
+            if (!Double.isFinite(predictedTargetDistanceInches)) {
+                predictedTargetDistanceInches = sample.targetDistanceInches() + NO_HIT_PENALTY_INCHES;
             }
 
-            double errorInches = predictedDistanceInches - sample.measuredDistanceInches();
+            double errorInches = predictedTargetDistanceInches - sample.targetDistanceInches();
             double absErrorInches = Math.abs(errorInches);
             weightedSquaredErrorSum += sample.weight() * errorInches * errorInches;
             weightSum += sample.weight();
 
-            SampleError sampleError = new SampleError(sample, angleDegrees, predictedDistanceInches, errorInches);
+            SampleError sampleError = new SampleError(sample, angleDegrees, predictedTargetDistanceInches, errorInches);
             sampleErrors.add(sampleError);
 
             if (absErrorInches > maxAbsError) {
@@ -924,21 +1243,22 @@ public final class DataCollectionShotAnalyzer {
                     sample.shotExitSpeedIps() * angleScale
                             + candidateCorrections[sample.commandSpeedIndex()]);
             double effectiveExitSpeedScaleFactor = correctedShotExitSpeedIps / sample.shotExitSpeedIps();
-            double predictedDistanceInches = simulateGroundDistance(
+            double predictedTargetDistanceInches = simulateDescendingDistanceAtTargetHeight(
                     correctedShotExitSpeedIps,
                     sample.commandSpeedIps(),
                     effectiveExitSpeedScaleFactor,
                     fittedAnglesDegrees[sample.angleIndex()],
+                    sample.targetHeightInches(),
                     linearDragPerSecond,
                     dragCoefficientBasePerInch,
                     dragCoefficientLogSlopePerInch,
                     magnusPerSpinInch);
 
-            if (!Double.isFinite(predictedDistanceInches)) {
-                predictedDistanceInches = sample.measuredDistanceInches() + NO_HIT_PENALTY_INCHES;
+            if (!Double.isFinite(predictedTargetDistanceInches)) {
+                predictedTargetDistanceInches = sample.targetDistanceInches() + NO_HIT_PENALTY_INCHES;
             }
 
-            double errorInches = predictedDistanceInches - sample.measuredDistanceInches();
+            double errorInches = predictedTargetDistanceInches - sample.targetDistanceInches();
             weightedSquaredErrorSum += sample.weight() * errorInches * errorInches;
             weightSum += sample.weight();
             maxAbsError = Math.max(maxAbsError, Math.abs(errorInches));
@@ -976,21 +1296,22 @@ public final class DataCollectionShotAnalyzer {
                     sample.shotExitSpeedIps() * angleScale
                             + candidateCorrections[sample.commandSpeedIndex()]);
             double effectiveExitSpeedScaleFactor = correctedShotExitSpeedIps / sample.shotExitSpeedIps();
-            double predictedDistanceInches = simulateGroundDistance(
+            double predictedTargetDistanceInches = simulateDescendingDistanceAtTargetHeight(
                     correctedShotExitSpeedIps,
                     sample.commandSpeedIps(),
                     effectiveExitSpeedScaleFactor,
                     fittedAnglesDegrees[sample.angleIndex()],
+                    sample.targetHeightInches(),
                     linearDragPerSecond,
                     dragCoefficientBasePerInch,
                     dragCoefficientLogSlopePerInch,
                     magnusPerSpinInch);
 
-            if (!Double.isFinite(predictedDistanceInches)) {
-                predictedDistanceInches = sample.measuredDistanceInches() + NO_HIT_PENALTY_INCHES;
+            if (!Double.isFinite(predictedTargetDistanceInches)) {
+                predictedTargetDistanceInches = sample.targetDistanceInches() + NO_HIT_PENALTY_INCHES;
             }
 
-            double errorInches = predictedDistanceInches - sample.measuredDistanceInches();
+            double errorInches = predictedTargetDistanceInches - sample.targetDistanceInches();
             double absErrorInches = Math.abs(errorInches);
             weightedSquaredErrorSum += sample.weight() * errorInches * errorInches;
             weightSum += sample.weight();
@@ -998,7 +1319,7 @@ public final class DataCollectionShotAnalyzer {
             SampleError sampleError = new SampleError(
                     sample,
                     fittedAnglesDegrees[sample.angleIndex()],
-                    predictedDistanceInches,
+                    predictedTargetDistanceInches,
                     errorInches);
             sampleErrors.add(sampleError);
 
@@ -1019,15 +1340,20 @@ public final class DataCollectionShotAnalyzer {
                 sampleErrors);
     }
 
-    private static double simulateGroundDistance(
+    private static double simulateDescendingDistanceAtTargetHeight(
             double shotExitSpeedIps,
             double commandSpeedIps,
             double exitVelocityScaleFactor,
             double angleDegrees,
+            double targetHeightInches,
             double linearDragPerSecond,
             double dragCoefficientBasePerInch,
             double dragCoefficientLogSlopePerInch,
             double magnusPerSpinInch) {
+        if (!Double.isFinite(targetHeightInches)) {
+            return Double.NaN;
+        }
+
         double angleRadians = Math.toRadians(angleDegrees);
 
         double x = INITIAL_X_OFFSET_INCHES
@@ -1036,13 +1362,14 @@ public final class DataCollectionShotAnalyzer {
                 + BALL_CENTER_OFFSET_INCHES * Math.sin(angleRadians);
         double vx = shotExitSpeedIps * Math.cos(angleRadians);
         double vz = shotExitSpeedIps * Math.sin(angleRadians);
-
-        double previousX = x;
-        double previousZ = z;
+        boolean hasStartedDescending = vz <= 0.0;
 
         for (double timeSeconds = 0.0;
                 timeSeconds < MAX_SIMULATION_TIME_SECONDS;
                 timeSeconds += SIMULATION_DT_SECONDS) {
+            double previousX = x;
+            double previousZ = z;
+            double previousVz = vz;
             double speedIps = Math.hypot(vx, vz);
             double dragCoefficientPerInch = dragCoefficientBasePerInch
                     + dragCoefficientLogSlopePerInch
@@ -1067,13 +1394,38 @@ public final class DataCollectionShotAnalyzer {
             vx = nextVx;
             vz = nextVz;
 
+            if (!hasStartedDescending && nextVz <= 0.0) {
+                hasStartedDescending = true;
+            }
+
+            if (hasStartedDescending
+                    && previousZ >= targetHeightInches
+                    && z <= targetHeightInches
+                    && (previousVz <= 0.0 || nextVz <= 0.0)) {
+                double frameRelativeDistanceInches =
+                        interpolateValue(previousZ, previousX, z, x, targetHeightInches);
+                return frameRelativeDistanceInches + FRAME_TO_CENTER_DISTANCE_INCHES;
+            }
+
             if (z <= 0.0) {
-                double interpolation = previousZ / (previousZ - z);
-                return previousX + interpolation * (x - previousX);
+                return Double.NaN;
             }
         }
 
         return Double.NaN;
+    }
+
+    private static double interpolateValue(
+            double x1,
+            double y1,
+            double x2,
+            double y2,
+            double targetX) {
+        double dx = x2 - x1;
+        if (Math.abs(dx) <= 1e-9) {
+            return y2;
+        }
+        return y1 + (y2 - y1) * ((targetX - x1) / dx);
     }
 
     private static void printRelevantFactors(GlobalFitResult globalFit) {
@@ -1098,14 +1450,20 @@ public final class DataCollectionShotAnalyzer {
                 globalFit.dragCoefficientLogSlopePerInch());
         System.out.printf("  FITTED_TRAJECTORY_MAGNUS_PER_SPIN_INCH = %.9f%n",
                 globalFit.magnusPerSpinInch());
-        System.out.printf("  FITTED_GLOBAL_HOOD_ANGLE_OFFSET_DEGREES = %+,.6f%n",
-                globalFit.globalAngleOffsetDegrees());
+        System.out.printf("  DATA_COLLECTION_FITTED_HOOD_ANGLE_OFFSET_DEGREES = %+,.6f%n",
+                globalFit.hoodAngleOffsetDegrees());
+        System.out.printf("  DATA_COLLECTION_FITTED_HOOD_ANGLE_SLOPE_PER_DEGREE = %+,.6f%n",
+                globalFit.hoodAngleSlopePerDegree());
+        System.out.printf("  SPEED_MODEL_KNEE_COMMAND_IPS = %.6f%n", SPEED_MODEL_KNEE_COMMAND_IPS);
+        System.out.printf("  FITTED_SPEED_MODEL_INTERCEPT_IPS = %.6f%n", globalFit.speedModelInterceptIps());
+        System.out.printf("  FITTED_SPEED_MODEL_LOW_SLOPE = %.6f%n", globalFit.speedModelLowSlope());
+        System.out.printf("  FITTED_SPEED_MODEL_HIGH_SLOPE = %.6f%n", globalFit.speedModelHighSlope());
         System.out.printf("  MEASURED_ACTUAL_ANGLES_DEGREES = %s%n", formatArray(ANGLES_DEGREES, 3));
         System.out.printf("  FITTED_ACTUAL_ANGLES_DEGREES = %s%n", formatArray(globalFit.fittedAnglesDegrees(), 3));
         System.out.printf("  FITTED_COMMAND_ANGLE_EXIT_SCALES = %s%n", formatAngleScales(globalFit));
         System.out.printf("  dataCollectionCommandSpeedsIps = %s%n", formatArray(COMMAND_SPEEDS_IPS, 0));
-        System.out.printf("  seededBallExitIpsFromCurrentModel = %s%n", formatArray(SHOT_EXIT_SPEEDS_IPS, 3));
-        System.out.printf("  rowExitCorrectionsIps = %s%n",
+        System.out.printf("  seededBallExitIpsFromLegacySpeedModel = %s%n", formatArray(SHOT_EXIT_SPEEDS_IPS, 3));
+        System.out.printf("  rowExitCorrectionsIpsFromFittedSpeedModel = %s%n",
                 formatArray(globalFit.rowExitSpeedCorrectionsIps(), 3));
         System.out.printf("  correctedBallExitIpsForDataCollectionRows = %s%n",
                 formatCorrectedExitIps(globalFit.rowExitSpeedCorrectionsIps()));
@@ -1136,8 +1494,20 @@ public final class DataCollectionShotAnalyzer {
                 globalFit.dragCoefficientLogSlopePerInch());
         System.out.printf("static final double FITTED_TRAJECTORY_MAGNUS_PER_SPIN_INCH = %.9f;%n",
                 globalFit.magnusPerSpinInch());
-        System.out.printf("static final double DATA_COLLECTION_FITTED_GLOBAL_HOOD_ANGLE_OFFSET_DEGREES = %+.6f;%n",
-                globalFit.globalAngleOffsetDegrees());
+        System.out.printf("static final double DATA_COLLECTION_FITTED_HOOD_ANGLE_OFFSET_DEGREES = %+.6f;%n",
+                globalFit.hoodAngleOffsetDegrees());
+        System.out.printf("static final double DATA_COLLECTION_FITTED_HOOD_ANGLE_SLOPE_PER_DEGREE = %+.6f;%n",
+                globalFit.hoodAngleSlopePerDegree());
+        System.out.printf("static final double DATA_COLLECTION_FITTED_HOOD_ANGLE_SLOPE_REFERENCE_DEGREES = %.1f;%n",
+                ANGLE_SLOPE_REFERENCE_DEGREES);
+        System.out.printf("static final double DATA_COLLECTION_FITTED_SPEED_MODEL_KNEE_COMMAND_IPS = %.3f;%n",
+                SPEED_MODEL_KNEE_COMMAND_IPS);
+        System.out.printf("static final double DATA_COLLECTION_FITTED_SPEED_MODEL_INTERCEPT_IPS = %.6f;%n",
+                globalFit.speedModelInterceptIps());
+        System.out.printf("static final double DATA_COLLECTION_FITTED_SPEED_MODEL_LOW_SLOPE = %.6f;%n",
+                globalFit.speedModelLowSlope());
+        System.out.printf("static final double DATA_COLLECTION_FITTED_SPEED_MODEL_HIGH_SLOPE = %.6f;%n",
+                globalFit.speedModelHighSlope());
         System.out.printf("static final double[] DATA_COLLECTION_EXPECTED_HOOD_ANGLES_DEGREES = %s;%n",
                 formatJavaArray(ANGLES_DEGREES, 6));
         System.out.printf("static final double[] DATA_COLLECTION_FITTED_HOOD_ANGLES_DEGREES = %s;%n",
@@ -1157,6 +1527,41 @@ public final class DataCollectionShotAnalyzer {
             correctedExitIps[i] = SHOT_EXIT_SPEEDS_IPS[i] + rowExitSpeedCorrectionsIps[i];
         }
         return correctedExitIps;
+    }
+
+    private static double[] buildRowCorrectionsFromSpeedModel(
+            double speedModelInterceptIps,
+            double speedModelLowSlope,
+            double speedModelHighSlope) {
+        double[] rowCorrectionsIps = new double[COMMAND_SPEEDS_IPS.length];
+        for (int i = 0; i < COMMAND_SPEEDS_IPS.length; i++) {
+            rowCorrectionsIps[i] = evaluateSpeedModelExitIps(
+                    COMMAND_SPEEDS_IPS[i],
+                    speedModelInterceptIps,
+                    speedModelLowSlope,
+                    speedModelHighSlope) - SHOT_EXIT_SPEEDS_IPS[i];
+        }
+        return rowCorrectionsIps;
+    }
+
+    private static double evaluateSpeedModelExitIps(
+            double commandSpeedIps,
+            double speedModelInterceptIps,
+            double speedModelLowSlope,
+            double speedModelHighSlope) {
+        if (!Double.isFinite(commandSpeedIps)) {
+            return Double.NaN;
+        }
+
+        double clampedLowSlope = Math.max(0.10, speedModelLowSlope);
+        double clampedHighSlope = Math.max(0.10, Math.min(clampedLowSlope, speedModelHighSlope));
+        if (commandSpeedIps <= SPEED_MODEL_KNEE_COMMAND_IPS) {
+            return speedModelInterceptIps + clampedLowSlope * commandSpeedIps;
+        }
+
+        return speedModelInterceptIps
+                + clampedLowSlope * SPEED_MODEL_KNEE_COMMAND_IPS
+                + clampedHighSlope * (commandSpeedIps - SPEED_MODEL_KNEE_COMMAND_IPS);
     }
 
     private static String formatArray(double[] values, int decimals) {
@@ -1187,14 +1592,24 @@ public final class DataCollectionShotAnalyzer {
         return Math.max(min, Math.min(max, value));
     }
 
-    private static double[] buildFittedAnglesDegrees(double globalAngleOffsetDegrees) {
+    private static double clampAngleSlope(double value) {
+        return clampAngle(value, -ANGLE_SLOPE_LIMIT_PER_DEGREE, ANGLE_SLOPE_LIMIT_PER_DEGREE);
+    }
+
+    private static double[] buildFittedAnglesDegrees(
+            double hoodAngleOffsetDegrees,
+            double hoodAngleSlopePerDegree) {
         double clampedOffsetDegrees = clampAngle(
-                globalAngleOffsetDegrees,
+                hoodAngleOffsetDegrees,
                 -ANGLE_FIT_LIMIT_DEGREES,
                 ANGLE_FIT_LIMIT_DEGREES);
+        double clampedSlopePerDegree = clampAngleSlope(hoodAngleSlopePerDegree);
         double[] fittedAnglesDegrees = ANGLES_DEGREES.clone();
         for (int i = 0; i < fittedAnglesDegrees.length; i++) {
-            fittedAnglesDegrees[i] += clampedOffsetDegrees;
+            double correctionDegrees = clampedOffsetDegrees
+                    + clampedSlopePerDegree * (ANGLES_DEGREES[i] - ANGLE_SLOPE_REFERENCE_DEGREES);
+            correctionDegrees = clampAngle(correctionDegrees, -ANGLE_FIT_LIMIT_DEGREES, ANGLE_FIT_LIMIT_DEGREES);
+            fittedAnglesDegrees[i] += correctionDegrees;
         }
         return fittedAnglesDegrees;
     }
@@ -1227,11 +1642,15 @@ public final class DataCollectionShotAnalyzer {
 
         double[] seedBallExitIps = new double[uniqueCommandSpeedsIps.length];
         for (int i = 0; i < uniqueCommandSpeedsIps.length; i++) {
-            double seedBallExit = FlywheelBallExitInterpolator.getBallExitIpsForSetIps(uniqueCommandSpeedsIps[i]);
+            double seedBallExit = evaluateSpeedModelExitIps(
+                    uniqueCommandSpeedsIps[i],
+                    LEGACY_SPEED_MODEL_INTERCEPT_IPS,
+                    LEGACY_SPEED_MODEL_LOW_SLOPE,
+                    LEGACY_SPEED_MODEL_HIGH_SLOPE);
             if (!Double.isFinite(seedBallExit)) {
                 throw new IllegalStateException(String.format(
                         Locale.US,
-                        "No seeded ball-exit speed available for commanded speed %.3f ips",
+                        "No seeded legacy-model ball-exit speed available for commanded speed %.3f ips",
                         uniqueCommandSpeedsIps[i]));
             }
             seedBallExitIps[i] = seedBallExit;
@@ -1257,6 +1676,7 @@ public final class DataCollectionShotAnalyzer {
                     acceptedDataPoint.commandedFlywheelIps(),
                     seedBallExitIps[rowIndex],
                     acceptedDataPoint.targetDistanceInches(),
+                    acceptedDataPoint.targetHeightInches(),
                     calculateWeight(acceptedDataPoint.targetDistanceInches()));
             samplesByAngle.get(angleIndex).add(sample);
             samplesByRow.get(rowIndex).add(sample);
@@ -1312,10 +1732,7 @@ public final class DataCollectionShotAnalyzer {
                         "Malformed data collection row in " + sourcePath + ": " + line);
             }
 
-            double measuredRobotCenterDistanceInches = Double.parseDouble(columns[1]);
-            double targetDistanceInches = Math.max(
-                    0.0,
-                    measuredRobotCenterDistanceInches - FRAME_TO_CENTER_DISTANCE_INCHES);
+            double targetDistanceInches = Double.parseDouble(columns[1]);
             double targetHeightInches = Double.parseDouble(columns[2]);
             double hoodAngleDegrees = Double.parseDouble(columns[3]);
             double commandedFlywheelIps = Double.parseDouble(columns[4]);

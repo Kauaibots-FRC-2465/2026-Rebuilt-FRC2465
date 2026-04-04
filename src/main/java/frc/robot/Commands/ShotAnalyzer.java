@@ -28,15 +28,30 @@ public final class ShotAnalyzer {
     private static final double[] ANGLE_EXIT_SCALES = ShooterConstants.FITTED_COMMAND_ANGLE_EXIT_SCALES;
     private static final double[][] DISTANCE_GRID_INCHES = ShooterConstants.MEASURED_DISTANCE_GRID_INCHES;
     private static final double[] COMMAND_SPEEDS_IPS =
-            Arrays.copyOf(ShooterConstants.COMMANDED_FLYWHEEL_SET_IPS, DISTANCE_GRID_INCHES.length);
-    private static final double[] SHOT_EXIT_SPEEDS_IPS =
-            Arrays.copyOf(ShooterConstants.FITTED_BALL_EXIT_IPS, DISTANCE_GRID_INCHES.length);
+            Arrays.copyOf(
+                    ShooterConstants.MEASURED_DISTANCE_GRID_COMMAND_SPEEDS_IPS,
+                    ShooterConstants.MEASURED_DISTANCE_GRID_COMMAND_SPEEDS_IPS.length);
+    private static final double[] SHOT_EXIT_SPEEDS_IPS = buildShotExitSpeedsIps(COMMAND_SPEEDS_IPS);
 
     // Table distances are relative to the front frame of the robot, but shooter is behind the front of the frame according to:
     // ball exits with initial z of (7.5 inches)+(5 inches * sin(launch angle))
     // ball exits with initial x of (-13.5 inches)+(5 inches * cos(launch angle))
 
     private ShotAnalyzer() {
+    }
+
+    private static double[] buildShotExitSpeedsIps(double[] commandSpeedsIps) {
+        double[] shotExitSpeedsIps = new double[commandSpeedsIps.length];
+        for (int i = 0; i < commandSpeedsIps.length; i++) {
+            shotExitSpeedsIps[i] =
+                    FlywheelBallExitInterpolator.getBallExitIpsForSetIps(commandSpeedsIps[i]);
+            if (!Double.isFinite(shotExitSpeedsIps[i])) {
+                throw new IllegalStateException(String.format(
+                        "No ball-exit seed available for command speed %.3f ips",
+                        commandSpeedsIps[i]));
+            }
+        }
+        return shotExitSpeedsIps;
     }
 
     private record Sample(

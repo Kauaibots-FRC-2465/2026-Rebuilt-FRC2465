@@ -39,6 +39,7 @@ public class ScoreInHub extends Command {
     private static final double SLOW_SOLVER_THRESHOLD_MS = 5.0;
     private static final double SLOW_SET_CONTROL_THRESHOLD_MS = 2.0;
     private static final double TRANSIENT_SOLUTION_HOLD_SECONDS = 0.25;
+    private static final double SPEED_UP_ACCELERATION_LIMIT_METERS_PER_SECOND_SQUARED = 0.1524;
 
     private final CommandSwerveDrivetrain drivetrain;
     private final PoseEstimatorSubsystem poseEstimator;
@@ -76,6 +77,7 @@ public class ScoreInHub extends Command {
     private double lastValidFlywheelCommandIps = 0.0;
     private double lastValidSolutionTimestampSeconds = Double.NEGATIVE_INFINITY;
     private boolean hasLatchedValidSolution = false;
+    private double lastVelocityLimitTimestampSeconds = Double.NaN;
 
     public ScoreInHub(
             CommandSwerveDrivetrain drivetrain,
@@ -120,6 +122,7 @@ public class ScoreInHub extends Command {
 
     @Override
     public void initialize() {
+        lastVelocityLimitTimestampSeconds = Double.NaN;
     }
 
     @Override
@@ -143,19 +146,31 @@ public class ScoreInHub extends Command {
             return;
         }
 
-        updateLastDriveDirection(fieldCentricRequest);
+        double limitedVelocityXMetersPerSecond;
+        double limitedVelocityYMetersPerSecond;
+        {
+            Translation2d limitedVelocity = limitTranslationalAcceleration(fieldCentricRequest);
+            limitedVelocityXMetersPerSecond = limitedVelocity.getX();
+            limitedVelocityYMetersPerSecond = limitedVelocity.getY();
+        }
+
+        updateLastDriveDirection(limitedVelocityXMetersPerSecond, limitedVelocityYMetersPerSecond);
         long predictionStartMicros = SlowCallMonitor.nowMicros();
         if (!MovingShotMath.predictFutureStateFromCommand(
                 poseEstimator,
                 drivetrain.getDriverPerspectiveForward(),
-                fieldCentricRequest,
+                limitedVelocityXMetersPerSecond,
+                limitedVelocityYMetersPerSecond,
                 ShooterConstants.COMMANDED_SHOOTER_LOOKAHEAD_SECONDS,
                 futureState)) {
             predictionMicros = SlowCallMonitor.nowMicros() - predictionStartMicros;
             clearSolutionTelemetry();
             boolean holdingLastSolution = shouldHoldLastSolution();
             if (holdingLastSolution) {
-                applyHeldShotCommand(fieldCentricRequest);
+                applyHeldShotCommand(
+                        fieldCentricRequest,
+                        limitedVelocityXMetersPerSecond,
+                        limitedVelocityYMetersPerSecond);
             } else {
                 clearShotCommands();
                 drivetrain.setControl(requestedDrive);
@@ -190,7 +205,10 @@ public class ScoreInHub extends Command {
         if (updateShooterSolution(target, preferredRobotHeading)) {
             robotHeadingTarget = Rotation2d.fromDegrees(movingShotSolution.getRobotHeadingDegrees());
         } else if (shouldHoldLastSolution()) {
-            applyHeldShotCommand(fieldCentricRequest);
+            applyHeldShotCommand(
+                    fieldCentricRequest,
+                    limitedVelocityXMetersPerSecond,
+                    limitedVelocityYMetersPerSecond);
             long totalMicros = SlowCallMonitor.nowMicros() - executeStartMicros;
             solutionMicros = SlowCallMonitor.nowMicros() - solutionStartMicros;
             if (SlowCallMonitor.isSlow(totalMicros, SLOW_EXECUTE_THRESHOLD_MS)
@@ -215,8 +233,8 @@ public class ScoreInHub extends Command {
         long setControlStartMicros = SlowCallMonitor.nowMicros();
         drivetrain.setControl(
                 facingAngleDrive
-                        .withVelocityX(fieldCentricRequest.VelocityX)
-                        .withVelocityY(fieldCentricRequest.VelocityY)
+                        .withVelocityX(limitedVelocityXMetersPerSecond)
+                        .withVelocityY(limitedVelocityYMetersPerSecond)
                         .withTargetDirection(operatorPerspectiveHeadingTarget)
                         .withDeadband(fieldCentricRequest.Deadband)
                         .withRotationalDeadband(fieldCentricRequest.RotationalDeadband)
@@ -250,6 +268,7 @@ public class ScoreInHub extends Command {
 
     @Override
     public void end(boolean interrupted) {
+        lastVelocityLimitTimestampSeconds = Double.NaN;
     }
 
     private Translation2d getTarget() {
@@ -267,11 +286,9 @@ public class ScoreInHub extends Command {
                 target.getDistance(new Translation2d(futureState.xMeters, futureState.yMeters)),
                 Meters);
         long solverStartMicros = SlowCallMonitor.nowMicros();
-        boolean hasIdealSolution = BallTrajectoryLookup.solveMovingShot(
-                minimumHoodAngleDegrees,
-                MovingShotMath.getIdealMaximumHoodAngleDegrees(verticalAim),
+        boolean hasIdealSolution = MovingShotMath.solveIdealMovingShotWithUpperHoodFallback(
+                verticalAim,
                 ShooterConstants.COMMANDED_MOVING_SHOT_HOOD_SEARCH_STEP_DEGREES,
-                true,
                 futureState.xMeters,
                 futureState.yMeters,
                 futureState.headingRadians,
@@ -395,10 +412,12 @@ public class ScoreInHub extends Command {
         return true;
     }
 
-    private void updateLastDriveDirection(SwerveRequest.FieldCentric fieldCentricRequest) {
+    private void updateLastDriveDirection(
+            double velocityXMetersPerSecond,
+            double velocityYMetersPerSecond) {
         Translation2d fieldRelativeVelocity = new Translation2d(
-                fieldCentricRequest.VelocityX,
-                fieldCentricRequest.VelocityY).rotateBy(drivetrain.getDriverPerspectiveForward());
+                velocityXMetersPerSecond,
+                velocityYMetersPerSecond).rotateBy(drivetrain.getDriverPerspectiveForward());
         lastFieldRelativeDriveDirection = FieldMath.updateLastDriveDirection(
                 fieldRelativeVelocity,
                 lastFieldRelativeDriveDirection);
@@ -465,15 +484,18 @@ public class ScoreInHub extends Command {
         hasLatchedValidSolution = false;
     }
 
-    private void applyHeldShotCommand(SwerveRequest.FieldCentric fieldCentricRequest) {
+    private void applyHeldShotCommand(
+            SwerveRequest.FieldCentric fieldCentricRequest,
+            double velocityXMetersPerSecond,
+            double velocityYMetersPerSecond) {
         horizontalAim.setAngle(Degrees.of(lastValidTurretDeltaDegrees));
         shooter.setCoupledIPS(lastValidFlywheelCommandIps);
         Rotation2d operatorPerspectiveHeadingTarget =
                 lastValidRobotHeadingTarget.minus(drivetrain.getDriverPerspectiveForward());
         drivetrain.setControl(
                 facingAngleDrive
-                        .withVelocityX(fieldCentricRequest.VelocityX)
-                        .withVelocityY(fieldCentricRequest.VelocityY)
+                        .withVelocityX(velocityXMetersPerSecond)
+                        .withVelocityY(velocityYMetersPerSecond)
                         .withTargetDirection(operatorPerspectiveHeadingTarget)
                         .withDeadband(fieldCentricRequest.Deadband)
                         .withRotationalDeadband(fieldCentricRequest.RotationalDeadband)
@@ -482,5 +504,42 @@ public class ScoreInHub extends Command {
                         .withSteerRequestType(fieldCentricRequest.SteerRequestType)
                         .withDesaturateWheelSpeeds(fieldCentricRequest.DesaturateWheelSpeeds)
                         .withForwardPerspective(fieldCentricRequest.ForwardPerspective));
+    }
+
+    private Translation2d limitTranslationalAcceleration(SwerveRequest.FieldCentric fieldCentricRequest) {
+        double requestedVelocityXMetersPerSecond = fieldCentricRequest.VelocityX;
+        double requestedVelocityYMetersPerSecond = fieldCentricRequest.VelocityY;
+        double currentTimestampSeconds = Timer.getFPGATimestamp();
+        Translation2d requestedVelocity = new Translation2d(
+                requestedVelocityXMetersPerSecond,
+                requestedVelocityYMetersPerSecond);
+
+        if (!Double.isFinite(lastVelocityLimitTimestampSeconds)) {
+            lastVelocityLimitTimestampSeconds = currentTimestampSeconds;
+            return requestedVelocity;
+        }
+
+        double dtSeconds = Math.max(0.0, currentTimestampSeconds - lastVelocityLimitTimestampSeconds);
+        Translation2d limitedVelocity = requestedVelocity;
+        double currentRobotSpeedMetersPerSecond = Math.hypot(
+                drivetrain.getState().Speeds.vxMetersPerSecond,
+                drivetrain.getState().Speeds.vyMetersPerSecond);
+
+        double requestedSpeedMetersPerSecond = requestedVelocity.getNorm();
+        if (requestedSpeedMetersPerSecond > currentRobotSpeedMetersPerSecond && dtSeconds > 0.0) {
+            double maximumSpeedIncreaseMetersPerSecond =
+                    SPEED_UP_ACCELERATION_LIMIT_METERS_PER_SECOND_SQUARED * dtSeconds;
+            double limitedSpeedMetersPerSecond = Math.min(
+                    requestedSpeedMetersPerSecond,
+                    currentRobotSpeedMetersPerSecond + maximumSpeedIncreaseMetersPerSecond);
+            if (requestedSpeedMetersPerSecond > 1e-9) {
+                limitedVelocity = new Translation2d(
+                        limitedSpeedMetersPerSecond,
+                        requestedVelocity.getAngle());
+            }
+        }
+
+        lastVelocityLimitTimestampSeconds = currentTimestampSeconds;
+        return limitedVelocity;
     }
 }

@@ -29,6 +29,7 @@ import edu.wpi.first.wpilibj.Filesystem;
 import edu.wpi.first.wpilibj.RobotController;
 import edu.wpi.first.wpilibj.Timer;
 import edu.wpi.first.wpilibj2.command.Command;
+import edu.wpi.first.wpilibj2.command.button.CommandXboxController;
 import frc.robot.fieldmath.FieldMath;
 import frc.robot.subsystems.IntakePositionSubsystem;
 import frc.robot.subsystems.PoseEstimatorSubsystem;
@@ -71,6 +72,7 @@ public class DataCollectionCommand extends Command {
     private final SparkAnglePositionSubsystem verticalAim;
     private final IntakePositionSubsystem intakePosition;
     private final ShooterSubsystem shooter;
+    private final CommandXboxController testController;
     private final PoseEstimatorSubsystem.PredictedFusedState predictedState =
             new PoseEstimatorSubsystem.PredictedFusedState();
     private final BallTrajectoryLookup.MovingShotSolution predictedShotSolution =
@@ -85,6 +87,7 @@ public class DataCollectionCommand extends Command {
     private final DoublePublisher lastAcceptedDistanceInchesPublisher;
     private final DoublePublisher lastAcceptedHoodAngleDegreesPublisher;
     private final DoublePublisher lastAcceptedFlywheelCommandIpsPublisher;
+    private final IntegerPublisher selectedPointIndexPublisher;
     private final IntegerPublisher acceptedPointCountPublisher;
 
     private boolean hasLatchedState;
@@ -98,6 +101,12 @@ public class DataCollectionCommand extends Command {
     private double targetDistanceInches;
     private double targetAzimuthOffsetDegrees;
     private double currentPredictedCommandedFlywheelIps;
+    private int selectedPointIndex;
+    private int previousPov;
+    private boolean previousA;
+    private boolean previousB;
+    private boolean previousLeftBumper;
+    private boolean previousRightBumper;
     private Path outputPath;
 
     public DataCollectionCommand(
@@ -105,12 +114,14 @@ public class DataCollectionCommand extends Command {
             SparkAnglePositionSubsystem horizontalAim,
             SparkAnglePositionSubsystem verticalAim,
             IntakePositionSubsystem intakePosition,
-            ShooterSubsystem shooter) {
+            ShooterSubsystem shooter,
+            CommandXboxController testController) {
         this.poseEstimator = Objects.requireNonNull(poseEstimator, "poseEstimator must not be null");
         this.horizontalAim = Objects.requireNonNull(horizontalAim, "horizontalAim must not be null");
         this.verticalAim = Objects.requireNonNull(verticalAim, "verticalAim must not be null");
         this.intakePosition = Objects.requireNonNull(intakePosition, "intakePosition must not be null");
         this.shooter = Objects.requireNonNull(shooter, "shooter must not be null");
+        this.testController = Objects.requireNonNull(testController, "testController must not be null");
 
         NetworkTable dataCollectionTable = NetworkTableInstance.getDefault().getTable("dataCollection");
         targetDistanceInchesPublisher = dataCollectionTable.getDoubleTopic("targetDistanceInches").publish();
@@ -126,6 +137,7 @@ public class DataCollectionCommand extends Command {
                 dataCollectionTable.getDoubleTopic("lastAcceptedHoodAngleDegrees").publish();
         lastAcceptedFlywheelCommandIpsPublisher =
                 dataCollectionTable.getDoubleTopic("lastAcceptedFlywheelCommandIps").publish();
+        selectedPointIndexPublisher = dataCollectionTable.getIntegerTopic("selectedPointIndex").publish();
         acceptedPointCountPublisher = dataCollectionTable.getIntegerTopic("acceptedPointCount").publish();
 
         addRequirements(this.horizontalAim, this.verticalAim, this.intakePosition, this.shooter);
@@ -140,6 +152,12 @@ public class DataCollectionCommand extends Command {
         targetDistanceInches = DEFAULT_TARGET_DISTANCE_INCHES;
         targetAzimuthOffsetDegrees = 0.0;
         currentPredictedCommandedFlywheelIps = Double.NaN;
+        selectedPointIndex = -1;
+        previousPov = testController.getHID().getPOV();
+        previousA = testController.a().getAsBoolean();
+        previousB = testController.b().getAsBoolean();
+        previousLeftBumper = testController.leftBumper().getAsBoolean();
+        previousRightBumper = testController.rightBumper().getAsBoolean();
         outputPath = findLatestOutputPath();
         if (outputPath == null) {
             outputPath = Filesystem.getOperatingDirectory().toPath().resolve(String.format(
@@ -151,11 +169,13 @@ public class DataCollectionCommand extends Command {
             loadAcceptedDataPoints(outputPath);
         }
         publishCurrentState(Double.NaN);
-        publishLastAcceptedPoint();
+        publishSelectedPoint();
     }
 
     @Override
     public void execute() {
+        handleLocalControls();
+
         if (!refreshLatchedState()) {
             horizontalAim.setAngle(Degrees.of(0.0));
             verticalAim.setAngle(Degrees.of(clampHoodAngle(desiredHoodAngleDegrees)));
@@ -273,16 +293,53 @@ public class DataCollectionCommand extends Command {
                 desiredFlywheelCommandIps,
                 currentPredictedCommandedFlywheelIps,
                 targetAzimuthOffsetDegrees));
+        selectedPointIndex = acceptedDataPoints.size() - 1;
         writeAcceptedDataPoints();
-        publishLastAcceptedPoint();
+        publishSelectedPoint();
     }
 
-    public void deleteLastPoint() {
-        if (!acceptedDataPoints.isEmpty()) {
-            acceptedDataPoints.remove(acceptedDataPoints.size() - 1);
+    public void deleteSelectedPoint() {
+        if (!acceptedDataPoints.isEmpty() && selectedPointIndex >= 0 && selectedPointIndex < acceptedDataPoints.size()) {
+            acceptedDataPoints.remove(selectedPointIndex);
+            if (acceptedDataPoints.isEmpty()) {
+                selectedPointIndex = -1;
+            } else if (selectedPointIndex >= acceptedDataPoints.size()) {
+                selectedPointIndex = acceptedDataPoints.size() - 1;
+            }
+            applySelectedPointToCurrentSettings();
             writeAcceptedDataPoints();
         }
-        publishLastAcceptedPoint();
+        publishSelectedPoint();
+    }
+
+    public void selectNextPoint() {
+        if (acceptedDataPoints.isEmpty()) {
+            selectedPointIndex = -1;
+            publishSelectedPoint();
+            return;
+        }
+        if (selectedPointIndex < 0) {
+            selectedPointIndex = 0;
+        } else {
+            selectedPointIndex = Math.min(acceptedDataPoints.size() - 1, selectedPointIndex + 1);
+        }
+        applySelectedPointToCurrentSettings();
+        publishSelectedPoint();
+    }
+
+    public void selectPreviousPoint() {
+        if (acceptedDataPoints.isEmpty()) {
+            selectedPointIndex = -1;
+            publishSelectedPoint();
+            return;
+        }
+        if (selectedPointIndex < 0) {
+            selectedPointIndex = acceptedDataPoints.size() - 1;
+        } else {
+            selectedPointIndex = Math.max(0, selectedPointIndex - 1);
+        }
+        applySelectedPointToCurrentSettings();
+        publishSelectedPoint();
     }
 
     private boolean refreshLatchedState() {
@@ -371,6 +428,7 @@ public class DataCollectionCommand extends Command {
             commandedFlywheelIpsPublisher.set(desiredFlywheelCommandIps);
             predictedCommandedFlywheelIpsPublisher.set(predictedCommandedFlywheelIps);
             actualFlywheelIpsPublisher.set(shooter.getMainFlywheelSpeedIPS());
+            selectedPointIndexPublisher.set(selectedPointIndex);
             acceptedPointCountPublisher.set(acceptedDataPoints.size());
             return;
         }
@@ -381,22 +439,25 @@ public class DataCollectionCommand extends Command {
         commandedFlywheelIpsPublisher.set(desiredFlywheelCommandIps);
         predictedCommandedFlywheelIpsPublisher.set(predictedCommandedFlywheelIps);
         actualFlywheelIpsPublisher.set(shooter.getMainFlywheelSpeedIPS());
+        selectedPointIndexPublisher.set(selectedPointIndex);
         acceptedPointCountPublisher.set(acceptedDataPoints.size());
     }
 
-    private void publishLastAcceptedPoint() {
-        if (acceptedDataPoints.isEmpty()) {
+    private void publishSelectedPoint() {
+        if (acceptedDataPoints.isEmpty() || selectedPointIndex < 0 || selectedPointIndex >= acceptedDataPoints.size()) {
             lastAcceptedDistanceInchesPublisher.set(Double.NaN);
             lastAcceptedHoodAngleDegreesPublisher.set(Double.NaN);
             lastAcceptedFlywheelCommandIpsPublisher.set(Double.NaN);
+            selectedPointIndexPublisher.set(-1);
             acceptedPointCountPublisher.set(0);
             return;
         }
 
-        AcceptedDataPoint lastPoint = acceptedDataPoints.get(acceptedDataPoints.size() - 1);
-        lastAcceptedDistanceInchesPublisher.set(lastPoint.targetDistanceInches());
-        lastAcceptedHoodAngleDegreesPublisher.set(lastPoint.hoodAngleDegrees());
-        lastAcceptedFlywheelCommandIpsPublisher.set(lastPoint.flywheelCommandIps());
+        AcceptedDataPoint selectedPoint = acceptedDataPoints.get(selectedPointIndex);
+        lastAcceptedDistanceInchesPublisher.set(selectedPoint.targetDistanceInches());
+        lastAcceptedHoodAngleDegreesPublisher.set(selectedPoint.hoodAngleDegrees());
+        lastAcceptedFlywheelCommandIpsPublisher.set(selectedPoint.flywheelCommandIps());
+        selectedPointIndexPublisher.set(selectedPointIndex);
         acceptedPointCountPublisher.set(acceptedDataPoints.size());
     }
 
@@ -454,14 +515,12 @@ public class DataCollectionCommand extends Command {
         }
 
         if (acceptedDataPoints.isEmpty()) {
+            selectedPointIndex = -1;
             return;
         }
 
-        AcceptedDataPoint lastPoint = acceptedDataPoints.get(acceptedDataPoints.size() - 1);
-        desiredHoodAngleDegrees = lastPoint.hoodAngleDegrees();
-        desiredFlywheelCommandIps = sanitizeFlywheelCommandIps(lastPoint.flywheelCommandIps());
-        targetDistanceInches = sanitizeTargetDistanceInches(lastPoint.targetDistanceInches());
-        targetAzimuthOffsetDegrees = lastPoint.targetAzimuthOffsetDegrees();
+        selectedPointIndex = acceptedDataPoints.size() - 1;
+        applySelectedPointToCurrentSettings();
     }
 
     private void writeAcceptedDataPoints() {
@@ -492,5 +551,56 @@ public class DataCollectionCommand extends Command {
                     "Failed to write data collection file: " + outputPath + " (" + e.getMessage() + ")",
                     e.getStackTrace());
         }
+    }
+
+    private void handleLocalControls() {
+        int currentPov = testController.getHID().getPOV();
+        if (currentPov != previousPov) {
+            switch (currentPov) {
+                case 0 -> adjustHoodDown();
+                case 90 -> adjustFlywheelUp();
+                case 180 -> adjustHoodUp();
+                case 270 -> adjustFlywheelDown();
+                default -> {
+                }
+            }
+        }
+
+        boolean currentA = testController.a().getAsBoolean();
+        if (currentA && !previousA) {
+            acceptCurrentPoint();
+        }
+
+        boolean currentB = testController.b().getAsBoolean();
+        if (currentB && !previousB) {
+            deleteSelectedPoint();
+        }
+
+        boolean currentRightBumper = testController.rightBumper().getAsBoolean();
+        if (currentRightBumper && !previousRightBumper) {
+            selectNextPoint();
+        }
+
+        boolean currentLeftBumper = testController.leftBumper().getAsBoolean();
+        if (currentLeftBumper && !previousLeftBumper) {
+            selectPreviousPoint();
+        }
+
+        previousPov = currentPov;
+        previousA = currentA;
+        previousB = currentB;
+        previousLeftBumper = currentLeftBumper;
+        previousRightBumper = currentRightBumper;
+    }
+
+    private void applySelectedPointToCurrentSettings() {
+        if (selectedPointIndex < 0 || selectedPointIndex >= acceptedDataPoints.size()) {
+            return;
+        }
+
+        AcceptedDataPoint selectedPoint = acceptedDataPoints.get(selectedPointIndex);
+        desiredHoodAngleDegrees = clampHoodAngle(selectedPoint.hoodAngleDegrees());
+        desiredFlywheelCommandIps = sanitizeFlywheelCommandIps(selectedPoint.flywheelCommandIps());
+        targetDistanceInches = sanitizeTargetDistanceInches(selectedPoint.targetDistanceInches());
     }
 }

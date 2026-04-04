@@ -123,6 +123,7 @@ public class RobotContainer implements Subsystem {
 
     private final CommandXboxController driversController = new CommandXboxController(0);
     private final CommandXboxController engineersController = new CommandXboxController(1);
+    private final CommandXboxController testController = new CommandXboxController(2);
 
     public final CommandSwerveDrivetrain drivetrain = TunerConstants.createDrivetrain();
     
@@ -387,11 +388,12 @@ private Command showAllianceMarquee() {
           20                 // | Peak current
         );
         dataCollectionCommand = new DataCollectionCommand(
-            poseEstimatorSubsystem,
-            horizontalAim,
-            verticalAim,
-            intakePosition,
-            shooter);
+                poseEstimatorSubsystem,
+                horizontalAim,
+                verticalAim,
+                intakePosition,
+                shooter,
+                testController);
         testShootingCommand = new TestShootingCommand(
             poseEstimatorSubsystem,
             horizontalAim,
@@ -483,54 +485,38 @@ private Command showAllianceMarquee() {
 
         //hood.setDefaultCommand(hood.cmdSetScaledAngle(engineersController::getLeftTriggerAxis));
         verticalAim.setDefaultCommand(verticalAim.cmdSetAngle(this::getHoodTuningAngle));
-        engineersController.povUp().onTrue(Commands.runOnce(() -> {
-            if (CommandScheduler.getInstance().isScheduled(dataCollectionCommand)) {
-                dataCollectionCommand.adjustHoodDown();
-            } else if (CommandScheduler.getInstance().isScheduled(testShootingCommand)) {
+        testController.povUp().onTrue(Commands.runOnce(() -> {
+            if (CommandScheduler.getInstance().isScheduled(testShootingCommand)) {
                 testShootingCommand.trimHoodDown();
             } else {
                 adjustHoodTuneAngle(HOOD_TUNE_ANGLE_STEP_DEGREES);
             }
         }));
-        engineersController.povDown().onTrue(Commands.runOnce(() -> {
-            if (CommandScheduler.getInstance().isScheduled(dataCollectionCommand)) {
-                dataCollectionCommand.adjustHoodUp();
-            } else if (CommandScheduler.getInstance().isScheduled(testShootingCommand)) {
+        testController.povDown().onTrue(Commands.runOnce(() -> {
+            if (CommandScheduler.getInstance().isScheduled(testShootingCommand)) {
                 testShootingCommand.trimHoodUp();
             } else {
                 adjustHoodTuneAngle(-HOOD_TUNE_ANGLE_STEP_DEGREES);
             }
         }));
         engineersController.povRight().onTrue(Commands.runOnce(() -> {
-            if (isSharedAzimuthTrimModeScheduled()) {
-                adjustShooterAzimuthTrim(SHOOTER_AZIMUTH_TRIM_STEP_DEGREES);
-            } else if (CommandScheduler.getInstance().isScheduled(dataCollectionCommand)) {
-                dataCollectionCommand.adjustFlywheelUp();
-            } else {
+            adjustShooterAzimuthTrim(-SHOOTER_AZIMUTH_TRIM_STEP_DEGREES);
+        }));
+        engineersController.povLeft().onTrue(Commands.runOnce(() -> {
+            adjustShooterAzimuthTrim(SHOOTER_AZIMUTH_TRIM_STEP_DEGREES);
+        }));
+        testController.povRight().onTrue(Commands.runOnce(() -> {
+            if (!CommandScheduler.getInstance().isScheduled(dataCollectionCommand)) {
                 adjustShooterTuneSpeed(SHOOTER_TUNE_SPEED_STEP_IPS);
             }
         }));
-        engineersController.povLeft().onTrue(Commands.runOnce(() -> {
-            if (isSharedAzimuthTrimModeScheduled()) {
-                adjustShooterAzimuthTrim(-SHOOTER_AZIMUTH_TRIM_STEP_DEGREES);
-            } else if (CommandScheduler.getInstance().isScheduled(dataCollectionCommand)) {
-                dataCollectionCommand.adjustFlywheelDown();
-            } else {
+        testController.povLeft().onTrue(Commands.runOnce(() -> {
+            if (!CommandScheduler.getInstance().isScheduled(dataCollectionCommand)) {
                 adjustShooterTuneSpeed(-SHOOTER_TUNE_SPEED_STEP_IPS);
             }
         }));
-        engineersController.a().onTrue(Commands.runOnce(() -> {
-            if (CommandScheduler.getInstance().isScheduled(dataCollectionCommand)) {
-                dataCollectionCommand.acceptCurrentPoint();
-            }
-        }));
-        engineersController.b().onTrue(Commands.runOnce(() -> {
-            if (CommandScheduler.getInstance().isScheduled(dataCollectionCommand)) {
-                dataCollectionCommand.deleteLastPoint();
-            }
-        }));
-        engineersController.x().toggleOnTrue(testShootingCommand);
-        engineersController.y().toggleOnTrue(dataCollectionCommand);
+        testController.x().toggleOnTrue(testShootingCommand);
+        testController.y().toggleOnTrue(dataCollectionCommand);
         engineersController.start().onTrue(Commands.runOnce(() -> {
             shooter.recoverIfResetOccurred();
             intakedrive.recoverIfResetOccurred();
@@ -677,12 +663,6 @@ private Command showAllianceMarquee() {
         shooterAzimuthTrimDegrees += deltaDegrees;
         // Debug tuning telemetry disabled to reduce NetworkTables traffic.
         // shooterAzimuthTrimPublisher.set(shooterAzimuthTrimDegrees);
-    }
-
-    private boolean isSharedAzimuthTrimModeScheduled() {
-        return CommandScheduler.getInstance().isScheduled(scoreInHubCommand)
-                || CommandScheduler.getInstance().isScheduled(snowblowToAllianceWithOperatorAimCommand)
-                || CommandScheduler.getInstance().isScheduled(testShootingCommand);
     }
 
     public void publishTuningTelemetry() {

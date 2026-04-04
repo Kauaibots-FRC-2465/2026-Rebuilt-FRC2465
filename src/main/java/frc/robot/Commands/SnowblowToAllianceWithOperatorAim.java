@@ -131,7 +131,8 @@ public class SnowblowToAllianceWithOperatorAim extends Command {
         if (!MovingShotMath.predictFutureStateFromCommand(
                 poseEstimator,
                 drivetrain.getDriverPerspectiveForward(),
-                fieldCentricRequest,
+                fieldCentricRequest.VelocityX,
+                fieldCentricRequest.VelocityY,
                 ShooterConstants.COMMANDED_SHOOTER_LOOKAHEAD_SECONDS,
                 futureState)) {
             clearSolutionTelemetry();
@@ -196,11 +197,9 @@ public class SnowblowToAllianceWithOperatorAim extends Command {
         double targetDistanceInches = Inches.convertFrom(
                 target.getDistance(new Translation2d(futureState.xMeters, futureState.yMeters)),
                 Meters);
-        boolean hasIdealSolution = BallTrajectoryLookup.solveMovingShot(
-                minimumHoodAngleDegrees,
-                MovingShotMath.getIdealMaximumHoodAngleDegrees(verticalAim),
+        boolean hasIdealSolution = MovingShotMath.solveIdealMovingShotWithUpperHoodFallback(
+                verticalAim,
                 ShooterConstants.COMMANDED_MOVING_SHOT_HOOD_SEARCH_STEP_DEGREES,
-                true,
                 futureState.xMeters,
                 futureState.yMeters,
                 futureState.headingRadians,

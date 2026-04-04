@@ -24,12 +24,9 @@ class BallTrajectoryLookupTest {
             ShooterConstants.FITTED_BALL_EXIT_IPS[ShooterConstants.FITTED_BALL_EXIT_IPS.length - 1];
     private static final double[] TABLE_COMMAND_SPEEDS_IPS =
             Arrays.copyOf(
-                    ShooterConstants.COMMANDED_FLYWHEEL_SET_IPS,
-                    ShooterConstants.MEASURED_DISTANCE_GRID_INCHES.length);
-    private static final double[] TABLE_BALL_EXIT_IPS =
-            Arrays.copyOf(
-                    ShooterConstants.FITTED_BALL_EXIT_IPS,
-                    ShooterConstants.MEASURED_DISTANCE_GRID_INCHES.length);
+                    ShooterConstants.MEASURED_DISTANCE_GRID_COMMAND_SPEEDS_IPS,
+                    ShooterConstants.MEASURED_DISTANCE_GRID_COMMAND_SPEEDS_IPS.length);
+    private static final double[] TABLE_BALL_EXIT_IPS = buildTableBallExitIps(TABLE_COMMAND_SPEEDS_IPS);
     private static final double LANDING_DISTANCE_TOLERANCE_INCHES = 0.01;
     private static final int SHORT_RANGE_THRESHOLD_INCHES = 150;
     private static final int MAX_REPORTED_ERRORS = 10;
@@ -60,6 +57,20 @@ class BallTrajectoryLookupTest {
             double requiredExitVelocityIps,
             double estimatedCommandIps,
             double maximumHeightInches) {
+    }
+
+    private static double[] buildTableBallExitIps(double[] commandSpeedsIps) {
+        double[] tableBallExitIps = new double[commandSpeedsIps.length];
+        for (int i = 0; i < commandSpeedsIps.length; i++) {
+            tableBallExitIps[i] =
+                    FlywheelBallExitInterpolator.getBallExitIpsForSetIps(commandSpeedsIps[i]);
+            assertTrue(
+                    Double.isFinite(tableBallExitIps[i]),
+                    String.format(
+                            "Expected finite ball exit speed for table command %.3f ips",
+                            commandSpeedsIps[i]));
+        }
+        return tableBallExitIps;
     }
 
     @Test
@@ -408,6 +419,8 @@ class BallTrajectoryLookupTest {
 
             if (highCenterDistanceInches - lowCenterDistanceInches
                     <= LANDING_DISTANCE_TOLERANCE_INCHES) {
+                // The legacy empirical table is frame-to-target, so convert the model's
+                // robot-center distance back to frame-relative distance before comparing.
                 return lowCenterDistanceInches - FRAME_TO_CENTER_DISTANCE_INCHES;
             }
         }
