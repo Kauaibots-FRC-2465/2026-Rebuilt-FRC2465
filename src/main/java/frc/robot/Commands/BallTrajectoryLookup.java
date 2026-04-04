@@ -1008,6 +1008,32 @@ public final class BallTrajectoryLookup {
         return estimatedCommandIps;
     }
 
+    static double getEstimatedExitVelocityIpsForCommandedShot(
+            double commandedHoodAngleDegrees,
+            double flywheelCommandIps) {
+        if (!Double.isFinite(commandedHoodAngleDegrees) || !Double.isFinite(flywheelCommandIps)) {
+            return Double.NaN;
+        }
+
+        double trueHoodAngleDegrees =
+                ShooterConstants.getTrueAngleDegreesForCommandedAngle(commandedHoodAngleDegrees);
+        if (!Double.isFinite(trueHoodAngleDegrees)) {
+            return Double.NaN;
+        }
+
+        double baseExitVelocityIps = FlywheelBallExitInterpolator.getBallExitIpsForSetIps(flywheelCommandIps);
+        if (!Double.isFinite(baseExitVelocityIps)) {
+            return Double.NaN;
+        }
+
+        double angleExitScale = getAngleExitScale(trueHoodAngleDegrees);
+        if (!(angleExitScale > 0.0)) {
+            return Double.NaN;
+        }
+
+        return baseExitVelocityIps * angleExitScale;
+    }
+
     private static double getSpinProxyIps(
             double hoodAngleDegrees,
             double correctedExitVelocityIps) {

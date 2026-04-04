@@ -358,8 +358,18 @@ final class MovingShotMath {
             return false;
         }
 
-        double hoodAngleRadians = Math.toRadians(hoodAngleDegrees);
-        double launcherRelativeExitVelocityIps = flywheelCommandIps;
+        double trueHoodAngleDegrees = ShooterConstants.getTrueAngleDegreesForCommandedAngle(hoodAngleDegrees);
+        double launcherRelativeExitVelocityIps =
+                BallTrajectoryLookup.getEstimatedExitVelocityIpsForCommandedShot(
+                        hoodAngleDegrees,
+                        flywheelCommandIps);
+        if (!Double.isFinite(trueHoodAngleDegrees) || !Double.isFinite(launcherRelativeExitVelocityIps)) {
+            return false;
+        }
+
+        // Empirical tables choose commanded setpoints; convert them to the modeled
+        // physical launch angle and exit speed before compensating for robot motion.
+        double hoodAngleRadians = Math.toRadians(trueHoodAngleDegrees);
         double launcherRelativeHorizontalExitVelocityIps =
                 launcherRelativeExitVelocityIps * Math.cos(hoodAngleRadians);
         double verticalExitVelocityIps = launcherRelativeExitVelocityIps * Math.sin(hoodAngleRadians);
