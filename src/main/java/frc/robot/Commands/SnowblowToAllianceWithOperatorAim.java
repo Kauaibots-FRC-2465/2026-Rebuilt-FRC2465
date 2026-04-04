@@ -128,11 +128,7 @@ public class SnowblowToAllianceWithOperatorAim extends Command {
         }
 
         updateLastDriveDirection(fieldCentricRequest);
-        if (!MovingShotMath.predictFutureStateFromCommand(
-                poseEstimator,
-                drivetrain.getDriverPerspectiveForward(),
-                fieldCentricRequest.VelocityX,
-                fieldCentricRequest.VelocityY,
+        if (!poseEstimator.getPredictedFusedState(
                 ShooterConstants.COMMANDED_SHOOTER_LOOKAHEAD_SECONDS,
                 futureState)) {
             clearSolutionTelemetry();

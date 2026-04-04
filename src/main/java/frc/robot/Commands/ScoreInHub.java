@@ -157,11 +157,7 @@ public class ScoreInHub extends Command {
 
         updateLastDriveDirection(limitedVelocityXMetersPerSecond, limitedVelocityYMetersPerSecond);
         long predictionStartMicros = SlowCallMonitor.nowMicros();
-        if (!MovingShotMath.predictFutureStateFromCommand(
-                poseEstimator,
-                drivetrain.getDriverPerspectiveForward(),
-                limitedVelocityXMetersPerSecond,
-                limitedVelocityYMetersPerSecond,
+        if (!poseEstimator.getPredictedFusedState(
                 ShooterConstants.COMMANDED_SHOOTER_LOOKAHEAD_SECONDS,
                 futureState)) {
             predictionMicros = SlowCallMonitor.nowMicros() - predictionStartMicros;

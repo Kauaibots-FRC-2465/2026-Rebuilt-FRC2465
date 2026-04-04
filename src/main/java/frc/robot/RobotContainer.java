@@ -330,7 +330,7 @@ private Command showAllianceMarquee() {
             40,
             2.0,
             Degrees.of(0.0),
-            Degrees.of(110.0));
+            Degrees.of(113.0));
 
 
         shooter = new ShooterSubsystem(
