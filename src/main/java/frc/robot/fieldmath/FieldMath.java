@@ -18,6 +18,8 @@ public final class FieldMath {
     private static final double FIELD_WIDTH_METERS = Meters.convertFrom(317.7, Inches);
     private static final double TARGET_LINE_OFFSET_METERS = Meters.convertFrom(3.0, Feet);
     private static final double TARGET_SIDE_INSET_METERS = Meters.convertFrom(2.0, Feet);
+    private static final double ENGINEER_TARGET_SIDE_INSET_METERS = Meters.convertFrom(3.0, Feet);
+    private static final double ENGINEER_TARGET_FORWARD_LIMIT_METERS = Meters.convertFrom(170.0, Inches);
     private static final double DIRECTION_SPEED_THRESHOLD_METERS_PER_SECOND = 0.05;
     private static final double DIRECTION_DISTANCE_THRESHOLD_METERS = 0.001;
     private static final double EPSILON = 1e-9;
@@ -122,6 +124,38 @@ public final class FieldMath {
         return getAllianceRelativeFieldPoint(
                 TARGET_LINE_OFFSET_METERS,
                 rightWallDistanceMeters,
+                alliance);
+    }
+
+    /**
+     * Returns the engineer-selected alliance-zone target point on the field.
+     *
+     * <p>The selection uses alliance-driver perspective:
+     * `operatorLeftX = -1` selects the driver's left edge,
+     * `operatorLeftX = +1` selects the driver's right edge,
+     * `operatorLeftY = -1` selects the forward edge 170 inches off the alliance wall,
+     * and `operatorLeftY = +1` selects the alliance wall itself.
+     */
+    public static Translation2d getEngineerTargetInAllianceZone(
+            Alliance alliance,
+            double operatorLeftX,
+            double operatorLeftY) {
+        double normalizedOperatorLeftX = clamp(operatorLeftX, -1.0, 1.0);
+        double normalizedOperatorLeftY = clamp(operatorLeftY, -1.0, 1.0);
+
+        double forwardInterpolation = (1.0 - normalizedOperatorLeftY) * 0.5;
+        double lateralInterpolation = (normalizedOperatorLeftX + 1.0) * 0.5;
+        double allianceWallDistanceMeters = lerp(
+                0.0,
+                ENGINEER_TARGET_FORWARD_LIMIT_METERS,
+                forwardInterpolation);
+        double rightFieldWallDistanceMeters = lerp(
+                FIELD_WIDTH_METERS - ENGINEER_TARGET_SIDE_INSET_METERS,
+                ENGINEER_TARGET_SIDE_INSET_METERS,
+                lateralInterpolation);
+        return getAllianceRelativeFieldPoint(
+                allianceWallDistanceMeters,
+                rightFieldWallDistanceMeters,
                 alliance);
     }
 

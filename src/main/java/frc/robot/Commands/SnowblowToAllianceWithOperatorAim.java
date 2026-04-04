@@ -17,9 +17,6 @@ import edu.wpi.first.networktables.BooleanPublisher;
 import edu.wpi.first.networktables.DoublePublisher;
 import edu.wpi.first.networktables.NetworkTable;
 import edu.wpi.first.networktables.NetworkTableInstance;
-import edu.wpi.first.networktables.StringPublisher;
-import edu.wpi.first.wpilibj.DriverStation;
-import edu.wpi.first.wpilibj.DriverStation.Alliance;
 import edu.wpi.first.wpilibj2.command.Command;
 import frc.robot.fieldmath.FieldMath;
 import frc.robot.subsystems.CommandSwerveDrivetrain;
@@ -29,8 +26,7 @@ import frc.robot.subsystems.SparkAnglePositionSubsystem;
 import frc.robot.utility.TuningDashboard;
 
 /**
- * Snowblow variant whose target stays on the alliance target line while the driver
- * chooses the left-right position along that line with the right joystick X axis.
+ * Snowblow variant that uses an operator-selected field target inside the alliance zone.
  */
 public class SnowblowToAllianceWithOperatorAim extends Command {
     private final CommandSwerveDrivetrain drivetrain;
@@ -40,7 +36,7 @@ public class SnowblowToAllianceWithOperatorAim extends Command {
     private final ShooterSubsystem shooter;
     private final Supplier<SwerveRequest> driveRequestSupplier;
     private final DoubleSupplier azimuthTrimDegreesSupplier;
-    private final DoubleSupplier operatorRightXSupplier;
+    private final Supplier<Translation2d> targetSupplier;
     private final SwerveRequest.FieldCentricFacingAngle facingAngleDrive =
             new SwerveRequest.FieldCentricFacingAngle();
     private final DoublePublisher targetDistanceInchesPublisher;
@@ -52,11 +48,9 @@ public class SnowblowToAllianceWithOperatorAim extends Command {
     private final DoublePublisher shotAzimuthDegreesPublisher;
     private final DoublePublisher turretDeltaDegreesPublisher;
     private final DoublePublisher robotHeadingDegreesPublisher;
-    private final DoublePublisher operatorRightXPublisher;
     private final edu.wpi.first.networktables.DoubleArrayPublisher futurePosePublisher;
     private final edu.wpi.first.networktables.DoubleArrayPublisher futureVelocityPublisher;
     private final BooleanPublisher validSolutionPublisher;
-    private final StringPublisher fieldTypePublisher;
     private final PoseEstimatorSubsystem.PredictedFusedState futureState =
             new PoseEstimatorSubsystem.PredictedFusedState();
     private final BallTrajectoryLookup.MovingShotSolution idealMovingShotSolution =
@@ -75,7 +69,7 @@ public class SnowblowToAllianceWithOperatorAim extends Command {
             ShooterSubsystem shooter,
             Supplier<SwerveRequest> driveRequestSupplier,
             DoubleSupplier azimuthTrimDegreesSupplier,
-            DoubleSupplier operatorRightXSupplier) {
+            Supplier<Translation2d> targetSupplier) {
         this.drivetrain = Objects.requireNonNull(drivetrain, "drivetrain must not be null");
         this.poseEstimator = Objects.requireNonNull(poseEstimator, "poseEstimator must not be null");
         this.horizontalAim = Objects.requireNonNull(horizontalAim, "horizontalAim must not be null");
@@ -85,8 +79,7 @@ public class SnowblowToAllianceWithOperatorAim extends Command {
                 Objects.requireNonNull(driveRequestSupplier, "driveRequestSupplier must not be null");
         this.azimuthTrimDegreesSupplier =
                 Objects.requireNonNull(azimuthTrimDegreesSupplier, "azimuthTrimDegreesSupplier must not be null");
-        this.operatorRightXSupplier =
-                Objects.requireNonNull(operatorRightXSupplier, "operatorRightXSupplier must not be null");
+        this.targetSupplier = Objects.requireNonNull(targetSupplier, "targetSupplier must not be null");
 
         NetworkTable snowblowTable = NetworkTableInstance.getDefault()
                 .getTable("SnowblowToAllianceWithOperatorAim");
@@ -100,13 +93,9 @@ public class SnowblowToAllianceWithOperatorAim extends Command {
         shotAzimuthDegreesPublisher = snowblowTable.getDoubleTopic("shotAzimuthDegrees").publish();
         turretDeltaDegreesPublisher = snowblowTable.getDoubleTopic("turretDeltaDegrees").publish();
         robotHeadingDegreesPublisher = snowblowTable.getDoubleTopic("robotHeadingDegrees").publish();
-        operatorRightXPublisher = snowblowTable.getDoubleTopic("operatorRightX").publish();
         futurePosePublisher = snowblowTable.getDoubleArrayTopic("futurePose").publish();
         futureVelocityPublisher = snowblowTable.getDoubleArrayTopic("futureVelocity").publish();
         validSolutionPublisher = snowblowTable.getBooleanTopic("validSolution").publish();
-        fieldTypePublisher = snowblowTable.getStringTopic(".type").publish();
-        // Debug dashboard telemetry disabled to reduce NetworkTables traffic.
-        // fieldTypePublisher.set("Field2d");
 
         facingAngleDrive.withHeadingPID(5.0, 0.0, 0.0);
         facingAngleDrive.HeadingController.enableContinuousInput(-Math.PI, Math.PI);
@@ -143,10 +132,7 @@ public class SnowblowToAllianceWithOperatorAim extends Command {
                 futureState.xMeters,
                 futureState.yMeters,
                 Rotation2d.fromRadians(futureState.headingRadians));
-        double operatorRightX = operatorRightXSupplier.getAsDouble();
-        // Debug dashboard telemetry disabled to reduce NetworkTables traffic.
-        // operatorRightXPublisher.set(operatorRightX);
-        Translation2d target = getTarget(operatorRightX);
+        Translation2d target = targetSupplier.get();
         publishTarget(target);
 
         Rotation2d preferredRobotHeading = getPreferredRobotHeading(futurePose.getRotation());
@@ -178,11 +164,6 @@ public class SnowblowToAllianceWithOperatorAim extends Command {
 
     @Override
     public void end(boolean interrupted) {
-    }
-
-    private Translation2d getTarget(double operatorRightX) {
-        Alliance alliance = DriverStation.getAlliance().orElse(Alliance.Blue);
-        return FieldMath.getSnowblowTargetOnLine(alliance, operatorRightX);
     }
 
     private boolean updateShooterSolution(

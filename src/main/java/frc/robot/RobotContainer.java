@@ -25,6 +25,7 @@ import com.pathplanner.lib.util.DriveFeedforwards;
 
 import edu.wpi.first.math.geometry.Pose2d;
 import edu.wpi.first.math.geometry.Rotation2d;
+import edu.wpi.first.math.geometry.Translation2d;
 import edu.wpi.first.math.kinematics.ChassisSpeeds;
 import edu.wpi.first.networktables.DoublePublisher;
 import edu.wpi.first.networktables.NetworkTable;
@@ -50,6 +51,7 @@ import frc.robot.Commands.HoodRestPositionCharacterization;
 import frc.robot.Commands.HoodTimingCharacterization;
 import frc.robot.Commands.ShooterConstants;
 import frc.robot.Commands.TestShootingCommand;
+import frc.robot.fieldmath.FieldMath;
 import frc.robot.generated.TunerConstants;
 import frc.robot.subsystems.CommandSwerveDrivetrain;
 import frc.robot.subsystems.IntakePositionSubsystem;
@@ -62,6 +64,7 @@ import frc.robot.subsystems.SparkAnglePositionSubsystem;
 import frc.robot.subsystems.SparkFollowerSubsystem;
 import frc.robot.subsystems.WLEDSubsystem;
 import frc.robot.subsystems.SwerveDrivetrainSubsystem;
+import frc.robot.utility.GameplayDashboard;
 
 // For tuning see https://phoenixpro-documentation--161.org.readthedocs.build/en/161/docs/application-notes/manual-pid-tuning.html
 // Clockwise positive on Left flywheel
@@ -421,7 +424,7 @@ private Command showAllianceMarquee() {
             shooter,
             this::getDriverDriveRequest,
             this::getShooterAzimuthTrimDegrees,
-            engineersController::getRightX);
+            this::getEngineersTarget);
         RobotConfig config = null;
         try{
         config = RobotConfig.fromGUISettings();
@@ -603,7 +606,7 @@ private Command showAllianceMarquee() {
         );
 
         horizontalAim.setDefaultCommand(
-            horizontalAim.cmdSetScaledAngle(() -> (1.0 - engineersController.getLeftX()) / 2.0));
+            horizontalAim.cmdSetAngle(() -> Degrees.of(0.0)));
 
         drivetrain.registerTelemetry(logger::telemeterize);
     }
@@ -624,6 +627,14 @@ private Command showAllianceMarquee() {
         final double minPower = 0.4;
         double shooterPower = engineersController.getRightTriggerAxis();
         return (shooterPower < 0.005) ? 0.0 : (shooterPower + minPower) / (1.0 + minPower);
+    }
+
+    private Translation2d getEngineersTarget() {
+        DriverStation.Alliance alliance = DriverStation.getAlliance().orElse(DriverStation.Alliance.Blue);
+        return FieldMath.getEngineerTargetInAllianceZone(
+                alliance,
+                engineersController.getLeftX(),
+                engineersController.getLeftY());
     }
 
     private SwerveRequest getDriverDriveRequest() {
@@ -677,6 +688,10 @@ private Command showAllianceMarquee() {
         // shooterTuneSpeedPublisher.set(shooterTuneSpeed);
         // shooterAzimuthTrimPublisher.set(shooterAzimuthTrimDegrees);
         // mainFlywheelMeasuredSpeedPublisher.set(shooter.getMainFlywheelSpeedIPS());
+    }
+
+    public void publishGameplayTelemetry() {
+        GameplayDashboard.publishEngineersTarget(getEngineersTarget());
     }
 
 }
