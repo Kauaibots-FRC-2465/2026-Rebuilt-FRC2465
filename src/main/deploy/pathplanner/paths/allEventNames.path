@@ -3,29 +3,29 @@
   "waypoints": [
     {
       "anchor": {
-        "x": 9.388956109134046,
-        "y": 4.675172004744959
+        "x": 2.0,
+        "y": 7.0
       },
       "prevControl": null,
       "nextControl": {
-        "x": 9.08769869513642,
-        "y": 4.6644128113879
+        "x": 3.0,
+        "y": 7.0
       },
       "isLocked": false,
-      "linkedName": "StartPointA"
+      "linkedName": null
     },
     {
       "anchor": {
-        "x": 7.764317912218269,
+        "x": 9.388956109134046,
         "y": 4.675172004744959
       },
       "prevControl": {
-        "x": 8.377591933570583,
-        "y": 4.6644128113879
+        "x": 8.388956109134046,
+        "y": 4.675172004744959
       },
       "nextControl": null,
       "isLocked": false,
-      "linkedName": null
+      "linkedName": "StartPointA"
     }
   ],
   "rotationTargets": [],
@@ -33,12 +33,12 @@
   "pointTowardsZones": [
     {
       "fieldPosition": {
-        "x": 0.4,
+        "x": 2.0,
         "y": 5.5
       },
       "rotationOffset": 0.0,
       "minWaypointRelativePos": 0.0,
-      "maxWaypointRelativePos": 0.0,
+      "maxWaypointRelativePos": 1.0,
       "name": "Point Towards Zone"
     }
   ],
@@ -46,13 +46,19 @@
     {
       "name": "Intake",
       "waypointRelativePos": 0,
-      "endWaypointRelativePos": 1.0,
+      "endWaypointRelativePos": null,
       "command": null
     },
     {
       "name": "SnowblowToAlliance",
-      "waypointRelativePos": 0,
-      "endWaypointRelativePos": 1.0,
+      "waypointRelativePos": 0.5,
+      "endWaypointRelativePos": null,
+      "command": null
+    },
+    {
+      "name": "ScoreInHub",
+      "waypointRelativePos": 1.0,
+      "endWaypointRelativePos": null,
       "command": null
     }
   ],
@@ -66,13 +72,13 @@
   },
   "goalEndState": {
     "velocity": 0,
-    "rotation": -178.60281897270357
+    "rotation": -178.72696997994336
   },
   "reversed": false,
   "folder": null,
   "idealStartingState": {
     "velocity": 0,
-    "rotation": -178.72696997994336
+    "rotation": 0.0
   },
   "useDefaultConstraints": true
 }

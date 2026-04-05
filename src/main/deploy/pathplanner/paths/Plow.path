@@ -58,24 +58,24 @@
   "pointTowardsZones": [],
   "eventMarkers": [
     {
-      "name": "deployIntake",
+      "name": "",
       "waypointRelativePos": 0,
       "endWaypointRelativePos": null,
       "command": {
         "type": "named",
         "data": {
-          "name": "deployIntake"
+          "name": null
         }
       }
     },
     {
-      "name": "spinIntake",
+      "name": "",
       "waypointRelativePos": 0.6119235095613085,
       "endWaypointRelativePos": null,
       "command": {
         "type": "named",
         "data": {
-          "name": "spinIntake"
+          "name": null
         }
       }
     }

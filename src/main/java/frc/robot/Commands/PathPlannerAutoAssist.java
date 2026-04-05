@@ -3,6 +3,7 @@ package frc.robot.Commands;
 import static edu.wpi.first.units.Units.Degrees;
 
 import java.util.Objects;
+import java.util.function.Supplier;
 
 import com.ctre.phoenix6.swerve.SwerveModule.DriveRequestType;
 import com.ctre.phoenix6.swerve.SwerveModule.SteerRequestType;
@@ -34,6 +35,7 @@ public class PathPlannerAutoAssist {
     private final SparkAnglePositionSubsystem horizontalAim;
     private final SparkAnglePositionSubsystem verticalAim;
     private final ShooterSubsystem shooter;
+    private final Supplier<Translation2d> activePointTowardsTargetSupplier;
     private final PoseEstimatorSubsystem.PredictedFusedState futureState =
             new PoseEstimatorSubsystem.PredictedFusedState();
     private final BallTrajectoryLookup.MovingShotSolution idealMovingShotSolution =
@@ -64,11 +66,16 @@ public class PathPlannerAutoAssist {
             PoseEstimatorSubsystem poseEstimator,
             SparkAnglePositionSubsystem horizontalAim,
             SparkAnglePositionSubsystem verticalAim,
-            ShooterSubsystem shooter) {
+            ShooterSubsystem shooter,
+            Supplier<Translation2d> activePointTowardsTargetSupplier) {
         this.poseEstimator = Objects.requireNonNull(poseEstimator, "poseEstimator must not be null");
         this.horizontalAim = Objects.requireNonNull(horizontalAim, "horizontalAim must not be null");
         this.verticalAim = Objects.requireNonNull(verticalAim, "verticalAim must not be null");
         this.shooter = Objects.requireNonNull(shooter, "shooter must not be null");
+        this.activePointTowardsTargetSupplier =
+                Objects.requireNonNull(
+                        activePointTowardsTargetSupplier,
+                        "activePointTowardsTargetSupplier must not be null");
         facingAngleDrive.HeadingController.enableContinuousInput(-Math.PI, Math.PI);
     }
 
@@ -190,10 +197,18 @@ public class PathPlannerAutoAssist {
         DriverStation.Alliance alliance = DriverStation.getAlliance().orElse(DriverStation.Alliance.Blue);
         return switch (shotMode) {
             case SCORE_IN_HUB -> FieldMath.getHubTarget(alliance);
-            case SNOWBLOW_TO_ALLIANCE ->
-                    FieldMath.getSnowblowTarget(futurePose, lastFieldRelativeDriveDirection, alliance);
+            case SNOWBLOW_TO_ALLIANCE -> getSnowblowTarget(futurePose, alliance);
             case OFF -> futurePose.getTranslation();
         };
+    }
+
+    private Translation2d getSnowblowTarget(Pose2d futurePose, DriverStation.Alliance alliance) {
+        Translation2d activePointTowardsTarget = activePointTowardsTargetSupplier.get();
+        if (activePointTowardsTarget != null) {
+            return activePointTowardsTarget;
+        }
+
+        return FieldMath.getSnowblowTarget(futurePose, lastFieldRelativeDriveDirection, alliance);
     }
 
     private Rotation2d getPreferredRobotHeading(Rotation2d fallbackHeading) {

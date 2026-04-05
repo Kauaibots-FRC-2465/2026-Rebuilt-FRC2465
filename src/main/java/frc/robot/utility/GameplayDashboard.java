@@ -1,5 +1,6 @@
 package frc.robot.utility;
 
+import java.util.ArrayList;
 import java.util.List;
 
 import edu.wpi.first.math.geometry.Pose2d;
@@ -18,6 +19,7 @@ import edu.wpi.first.wpilibj.smartdashboard.SendableBuilderImpl;
  */
 public final class GameplayDashboard {
     private static final NetworkTable GAMEPLAY_TABLE = NetworkTableInstance.getDefault().getTable("Gameplay");
+    private static final List<Sendable> PUBLISHED_SENDABLES = new ArrayList<>();
     private static final Field2d GAMEPLAY_FIELD = publishField("Field");
     private static final String SNOWBLOW_TRAJECTORY_OBJECT_NAME = "snowblowTrajectory";
 
@@ -43,6 +45,13 @@ public final class GameplayDashboard {
         SendableRegistry.publish(sendable, builder);
         builder.startListeners();
         sendableTable.getEntry(".name").setString(name);
+        PUBLISHED_SENDABLES.add(sendable);
+    }
+
+    public static void updateValues() {
+        for (Sendable sendable : PUBLISHED_SENDABLES) {
+            SendableRegistry.update(sendable);
+        }
     }
 
     private static Field2d publishField(String fieldName) {

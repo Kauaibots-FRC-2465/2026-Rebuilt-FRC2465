@@ -9,6 +9,31 @@
           "data": {
             "pathName": "Test"
           }
+        },
+        {
+          "type": "path",
+          "data": {
+            "pathName": null
+          }
+        },
+        {
+          "type": "parallel",
+          "data": {
+            "commands": [
+              {
+                "type": "named",
+                "data": {
+                  "name": "SnowblowToAlliance"
+                }
+              },
+              {
+                "type": "path",
+                "data": {
+                  "pathName": "Test"
+                }
+              }
+            ]
+          }
         }
       ]
     }

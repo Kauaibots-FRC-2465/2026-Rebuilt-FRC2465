@@ -11,6 +11,7 @@ import edu.wpi.first.wpilibj.DriverStation;
 import edu.wpi.first.wpilibj2.command.Command;
 import edu.wpi.first.wpilibj2.command.CommandScheduler;
 import frc.robot.Commands.BallTrajectoryLookup;
+import frc.robot.utility.GameplayDashboard;
 import frc.robot.utility.ThrottlePrint;
 
 public class Robot extends TimedRobot {
@@ -42,6 +43,7 @@ public class Robot extends TimedRobot {
     public void robotPeriodic() {
         m_timeAndJoystickReplay.update();
         CommandScheduler.getInstance().run(); 
+        GameplayDashboard.updateValues();
         m_robotContainer.publishGameplayTelemetry();
         // Debug tuning telemetry disabled to reduce NetworkTables traffic.
         // m_robotContainer.publishTuningTelemetry();

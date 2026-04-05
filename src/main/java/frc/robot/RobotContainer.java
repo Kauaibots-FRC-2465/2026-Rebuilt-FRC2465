@@ -10,6 +10,10 @@ import static edu.wpi.first.units.Units.*;
 import java.io.File;
 import java.util.Arrays;
 import java.util.Comparator;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Map;
+import java.util.Set;
 
 import com.ctre.phoenix6.swerve.SwerveModule.DriveRequestType;
 import com.revrobotics.spark.SparkLowLevel.MotorType;
@@ -18,13 +22,15 @@ import com.revrobotics.spark.config.SparkBaseConfig.IdleMode;
 //import com.revrobotics.spark.SparkMax;
 import com.ctre.phoenix6.swerve.SwerveRequest;
 import com.pathplanner.lib.auto.AutoBuilder;
-import com.pathplanner.lib.auto.NamedCommands;
 import com.pathplanner.lib.commands.PathPlannerAuto;
 import com.pathplanner.lib.config.PIDConstants;
 import com.pathplanner.lib.config.RobotConfig;
 import com.pathplanner.lib.controllers.PPHolonomicDriveController;
 import com.pathplanner.lib.events.EventTrigger;
+import com.pathplanner.lib.events.PointTowardsZoneTrigger;
+import com.pathplanner.lib.path.PathPlannerPath;
 import com.pathplanner.lib.util.DriveFeedforwards;
+import com.pathplanner.lib.util.FileVersionException;
 
 import edu.wpi.first.math.geometry.Pose2d;
 import edu.wpi.first.math.geometry.Rotation2d;
@@ -45,6 +51,7 @@ import edu.wpi.first.wpilibj2.command.Subsystem;
 import edu.wpi.first.wpilibj2.command.button.CommandXboxController;
 import edu.wpi.first.wpilibj2.command.button.RobotModeTriggers;
 import edu.wpi.first.wpilibj2.command.sysid.SysIdRoutine.Direction;
+import org.json.simple.parser.ParseException;
 
 import frc.robot.Commands.ScoreInHub;
 import frc.robot.Commands.SnowblowToAlliance;
@@ -205,6 +212,8 @@ private Command showAllianceMarquee() {
     private final SnowblowToAllianceWithOperatorAim snowblowToAllianceWithOperatorAimCommand;
     private final PathPlannerAutoAssist pathPlannerAutoAssist;
     private final SendableChooser<Command> autoChooser;
+    private final Map<String, PointTowardsZoneTrigger> pointTowardsZoneTriggers = new HashMap<>();
+    private final Set<String> failedPointTowardsPaths = new HashSet<>();
     // CTRE CAN MAP
     // 11 Encoder for Front Left Swerve
     // 12 Encoder for Back Left Swerve
@@ -439,7 +448,8 @@ private Command showAllianceMarquee() {
                 poseEstimatorSubsystem,
                 horizontalAim,
                 verticalAim,
-                shooter);
+                shooter,
+                this::getActivePointTowardsTarget);
         RobotConfig config = null;
         try{
         config = RobotConfig.fromGUISettings();
@@ -619,49 +629,17 @@ private Command showAllianceMarquee() {
     }
 
     private void configurePathPlannerBindings() {
-        NamedCommands.registerCommand(
-                "EnableSnowblowToAlliance",
-                Commands.runOnce(pathPlannerAutoAssist::enableSnowblowToAlliance));
-        NamedCommands.registerCommand(
-                "DisableSnowblowToAlliance",
-                Commands.runOnce(pathPlannerAutoAssist::disableShotAssist));
-        NamedCommands.registerCommand(
-                "EnableScoreInHub",
-                Commands.runOnce(pathPlannerAutoAssist::enableScoreInHub));
-        NamedCommands.registerCommand(
-                "EnableShootInHub",
-                Commands.runOnce(pathPlannerAutoAssist::enableScoreInHub));
-        NamedCommands.registerCommand(
-                "DisableScoreInHub",
-                Commands.runOnce(pathPlannerAutoAssist::disableShotAssist));
-        NamedCommands.registerCommand(
-                "DisableShootInHub",
-                Commands.runOnce(pathPlannerAutoAssist::disableShotAssist));
-        NamedCommands.registerCommand(
-                "ActivateIntake",
-                Commands.runOnce(pathPlannerAutoAssist::activateIntake));
-        NamedCommands.registerCommand(
-                "DeactivateIntake",
-                Commands.runOnce(pathPlannerAutoAssist::deactivateIntake));
-        NamedCommands.registerCommand(
-                "DisableAutoShot",
-                Commands.runOnce(pathPlannerAutoAssist::disableShotAssist));
-
-        new EventTrigger("snowblowToAlliance")
+        new EventTrigger("SnowblowToAlliance")
                 .onTrue(Commands.runOnce(pathPlannerAutoAssist::enableSnowblowToAlliance));
-        new EventTrigger("snowblowToAlliance")
+        new EventTrigger("SnowblowToAlliance")
                 .onFalse(Commands.runOnce(pathPlannerAutoAssist::disableShotAssist));
-        new EventTrigger("scoreInHub")
+        new EventTrigger("ScoreInHub")
                 .onTrue(Commands.runOnce(pathPlannerAutoAssist::enableScoreInHub));
-        new EventTrigger("scoreInHub")
+        new EventTrigger("ScoreInHub")
                 .onFalse(Commands.runOnce(pathPlannerAutoAssist::disableShotAssist));
-        new EventTrigger("shootInHub")
-                .onTrue(Commands.runOnce(pathPlannerAutoAssist::enableScoreInHub));
-        new EventTrigger("shootInHub")
-                .onFalse(Commands.runOnce(pathPlannerAutoAssist::disableShotAssist));
-        new EventTrigger("intake")
+        new EventTrigger("Intake")
                 .onTrue(Commands.runOnce(pathPlannerAutoAssist::activateIntake));
-        new EventTrigger("intake")
+        new EventTrigger("Intake")
                 .onFalse(Commands.runOnce(pathPlannerAutoAssist::deactivateIntake));
     }
 
@@ -711,6 +689,38 @@ private Command showAllianceMarquee() {
 
     private Pose2d getPathPlannerPose() {
         return drivetrain.getState().Pose;
+    }
+
+    private Translation2d getActivePointTowardsTarget() {
+        String currentPathName = PathPlannerAuto.currentPathName;
+        if (currentPathName == null || currentPathName.isBlank()) {
+            return null;
+        }
+
+        try {
+            PathPlannerPath path = PathPlannerPath.fromPathFile(currentPathName);
+            if (AutoBuilder.shouldFlip() && !path.preventFlipping) {
+                path = path.flipPath();
+            }
+
+            for (var zone : path.getPointTowardsZones()) {
+                if (getPointTowardsZoneTrigger(zone.name()).getAsBoolean()) {
+                    return zone.targetPosition();
+                }
+            }
+        } catch (FileVersionException | ParseException | java.io.IOException e) {
+            if (failedPointTowardsPaths.add(currentPathName)) {
+                DriverStation.reportWarning(
+                        "Failed to load point towards zones for path: " + currentPathName,
+                        e.getStackTrace());
+            }
+        }
+
+        return null;
+    }
+
+    private PointTowardsZoneTrigger getPointTowardsZoneTrigger(String zoneName) {
+        return pointTowardsZoneTriggers.computeIfAbsent(zoneName, PointTowardsZoneTrigger::new);
     }
 
     private SendableChooser<Command> buildAutoChooser() {

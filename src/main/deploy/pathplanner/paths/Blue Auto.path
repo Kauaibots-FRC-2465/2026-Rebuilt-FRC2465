@@ -1,0 +1,81 @@
+{
+  "version": "2025.0",
+  "waypoints": [
+    {
+      "anchor": {
+        "x": 4.504282325029656,
+        "y": 7.451043890865955
+      },
+      "prevControl": null,
+      "nextControl": {
+        "x": 6.473214709371295,
+        "y": 7.483321470937129
+      },
+      "isLocked": true,
+      "linkedName": null
+    },
+    {
+      "anchor": {
+        "x": 8.571257413997628,
+        "y": 7.171304863582444
+      },
+      "prevControl": {
+        "x": 7.011174377224202,
+        "y": 7.36497034400949
+      },
+      "nextControl": null,
+      "isLocked": true,
+      "linkedName": "Snowblow satrt "
+    }
+  ],
+  "rotationTargets": [],
+  "constraintZones": [
+    {
+      "name": "Constraints Zone",
+      "minWaypointRelativePos": 0.6569178852643424,
+      "maxWaypointRelativePos": 0.9876265466816653,
+      "constraints": {
+        "maxVelocity": 0.5,
+        "maxAcceleration": 3.0,
+        "maxAngularVelocity": 540.0,
+        "maxAngularAcceleration": 720.0,
+        "nominalVoltage": 12.0,
+        "unlimited": false
+      }
+    }
+  ],
+  "pointTowardsZones": [],
+  "eventMarkers": [
+    {
+      "name": "SnowblowToAlliance",
+      "waypointRelativePos": 0.11698537682790122,
+      "endWaypointRelativePos": 1.0,
+      "command": null
+    },
+    {
+      "name": "Intake",
+      "waypointRelativePos": 0.9021372328458942,
+      "endWaypointRelativePos": 1.0,
+      "command": null
+    }
+  ],
+  "globalConstraints": {
+    "maxVelocity": 2.0,
+    "maxAcceleration": 3.0,
+    "maxAngularVelocity": 540.0,
+    "maxAngularAcceleration": 720.0,
+    "nominalVoltage": 12.0,
+    "unlimited": false
+  },
+  "goalEndState": {
+    "velocity": 0,
+    "rotation": -124.07719528013084
+  },
+  "reversed": false,
+  "folder": null,
+  "idealStartingState": {
+    "velocity": 0.0,
+    "rotation": -88.99491399474577
+  },
+  "useDefaultConstraints": false
+}
