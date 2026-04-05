@@ -51,6 +51,9 @@ public class Telemetry {
     private final StructArrayPublisher<SwerveModulePosition> driveModulePositions = driveStateTable.getStructArrayTopic("ModulePositions", SwerveModulePosition.struct).publish();
     private final DoublePublisher driveTimestamp = driveStateTable.getDoubleTopic("Timestamp").publish();
     private final DoublePublisher driveOdometryFrequency = driveStateTable.getDoubleTopic("OdometryFrequency").publish();
+    private final DoublePublisher driveVx = driveStateTable.getDoubleTopic("VxMetersPerSecond").publish();
+    private final DoublePublisher driveVy = driveStateTable.getDoubleTopic("VyMetersPerSecond").publish();
+    private final DoublePublisher driveOmega = driveStateTable.getDoubleTopic("OmegaRadiansPerSecond").publish();
 
     /* Robot pose for field positioning */
     private final NetworkTable table = inst.getTable("Pose");
@@ -88,14 +91,16 @@ public class Telemetry {
     /** Accept the swerve drive state and telemeterize it to SmartDashboard and SignalLogger. */
     public void telemeterize(SwerveDriveState state) {
         /* Telemeterize the swerve drive state */
-        // Debug dashboard telemetry disabled to reduce NetworkTables traffic.
-        // drivePose.set(state.Pose);
-        // driveSpeeds.set(state.Speeds);
-        // driveModuleStates.set(state.ModuleStates);
-        // driveModuleTargets.set(state.ModuleTargets);
-        // driveModulePositions.set(state.ModulePositions);
-        // driveTimestamp.set(state.Timestamp);
-        // driveOdometryFrequency.set(1.0 / state.OdometryPeriod);
+        drivePose.set(state.Pose);
+        driveSpeeds.set(state.Speeds);
+        driveModuleStates.set(state.ModuleStates);
+        driveModuleTargets.set(state.ModuleTargets);
+        driveModulePositions.set(state.ModulePositions);
+        driveTimestamp.set(state.Timestamp);
+        driveOdometryFrequency.set(1.0 / state.OdometryPeriod);
+        driveVx.set(state.Speeds.vxMetersPerSecond);
+        driveVy.set(state.Speeds.vyMetersPerSecond);
+        driveOmega.set(state.Speeds.omegaRadiansPerSecond);
 
         /* Also write to log file */
         SignalLogger.writeStruct("DriveState/Pose", Pose2d.struct, state.Pose);

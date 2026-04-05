@@ -86,6 +86,15 @@ import frc.robot.utility.GameplayDashboard;
 // ks=2.2
 // kv=0.01
 
+// SYSID for this robot
+// 0.1435  Ks straight
+// 0.1166  Kv straight
+// 0.01932 Ka sttraight
+
+// 0.19858 Ks rotation
+// 0.11599 Kv rotation
+// 0.021855 Ka rotation
+
 public class RobotContainer implements Subsystem {
     private final static float REMEMBER_TO_SET_CURRENTLY_0 = 0f;
     private final static float REMEMBER_TO_TUNE_CURRENTLY_1 = 1f;
@@ -95,6 +104,9 @@ public class RobotContainer implements Subsystem {
     private static final double SHOOTER_TUNE_SPEED_STEP_IPS = 40;
     private static final double SHOOTER_AZIMUTH_TRIM_STEP_DEGREES = 1.0;
     private static final double MAIN_FLYWHEEL_VELOCITY_SAMPLE_WINDOW_SECONDS = 0.010;
+    private static final double DRIVE_TUNING_LOW_SPEED_METERS_PER_SECOND = 1.0;
+    private static final double DRIVE_TUNING_HIGH_SPEED_METERS_PER_SECOND = 2.0;
+    private static final double DRIVE_TUNING_ROTATION_RADIANS_PER_SECOND = Math.PI / 2.0;
 
     private static enum MotorData {
         RIGHT_FLYWHEEL(42, "Right Flywheel Kraken x60"),
@@ -124,9 +136,13 @@ public class RobotContainer implements Subsystem {
     /* Setting up bindings for necessary control of the swerve drive platform */
     private final SwerveRequest.FieldCentric drive = new SwerveRequest.FieldCentric()
             .withDeadband(MaxSpeed * 0.01).withRotationalDeadband(MaxAngularRate * 0.01) // Add a 10% deadband
-            .withDriveRequestType(DriveRequestType.OpenLoopVoltage); // Use open-loop control for drive motors
+            .withDriveRequestType(DriveRequestType.Velocity); // Use velocity closed-loop for drive motors
     private final SwerveRequest.SwerveDriveBrake brake = new SwerveRequest.SwerveDriveBrake();
     private final SwerveRequest.PointWheelsAt point = new SwerveRequest.PointWheelsAt();
+    private final SwerveRequest.RobotCentric driveTuningRequest = new SwerveRequest.RobotCentric()
+            .withDeadband(0.0)
+            .withRotationalDeadband(0.0)
+            .withDriveRequestType(DriveRequestType.Velocity);
 
     private final Telemetry logger = new Telemetry(MaxSpeed);
     private final NetworkTable tuningTable = NetworkTableInstance.getDefault().getTable("Tuning");
@@ -141,6 +157,7 @@ public class RobotContainer implements Subsystem {
     private final CommandXboxController engineersController = new CommandXboxController(1);
     private final CommandXboxController testController = new CommandXboxController(2);
     private final CommandXboxController testController2 = new CommandXboxController(3);
+    private final CommandXboxController driveTuningController = new CommandXboxController(4);
 
     public final CommandSwerveDrivetrain drivetrain = TunerConstants.createDrivetrain();
     
@@ -613,6 +630,63 @@ private Command showAllianceMarquee() {
         driversController.start().and(driversController.y()).whileTrue(drivetrain.sysIdQuasistatic(Direction.kForward));
         driversController.start().and(driversController.x()).whileTrue(drivetrain.sysIdQuasistatic(Direction.kReverse));
 
+        driveTuningController.a().whileTrue(createDriveTuningCommand(
+                DRIVE_TUNING_LOW_SPEED_METERS_PER_SECOND,
+                0.0,
+                0.0));
+        driveTuningController.b().whileTrue(createDriveTuningCommand(
+                -DRIVE_TUNING_LOW_SPEED_METERS_PER_SECOND,
+                0.0,
+                0.0));
+        driveTuningController.x().whileTrue(createDriveTuningCommand(
+                0.0,
+                DRIVE_TUNING_LOW_SPEED_METERS_PER_SECOND,
+                0.0));
+        driveTuningController.y().whileTrue(createDriveTuningCommand(
+                0.0,
+                -DRIVE_TUNING_LOW_SPEED_METERS_PER_SECOND,
+                0.0));
+        driveTuningController.leftBumper().whileTrue(createDriveTuningCommand(
+                0.0,
+                0.0,
+                DRIVE_TUNING_ROTATION_RADIANS_PER_SECOND));
+        driveTuningController.rightBumper().whileTrue(createDriveTuningCommand(
+                0.0,
+                0.0,
+                -DRIVE_TUNING_ROTATION_RADIANS_PER_SECOND));
+        driveTuningController.povUp().whileTrue(createDriveTuningCommand(
+                DRIVE_TUNING_HIGH_SPEED_METERS_PER_SECOND,
+                0.0,
+                0.0));
+        driveTuningController.povDown().whileTrue(createDriveTuningCommand(
+                -DRIVE_TUNING_HIGH_SPEED_METERS_PER_SECOND,
+                0.0,
+                0.0));
+        driveTuningController.povLeft().whileTrue(createDriveTuningCommand(
+                0.0,
+                DRIVE_TUNING_HIGH_SPEED_METERS_PER_SECOND,
+                0.0));
+        driveTuningController.povRight().whileTrue(createDriveTuningCommand(
+                0.0,
+                -DRIVE_TUNING_HIGH_SPEED_METERS_PER_SECOND,
+                0.0));
+        driveTuningController.start().and(driveTuningController.y()).whileTrue(
+                drivetrain.sysIdQuasistatic(Direction.kForward));
+        driveTuningController.start().and(driveTuningController.x()).whileTrue(
+                drivetrain.sysIdQuasistatic(Direction.kReverse));
+        driveTuningController.back().and(driveTuningController.y()).whileTrue(
+                drivetrain.sysIdDynamic(Direction.kForward));
+        driveTuningController.back().and(driveTuningController.x()).whileTrue(
+                drivetrain.sysIdDynamic(Direction.kReverse));
+        driveTuningController.leftTrigger().and(driveTuningController.start()).whileTrue(
+                drivetrain.sysIdRotationQuasistatic(Direction.kForward));
+        driveTuningController.leftTrigger().and(driveTuningController.back()).whileTrue(
+                drivetrain.sysIdRotationQuasistatic(Direction.kReverse));
+        driveTuningController.rightTrigger().and(driveTuningController.start()).whileTrue(
+                drivetrain.sysIdRotationDynamic(Direction.kForward));
+        driveTuningController.rightTrigger().and(driveTuningController.back()).whileTrue(
+                drivetrain.sysIdRotationDynamic(Direction.kReverse));
+
        //*  Seed the driver-perspective offset from the fused heading on left bumper press.
         driversController.leftBumper().onTrue(
             Commands.runOnce(() -> {
@@ -759,6 +833,13 @@ private Command showAllianceMarquee() {
 
         chooser.addOption("None", Commands.none());
         return chooser;
+    }
+
+    private Command createDriveTuningCommand(double velocityX, double velocityY, double rotationalRate) {
+        return drivetrain.applyRequest(() -> driveTuningRequest
+                .withVelocityX(velocityX)
+                .withVelocityY(velocityY)
+                .withRotationalRate(rotationalRate));
     }
 
     private SwerveRequest getDriverDriveRequest() {
