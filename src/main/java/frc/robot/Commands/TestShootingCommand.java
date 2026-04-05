@@ -5,7 +5,6 @@ import static edu.wpi.first.units.Units.Inches;
 import static edu.wpi.first.units.Units.Meters;
 
 import java.util.Objects;
-import java.util.function.DoubleSupplier;
 import java.util.function.Supplier;
 
 import com.ctre.phoenix6.swerve.SwerveRequest;
@@ -44,7 +43,6 @@ public class TestShootingCommand extends Command {
     private final ShooterSubsystem shooter;
     private final KrakenFlywheelSubsystem intakeDrive;
     private final Supplier<SwerveRequest> driveRequestSupplier;
-    private final DoubleSupplier azimuthTrimDegreesSupplier;
     private final SwerveRequest.FieldCentricFacingAngle facingAngleDrive =
             new SwerveRequest.FieldCentricFacingAngle();
     private final PoseEstimatorSubsystem.PredictedFusedState predictedState =
@@ -73,8 +71,7 @@ public class TestShootingCommand extends Command {
             IntakePositionSubsystem intakePosition,
             ShooterSubsystem shooter,
             KrakenFlywheelSubsystem intakeDrive,
-            Supplier<SwerveRequest> driveRequestSupplier,
-            DoubleSupplier azimuthTrimDegreesSupplier) {
+            Supplier<SwerveRequest> driveRequestSupplier) {
         this.drivetrain = Objects.requireNonNull(drivetrain, "drivetrain must not be null");
         this.poseEstimator = Objects.requireNonNull(poseEstimator, "poseEstimator must not be null");
         this.horizontalAim = Objects.requireNonNull(horizontalAim, "horizontalAim must not be null");
@@ -83,8 +80,6 @@ public class TestShootingCommand extends Command {
         this.shooter = Objects.requireNonNull(shooter, "shooter must not be null");
         this.intakeDrive = Objects.requireNonNull(intakeDrive, "intakeDrive must not be null");
         this.driveRequestSupplier = Objects.requireNonNull(driveRequestSupplier, "driveRequestSupplier must not be null");
-        this.azimuthTrimDegreesSupplier =
-                Objects.requireNonNull(azimuthTrimDegreesSupplier, "azimuthTrimDegreesSupplier must not be null");
 
         facingAngleDrive.withHeadingPID(5.0, 0.0, 0.0);
         facingAngleDrive.HeadingController.enableContinuousInput(-Math.PI, Math.PI);
@@ -190,8 +185,7 @@ public class TestShootingCommand extends Command {
         double turretDeltaDegrees = fixedAngleSolution.getTurretDeltaDegrees();
         double launcherRelativeExitVelocityIps = fixedAngleSolution.getLauncherRelativeExitVelocityIps();
         double robotHeadingDegrees = fixedAngleSolution.getRobotHeadingDegrees();
-        horizontalAim.setAngle(Degrees.of(clampTurretDeltaDegrees(
-                turretDeltaDegrees + azimuthTrimDegreesSupplier.getAsDouble())));
+        horizontalAim.setAngle(Degrees.of(clampTurretDeltaDegrees(turretDeltaDegrees)));
         shooter.setCoupledIPS(commandedFlywheelIps);
         flywheelCommandIpsPublisher.set(commandedFlywheelIps);
         launcherRelativeExitVelocityIpsPublisher.set(launcherRelativeExitVelocityIps);

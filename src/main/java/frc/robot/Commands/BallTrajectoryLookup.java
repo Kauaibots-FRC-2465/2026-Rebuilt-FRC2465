@@ -209,10 +209,15 @@ public final class BallTrajectoryLookup {
     private static final class DistanceSample {
         private final double heightInches;
         private final double verticalVelocityIps;
+        private final double timeSeconds;
 
-        private DistanceSample(double heightInches, double verticalVelocityIps) {
+        private DistanceSample(
+                double heightInches,
+                double verticalVelocityIps,
+                double timeSeconds) {
             this.heightInches = heightInches;
             this.verticalVelocityIps = verticalVelocityIps;
+            this.timeSeconds = timeSeconds;
         }
 
         private boolean isDescending() {
@@ -792,6 +797,35 @@ public final class BallTrajectoryLookup {
         return distanceSample == null ? Double.NaN : distanceSample.heightInches;
     }
 
+    static double getTimeOfFlightSecondsAtDistanceInches(
+            double hoodAngleDegrees,
+            double exitVelocityIps,
+            double targetRadialDistanceInches) {
+        DistanceSample distanceSample = getDistanceSampleAtTarget(
+                hoodAngleDegrees,
+                exitVelocityIps,
+                targetRadialDistanceInches);
+        return distanceSample == null ? Double.NaN : distanceSample.timeSeconds;
+    }
+
+    static double getEstimatedTimeOfFlightSecondsForCommandedShot(
+            double commandedHoodAngleDegrees,
+            double flywheelCommandIps,
+            double targetRadialDistanceInches) {
+        double trueHoodAngleDegrees =
+                ShooterConstants.getTrueAngleDegreesForCommandedAngle(commandedHoodAngleDegrees);
+        double exitVelocityIps = getEstimatedExitVelocityIpsForCommandedShot(
+                commandedHoodAngleDegrees,
+                flywheelCommandIps);
+        if (!Double.isFinite(trueHoodAngleDegrees) || !Double.isFinite(exitVelocityIps)) {
+            return Double.NaN;
+        }
+        return getTimeOfFlightSecondsAtDistanceInches(
+                trueHoodAngleDegrees,
+                exitVelocityIps,
+                targetRadialDistanceInches);
+    }
+
     private static DistanceSample getDistanceSampleAtTarget(
             double hoodAngleDegrees,
             double exitVelocityIps,
@@ -835,9 +869,16 @@ public final class BallTrajectoryLookup {
             double nextZ = z + 0.5 * (vz + nextVz) * SIMULATION_DT_SECONDS;
 
             if (nextX >= frameRelativeDistanceInches) {
+                double targetTimeSeconds = interpolateValue(
+                        x,
+                        timeSeconds,
+                        nextX,
+                        timeSeconds + SIMULATION_DT_SECONDS,
+                        frameRelativeDistanceInches);
                 return new DistanceSample(
                         interpolateValue(x, z, nextX, nextZ, frameRelativeDistanceInches),
-                        interpolateValue(x, vz, nextX, nextVz, frameRelativeDistanceInches));
+                        interpolateValue(x, vz, nextX, nextVz, frameRelativeDistanceInches),
+                        targetTimeSeconds);
             }
 
             x = nextX;
@@ -1021,7 +1062,12 @@ public final class BallTrajectoryLookup {
             return Double.NaN;
         }
 
-        double baseExitVelocityIps = FlywheelBallExitInterpolator.getBallExitIpsForSetIps(flywheelCommandIps);
+        double estimatedFlywheelCommandIps = clampEstimatedFlywheelCommandIps(flywheelCommandIps);
+        if (!Double.isFinite(estimatedFlywheelCommandIps)) {
+            return Double.NaN;
+        }
+
+        double baseExitVelocityIps = FlywheelBallExitInterpolator.getBallExitIpsForSetIps(estimatedFlywheelCommandIps);
         if (!Double.isFinite(baseExitVelocityIps)) {
             return Double.NaN;
         }
@@ -1032,6 +1078,13 @@ public final class BallTrajectoryLookup {
         }
 
         return baseExitVelocityIps * angleExitScale;
+    }
+
+    private static double clampEstimatedFlywheelCommandIps(double flywheelCommandIps) {
+        if (!Double.isFinite(flywheelCommandIps)) {
+            return Double.NaN;
+        }
+        return MathUtil.clamp(flywheelCommandIps, MIN_FLYWHEEL_COMMAND_IPS, MAX_FLYWHEEL_COMMAND_IPS);
     }
 
     private static double getSpinProxyIps(

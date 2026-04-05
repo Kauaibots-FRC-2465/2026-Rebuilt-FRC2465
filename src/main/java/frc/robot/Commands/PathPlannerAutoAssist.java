@@ -1,6 +1,8 @@
 package frc.robot.Commands;
 
 import static edu.wpi.first.units.Units.Degrees;
+import static edu.wpi.first.units.Units.Inches;
+import static edu.wpi.first.units.Units.Meters;
 
 import java.util.Objects;
 import java.util.function.Supplier;
@@ -130,8 +132,7 @@ public class PathPlannerAutoAssist {
     public SwerveRequest buildDriveRequest(
             CommandSwerveDrivetrain drivetrain,
             ChassisSpeeds robotRelativeSpeeds,
-            DriveFeedforwards feedforwards,
-            double azimuthTrimDegrees) {
+            DriveFeedforwards feedforwards) {
         Objects.requireNonNull(drivetrain, "drivetrain must not be null");
         Objects.requireNonNull(robotRelativeSpeeds, "robotRelativeSpeeds must not be null");
         Objects.requireNonNull(feedforwards, "feedforwards must not be null");
@@ -144,7 +145,7 @@ public class PathPlannerAutoAssist {
         if (!poseEstimator.getPredictedFusedState(
                 ShooterConstants.COMMANDED_SHOOTER_LOOKAHEAD_SECONDS,
                 futureState)) {
-            clearShotOutputs();
+            applyNoSolutionShotOutputs(poseEstimator.getFusedPoseSupplier().get(), null);
             return buildPathFollowingRequest(robotRelativeSpeeds, feedforwards);
         }
 
@@ -153,10 +154,13 @@ public class PathPlannerAutoAssist {
                 futureState.yMeters,
                 Rotation2d.fromRadians(futureState.headingRadians));
         Translation2d target = getTarget(futurePose);
-        Rotation2d preferredRobotHeading = getPreferredRobotHeading(futurePose.getRotation());
+        Rotation2d preferredRobotHeading = getPreferredRobotHeading(
+                futurePose,
+                target,
+                futurePose.getRotation());
 
-        if (!updateShotSolution(target, preferredRobotHeading, azimuthTrimDegrees)) {
-            clearShotOutputs();
+        if (!updateShotSolution(target, preferredRobotHeading)) {
+            applyNoSolutionShotOutputs(futurePose, target);
             return buildPathFollowingRequest(robotRelativeSpeeds, feedforwards);
         }
 
@@ -211,7 +215,16 @@ public class PathPlannerAutoAssist {
         return FieldMath.getSnowblowTarget(futurePose, lastFieldRelativeDriveDirection, alliance);
     }
 
-    private Rotation2d getPreferredRobotHeading(Rotation2d fallbackHeading) {
+    private Rotation2d getPreferredRobotHeading(
+            Pose2d futurePose,
+            Translation2d target,
+            Rotation2d fallbackHeading) {
+        if (shotMode == ShotMode.SCORE_IN_HUB) {
+            return MovingShotMath.getHeadingTowardTarget(
+                    target.getX() - futurePose.getX(),
+                    target.getY() - futurePose.getY(),
+                    fallbackHeading);
+        }
         if (lastFieldRelativeDriveDirection.getNorm() > 1e-9) {
             return lastFieldRelativeDriveDirection.getAngle();
         }
@@ -220,66 +233,38 @@ public class PathPlannerAutoAssist {
 
     private boolean updateShotSolution(
             Translation2d target,
-            Rotation2d preferredRobotHeading,
-            double azimuthTrimDegrees) {
+            Rotation2d preferredRobotHeading) {
         double minimumHoodAngleDegrees = verticalAim.getMinimumAngle().in(Degrees);
         double maximumHoodAngleDegrees = verticalAim.getMaximumAngle().in(Degrees);
-        boolean hasIdealSolution = MovingShotMath.solveIdealMovingShotWithUpperHoodFallback(
-                verticalAim,
-                ShooterConstants.COMMANDED_MOVING_SHOT_HOOD_SEARCH_STEP_DEGREES,
-                futureState.xMeters,
-                futureState.yMeters,
-                futureState.headingRadians,
-                futureState.vxMetersPerSecond,
-                futureState.vyMetersPerSecond,
-                target.getX(),
-                target.getY(),
-                getTargetElevationInches(),
-                ShooterConstants.COMMANDED_MAXIMUM_SHOOTING_HEIGHT_INCHES,
-                preferredRobotHeading.getRadians(),
-                horizontalAim.getMinimumAngle().in(Degrees),
-                horizontalAim.getMaximumAngle().in(Degrees),
-                idealMovingShotSolution);
-        if (!hasIdealSolution) {
-            return false;
-        }
-
-        double idealFlywheelCommandIps = idealMovingShotSolution.getFlywheelCommandIps();
-        double predictedFlywheelCommandIps = MovingShotMath.predictFlywheelSpeedIps(
-                shooter.getMainFlywheelSpeedIPS(),
-                idealFlywheelCommandIps);
         BallTrajectoryLookup.FixedFlywheelShotStatus fixedFlywheelStatus =
-                BallTrajectoryLookup.solveMovingShotForFlywheelCommand(
-                        minimumHoodAngleDegrees,
-                        maximumHoodAngleDegrees,
+                MovingShotMath.solveCommandedMovingShot(
+                        verticalAim,
+                        ShooterConstants.COMMANDED_MOVING_SHOT_HOOD_SEARCH_STEP_DEGREES,
                         ShooterConstants.COMMANDED_MOVING_SHOT_FIXED_FLYWHEEL_HOOD_SEARCH_STEP_DEGREES,
-                        true,
-                        futureState.xMeters,
-                        futureState.yMeters,
-                        futureState.headingRadians,
-                        futureState.vxMetersPerSecond,
-                        futureState.vyMetersPerSecond,
-                        target.getX(),
-                        target.getY(),
+                        futureState,
+                        target,
                         getTargetElevationInches(),
                         ShooterConstants.COMMANDED_MAXIMUM_SHOOTING_HEIGHT_INCHES,
                         preferredRobotHeading.getRadians(),
                         horizontalAim.getMinimumAngle().in(Degrees),
                         horizontalAim.getMaximumAngle().in(Degrees),
-                        predictedFlywheelCommandIps,
+                        shooter.getMainFlywheelSpeedIPS(),
+                        idealMovingShotSolution,
                         movingShotSolution);
         if (fixedFlywheelStatus == BallTrajectoryLookup.FixedFlywheelShotStatus.NO_SOLUTION) {
             return false;
         }
 
-        commandedHoodAngleDegrees = switch (fixedFlywheelStatus) {
-            case TOO_SLOW -> minimumHoodAngleDegrees;
-            case TOO_FAST -> maximumHoodAngleDegrees;
-            case VALID -> movingShotSolution.getHoodAngleDegrees();
-            case NO_SOLUTION -> ShooterConstants.COMMANDED_MAXIMUM_ALLOWED_HOOD_ANGLE_DEGREES;
-        };
-        commandedTurretDeltaDegrees = clampTurretDeltaDegrees(
-                movingShotSolution.getTurretDeltaDegrees() + azimuthTrimDegrees);
+        double idealFlywheelCommandIps = idealMovingShotSolution.getFlywheelCommandIps();
+        commandedHoodAngleDegrees = MovingShotMath.getCommandedHoodAngleDegrees(
+                fixedFlywheelStatus,
+                minimumHoodAngleDegrees,
+                maximumHoodAngleDegrees,
+                movingShotSolution);
+        commandedTurretDeltaDegrees = MovingShotMath.clampTurretDeltaDegrees(
+                movingShotSolution.getTurretDeltaDegrees(),
+                horizontalAim.getMinimumAngle().in(Degrees),
+                horizontalAim.getMaximumAngle().in(Degrees));
         commandedFlywheelIps = idealFlywheelCommandIps;
         shotOutputsActive = true;
         return true;
@@ -291,10 +276,34 @@ public class PathPlannerAutoAssist {
                 : ShooterConstants.COMMANDED_SNOWBLOW_TARGET_ELEVATION_INCHES;
     }
 
-    private double clampTurretDeltaDegrees(double turretDeltaDegrees) {
-        return Math.max(
-                horizontalAim.getMinimumAngle().in(Degrees),
-                Math.min(horizontalAim.getMaximumAngle().in(Degrees), turretDeltaDegrees));
+    private void applyNoSolutionShotOutputs(Pose2d aimingPose, Translation2d target) {
+        if (shotMode != ShotMode.SCORE_IN_HUB) {
+            clearShotOutputs();
+            return;
+        }
+
+        Translation2d fallbackTarget = target;
+        if (fallbackTarget == null) {
+            Pose2d targetPose = aimingPose != null ? aimingPose : new Pose2d();
+            fallbackTarget = getTarget(targetPose);
+        }
+
+        double fallbackFlywheelIps =
+                ShortRangeHubFlywheelLookup.getFallbackManifoldFlywheelCommandIps(
+                        getFallbackHubDistanceInches(aimingPose, fallbackTarget));
+        commandedTurretDeltaDegrees = 0.0;
+        commandedHoodAngleDegrees = ShooterConstants.COMMANDED_MAXIMUM_ALLOWED_HOOD_ANGLE_DEGREES;
+        commandedFlywheelIps = Double.isFinite(fallbackFlywheelIps) ? fallbackFlywheelIps : 0.0;
+        shotOutputsActive = commandedFlywheelIps > 0.0;
+    }
+
+    private double getFallbackHubDistanceInches(Pose2d aimingPose, Translation2d target) {
+        if (aimingPose != null && target != null) {
+            return Inches.convertFrom(target.getDistance(aimingPose.getTranslation()), Meters);
+        }
+        return 0.5 * (
+                ShooterConstants.DATA_COLLECTION_SHORT_RANGE_MIN_DISTANCE_INCHES
+                        + ShooterConstants.DATA_COLLECTION_SHORT_RANGE_EMPIRICAL_MAX_DISTANCE_INCHES);
     }
 
     private void clearShotOutputs() {

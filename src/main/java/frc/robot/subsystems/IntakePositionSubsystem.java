@@ -19,6 +19,8 @@ import frc.robot.OverrideCommand;
 public class IntakePositionSubsystem extends SubsystemBase {
     private final KrakenAnglePositionSubsystem leftIntakePosition;
     private final KrakenAnglePositionSubsystem rightIntakePosition;
+    private final double minimumAngleRotations;
+    private final double maximumAngleRotations;
 
     /**
      * Creates a coordinated intake-aim subsystem.
@@ -42,6 +44,8 @@ public class IntakePositionSubsystem extends SubsystemBase {
             double maxPositionVoltage,
             Angle minimumAngle,
             Angle maximumAngle) {
+        minimumAngleRotations = minimumAngle.in(Rotations);
+        maximumAngleRotations = maximumAngle.in(Rotations);
         leftIntakePosition = new KrakenAnglePositionSubsystem(
                 leftCanId,
                 canBusName,
@@ -100,6 +104,14 @@ public class IntakePositionSubsystem extends SubsystemBase {
                 (leftIntakePosition.getAngle().in(Rotations)
                         + rightIntakePosition.getAngle().in(Rotations))
                         / 2.0);
+    }
+
+    public Angle getMinimumAngle() {
+        return Rotations.of(minimumAngleRotations);
+    }
+
+    public Angle getMaximumAngle() {
+        return Rotations.of(maximumAngleRotations);
     }
 
     public void recoverIfResetOccurred() {

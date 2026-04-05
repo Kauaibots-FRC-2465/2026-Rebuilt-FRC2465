@@ -102,7 +102,9 @@ public class RobotContainer implements Subsystem {
     private final static int INCHES = 1;
     private static final double HOOD_TUNE_ANGLE_STEP_DEGREES = 5.0;
     private static final double SHOOTER_TUNE_SPEED_STEP_IPS = 40;
-    private static final double SHOOTER_AZIMUTH_TRIM_STEP_DEGREES = 1.0;
+    private static final double HORIZONTAL_AIM_TRIM_STEP_DEGREES = 1.0;
+    private static final double ACTIVE_INTAKE_ANGLE_STEP_DEGREES = 0.2;
+    private static final double DEFAULT_ACTIVE_INTAKE_ANGLE_DEGREES = 109.0;
     private static final double MAIN_FLYWHEEL_VELOCITY_SAMPLE_WINDOW_SECONDS = 0.010;
     private static final double DRIVE_TUNING_LOW_SPEED_METERS_PER_SECOND = 1.0;
     private static final double DRIVE_TUNING_HIGH_SPEED_METERS_PER_SECOND = 2.0;
@@ -148,8 +150,6 @@ public class RobotContainer implements Subsystem {
     private final NetworkTable tuningTable = NetworkTableInstance.getDefault().getTable("Tuning");
     private final DoublePublisher hoodTuneAnglePublisher = tuningTable.getDoubleTopic("HoodTuneAngleDegrees").publish();
     private final DoublePublisher shooterTuneSpeedPublisher = tuningTable.getDoubleTopic("ShooterTuneSpeedIps").publish();
-    private final DoublePublisher shooterAzimuthTrimPublisher =
-            tuningTable.getDoubleTopic("ShooterAzimuthTrimDegrees").publish();
     private final DoublePublisher mainFlywheelMeasuredSpeedPublisher =
             tuningTable.getDoubleTopic("MainFlywheelMeasuredSpeedIps").publish();
 
@@ -442,16 +442,14 @@ private Command showAllianceMarquee() {
             intakePosition,
             shooter,
             intakedrive,
-            this::getDriverDriveRequest,
-            this::getShooterAzimuthTrimDegrees);
+            this::getDriverDriveRequest);
         scoreInHubCommand = new ScoreInHub(
             drivetrain,
             poseEstimatorSubsystem,
             horizontalAim,
             verticalAim,
             shooter,
-            this::getDriverDriveRequest,
-            this::getShooterAzimuthTrimDegrees);
+            this::getDriverDriveRequest);
         snowblowToAllianceWithOperatorAimCommand = new SnowblowToAllianceWithOperatorAim(
             drivetrain,
             poseEstimatorSubsystem,
@@ -459,7 +457,6 @@ private Command showAllianceMarquee() {
             verticalAim,
             shooter,
             this::getDriverDriveRequest,
-            this::getShooterAzimuthTrimDegrees,
             this::getEngineersTarget);
         pathPlannerAutoAssist = new PathPlannerAutoAssist(
                 poseEstimatorSubsystem,
@@ -543,10 +540,16 @@ private Command showAllianceMarquee() {
             }
         }));
         engineersController.povRight().onTrue(Commands.runOnce(() -> {
-            adjustShooterAzimuthTrim(-SHOOTER_AZIMUTH_TRIM_STEP_DEGREES);
+            horizontalAim.adjustAngleTrim(Degrees.of(-HORIZONTAL_AIM_TRIM_STEP_DEGREES));
         }));
         engineersController.povLeft().onTrue(Commands.runOnce(() -> {
-            adjustShooterAzimuthTrim(SHOOTER_AZIMUTH_TRIM_STEP_DEGREES);
+            horizontalAim.adjustAngleTrim(Degrees.of(HORIZONTAL_AIM_TRIM_STEP_DEGREES));
+        }));
+        engineersController.povUp().onTrue(Commands.runOnce(() -> {
+            adjustActiveIntakeAngle(-ACTIVE_INTAKE_ANGLE_STEP_DEGREES);
+        }));
+        engineersController.povDown().onTrue(Commands.runOnce(() -> {
+            adjustActiveIntakeAngle(ACTIVE_INTAKE_ANGLE_STEP_DEGREES);
         }));
         testController.povRight().onTrue(Commands.runOnce(() -> {
             if (!CommandScheduler.getInstance().isScheduled(dataCollectionCommand)) {
@@ -614,21 +617,12 @@ private Command showAllianceMarquee() {
             }
         }));
 
-        driversController.x().onTrue(showLights);
-        driversController.x().onFalse(showStatic);
         driversController.rightTrigger().whileTrue(
             snowblowToAllianceWithOperatorAimCommand
         );
         driversController.leftTrigger().whileTrue(
             scoreInHubCommand
         );
-
-        // Run SysId routines when holding back/start and X/Y.
-        // Note that each routine should be run exactly once in a single log.
-        driversController.back().and(driversController.y()).whileTrue(drivetrain.sysIdDynamic(Direction.kForward));
-        driversController.back().and(driversController.x()).whileTrue(drivetrain.sysIdDynamic(Direction.kReverse));
-        driversController.start().and(driversController.y()).whileTrue(drivetrain.sysIdQuasistatic(Direction.kForward));
-        driversController.start().and(driversController.x()).whileTrue(drivetrain.sysIdQuasistatic(Direction.kReverse));
 
         driveTuningController.a().whileTrue(createDriveTuningCommand(
                 DRIVE_TUNING_LOW_SPEED_METERS_PER_SECOND,
@@ -728,8 +722,7 @@ private Command showAllianceMarquee() {
                 pathPlannerAutoAssist.buildDriveRequest(
                         drivetrain,
                         chassisSpeeds,
-                        feedforwards,
-                        getShooterAzimuthTrimDegrees()));
+                        feedforwards));
     }
 
     public void resetPathPlannerAutoAssist() {
@@ -862,6 +855,7 @@ private Command showAllianceMarquee() {
     }
 
     double hoodTuneAngle = ShooterConstants.COMMANDED_MAXIMUM_ALLOWED_HOOD_ANGLE_DEGREES;
+    double activeIntakeAngleDegrees = DEFAULT_ACTIVE_INTAKE_ANGLE_DEGREES;
 
 
     private Angle getHoodTuningAngle() {
@@ -889,8 +883,8 @@ private Command showAllianceMarquee() {
         if (pathPlannerAutoAssist.isIntakeEnabled()) {
             return Degrees.of(PathPlannerAutoAssist.AUTO_INTAKE_DEPLOY_ANGLE_DEGREES);
         }
-        if (engineersController.a().getAsBoolean()) {
-            return Degrees.of(109.0);
+        if (isManualIntakeRequested()) {
+            return Degrees.of(activeIntakeAngleDegrees);
         }
         return Degrees.of(5.0);
     }
@@ -902,7 +896,12 @@ private Command showAllianceMarquee() {
         if (pathPlannerAutoAssist.isIntakeEnabled()) {
             return PathPlannerAutoAssist.AUTO_INTAKE_DRIVE_SPEED_IPS;
         }
-        return engineersController.a().getAsBoolean() ? 300.0 : 0.0;
+        return isManualIntakeRequested() ? 300.0 : 0.0;
+    }
+
+    private boolean isManualIntakeRequested() {
+        return engineersController.a().getAsBoolean()
+                || driversController.x().getAsBoolean();
     }
 
     private void adjustHoodTuneAngle(double deltaDegrees) {
@@ -919,23 +918,18 @@ private Command showAllianceMarquee() {
         // shooterTuneSpeedPublisher.set(shooterTuneSpeed);
     }
 
-    private double shooterAzimuthTrimDegrees = 0.0;
-
-    private double getShooterAzimuthTrimDegrees() {
-        return shooterAzimuthTrimDegrees;
-    }
-
-    private void adjustShooterAzimuthTrim(double deltaDegrees) {
-        shooterAzimuthTrimDegrees += deltaDegrees;
-        // Debug tuning telemetry disabled to reduce NetworkTables traffic.
-        // shooterAzimuthTrimPublisher.set(shooterAzimuthTrimDegrees);
+    private void adjustActiveIntakeAngle(double deltaDegrees) {
+        activeIntakeAngleDegrees = Math.max(
+                intakePosition.getMinimumAngle().in(Degrees),
+                Math.min(
+                        intakePosition.getMaximumAngle().in(Degrees),
+                        activeIntakeAngleDegrees + deltaDegrees));
     }
 
     public void publishTuningTelemetry() {
         // Debug tuning telemetry disabled to reduce NetworkTables traffic.
         // hoodTuneAnglePublisher.set(hoodTuneAngle);
         // shooterTuneSpeedPublisher.set(shooterTuneSpeed);
-        // shooterAzimuthTrimPublisher.set(shooterAzimuthTrimDegrees);
         // mainFlywheelMeasuredSpeedPublisher.set(shooter.getMainFlywheelSpeedIPS());
     }
 

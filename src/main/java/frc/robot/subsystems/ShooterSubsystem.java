@@ -127,7 +127,7 @@ public class ShooterSubsystem extends SubsystemBase {
     public void setIPS(double mainFlywheelIps, double kickerIps, double backspinIps) {
         mainFlywheel.setIPS(mainFlywheelIps);
         mirroredMainFlywheel.setIPS(mainFlywheelIps);
-        kicker.setIPS(kickerIps);
+        kicker.setIPS(kickerIps*.7);
         backspinFlywheel.setIPS(backspinIps);
     }
 

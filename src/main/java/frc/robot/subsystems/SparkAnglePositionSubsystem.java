@@ -89,6 +89,7 @@ public class SparkAnglePositionSubsystem extends SubsystemBase {
     // Runtime command state
     private Supplier<Angle> desiredAngleSupplier;
     private double lastSetAngleRotations;
+    private double manualTrimPublicAngleRotations = 0.0;
     private final ThrottlePrint outOfRangePrint = new ThrottlePrint(50);
     private boolean absoluteDriftMonitorEnabled = false;
     private String absoluteDriftMonitorLabel = "";
@@ -596,6 +597,36 @@ public class SparkAnglePositionSubsystem extends SubsystemBase {
     }
 
     /**
+     * Adjusts the subsystem's manual position trim in the public-angle frame.
+     *
+     * <p>This shifts the relative encoder position directly so the SparkMax soft
+     * limits and closed-loop setpoints remain aligned with the corrected
+     * mechanism calibration.
+     *
+     * @param deltaAngle public-angle trim increment to apply.
+     */
+    public void adjustAngleTrim(Angle deltaAngle) {
+        double deltaPublicRotations = deltaAngle.in(Rotations);
+        if (!Double.isFinite(deltaPublicRotations)
+                || Math.abs(deltaPublicRotations) <= ANGLE_CHANGE_THRESHOLD_ROTATIONS) {
+            return;
+        }
+
+        double deltaMechanismRotations = publicAngleDeltaToMechanismRotations(deltaPublicRotations);
+        manualTrimPublicAngleRotations += deltaPublicRotations;
+        if (configured) {
+            REVLibError status = encoder.setPosition(encoder.getPosition() + deltaMechanismRotations);
+            if (status != REVLibError.kOk) {
+                DriverStation.reportError(
+                        "[" + motorName + " | CAN " + canID
+                                + "] Failed to apply manual trim to relative encoder: " + status,
+                        false);
+            }
+        }
+        lastSetAngleRotations = Double.NaN;
+    }
+
+    /**
      * Returns the wrapped raw absolute-encoder position in rotations.
      *
      * <p>Because the Spark absolute encoder is configured zero-centered, the returned
@@ -646,7 +677,8 @@ public class SparkAnglePositionSubsystem extends SubsystemBase {
             return Rotations.of(Double.NaN);
         }
 
-        return Rotations.of(mechanismToPublicRotations(absoluteToMechanismRotations(absoluteEncoderRotations)));
+        return Rotations.of(mechanismToPublicRotations(
+                absoluteToMechanismRotations(absoluteEncoderRotations) + getManualTrimMechanismRotations()));
     }
 
     /**
@@ -676,7 +708,7 @@ public class SparkAnglePositionSubsystem extends SubsystemBase {
      * @return current motor rotations reported by the primary relative encoder.
      */
     public double getMotorPositionRotations() {
-        return encoder.getPosition() * mechanismGearRatio;
+        return (encoder.getPosition() - getManualTrimMechanismRotations()) * mechanismGearRatio;
     }
 
     /**
@@ -750,6 +782,7 @@ public class SparkAnglePositionSubsystem extends SubsystemBase {
         } else {
             initialMechanismRotations = 0.0;
         }
+        initialMechanismRotations += getManualTrimMechanismRotations();
         REVLibError setPositionStatus = encoder.setPosition(initialMechanismRotations);
         if (setPositionStatus != REVLibError.kOk) {
             DriverStation.reportError(
@@ -804,7 +837,8 @@ public class SparkAnglePositionSubsystem extends SubsystemBase {
             return;
         }
 
-        double targetMechanismRotations = absoluteToMechanismRotations(absoluteEncoderRotations);
+        double targetMechanismRotations =
+                absoluteToMechanismRotations(absoluteEncoderRotations) + getManualTrimMechanismRotations();
 
         if (targetMechanismRotations < minimumAngleRotations
                 || targetMechanismRotations > maximumAngleRotations) {
@@ -843,7 +877,8 @@ public class SparkAnglePositionSubsystem extends SubsystemBase {
             return;
         }
 
-        double relativeAbsoluteRotations = mechanismToAbsoluteRotations(relativeMechanismRotations);
+        double relativeAbsoluteRotations =
+                mechanismToAbsoluteRotations(relativeMechanismRotations - getManualTrimMechanismRotations());
         double wrappedRelativeAbsoluteRotations = MathUtil.inputModulus(
                 relativeAbsoluteRotations,
                 -0.5,
@@ -870,6 +905,14 @@ public class SparkAnglePositionSubsystem extends SubsystemBase {
 
     private double mechanismToAbsoluteRotations(double mechanismRotations) {
         return mechanismRotations * (mechanismGearRatio / absoluteEncoderGearRatio);
+    }
+
+    private double publicAngleDeltaToMechanismRotations(double publicAngleDeltaRotations) {
+        return publicToMechanismSlope * publicAngleDeltaRotations;
+    }
+
+    private double getManualTrimMechanismRotations() {
+        return publicAngleDeltaToMechanismRotations(manualTrimPublicAngleRotations);
     }
 
     private double publicToMechanismRotations(double publicAngleRotations) {

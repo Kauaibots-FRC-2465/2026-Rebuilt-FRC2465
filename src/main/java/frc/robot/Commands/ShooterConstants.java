@@ -13,7 +13,7 @@ public final class ShooterConstants {
         550.0, 555.0, 565.0, 600.0, 640.0, 680.0, 720.0, 760.0,
         800.0
     };
-    static final double COMMANDED_SHOOTER_LOOKAHEAD_SECONDS = 0.75;
+    static final double COMMANDED_SHOOTER_LOOKAHEAD_SECONDS = 0.1;
     static final double COMMANDED_SNOWBLOW_TARGET_ELEVATION_INCHES = 36.0;
     static final double COMMANDED_MOVING_SHOT_HOOD_SEARCH_STEP_DEGREES = 2.5;
     static final double COMMANDED_MOVING_SHOT_FIXED_FLYWHEEL_HOOD_SEARCH_STEP_DEGREES = 0.1;
@@ -21,6 +21,10 @@ public final class ShooterConstants {
     static final double COMMANDED_MOVING_SHOT_FLYWHEEL_PREDICTION_SECONDS = 0.02;
     static final double COMMANDED_MOVING_SHOT_FLYWHEEL_SPIN_UP_RATE_IPS_PER_SECOND = 600.0;
     static final double COMMANDED_MOVING_SHOT_FLYWHEEL_SPIN_DOWN_RATE_IPS_PER_SECOND = 1200.0;
+    static final double COMMANDED_EMPIRICAL_MOVING_SHOT_SHARED_SPEED_CENTER_BIAS = 0.10;
+    static final double COMMANDED_EMPIRICAL_MOVING_SHOT_TARGET_CONVERGENCE_INCHES = 2.0;
+    static final double COMMANDED_EMPIRICAL_MOVING_SHOT_TOF_CONVERGENCE_SECONDS = 0.01;
+    static final int COMMANDED_EMPIRICAL_MOVING_SHOT_MAX_ITERATIONS = 5;
     static final double COMMANDED_MAXIMUM_SHOOTING_HEIGHT_INCHES = 144.0;
     static final double COMMANDED_TEST_SHOOTING_MAXIMUM_HEIGHT_INCHES =
             COMMANDED_MAXIMUM_SHOOTING_HEIGHT_INCHES;
@@ -105,7 +109,7 @@ public final class ShooterConstants {
             COMMANDED_SCORE_IN_HUB_TARGET_ELEVATION_INCHES;
     static final double DATA_COLLECTION_SHORT_RANGE_MIN_DISTANCE_INCHES = 59.0;
     static final double DATA_COLLECTION_SHORT_RANGE_MAX_DISTANCE_INCHES = 218.0;
-    static final double DATA_COLLECTION_SHORT_RANGE_EMPIRICAL_MAX_DISTANCE_INCHES = 118.0;
+    static final double DATA_COLLECTION_SHORT_RANGE_EMPIRICAL_MAX_DISTANCE_INCHES = 230.0;
     static final double[] DATA_COLLECTION_SHORT_RANGE_DISTANCES_INCHES = {
         59.0, 74.0, 98.0, 122.0, 146.0, 170.0, 194.0, 218.0
     };
@@ -223,9 +227,10 @@ public final class ShooterConstants {
                 throw new IllegalStateException("Short-range data-collection distances must remain strictly increasing.");
             }
         }
-        if (DATA_COLLECTION_SHORT_RANGE_EMPIRICAL_MAX_DISTANCE_INCHES < DATA_COLLECTION_SHORT_RANGE_MIN_DISTANCE_INCHES
-                || DATA_COLLECTION_SHORT_RANGE_EMPIRICAL_MAX_DISTANCE_INCHES > DATA_COLLECTION_SHORT_RANGE_MAX_DISTANCE_INCHES) {
-            throw new IllegalStateException("Empirical short-range limit must fall inside the short-range table.");
+        if (DATA_COLLECTION_SHORT_RANGE_EMPIRICAL_MAX_DISTANCE_INCHES
+                < DATA_COLLECTION_SHORT_RANGE_MAX_DISTANCE_INCHES) {
+            throw new IllegalStateException(
+                    "Empirical short-range moving-shot limit must extend to at least the last measured row.");
         }
         for (int row = 0; row < DATA_COLLECTION_SHORT_RANGE_DISTANCES_INCHES.length; row++) {
             double[] hoodAnglesDegrees = DATA_COLLECTION_SHORT_RANGE_HOOD_ANGLES_DEGREES[row];
