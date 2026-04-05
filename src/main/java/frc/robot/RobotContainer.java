@@ -691,7 +691,9 @@ private Command showAllianceMarquee() {
     }
 
     public void publishGameplayTelemetry() {
-        GameplayDashboard.publishEngineersTarget(getEngineersTarget());
+        GameplayDashboard.publishEngineersTarget(
+                poseEstimatorSubsystem.getFusedPoseSupplier().get(),
+                getEngineersTarget());
     }
 
 }

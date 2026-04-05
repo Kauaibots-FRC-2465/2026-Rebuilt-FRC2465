@@ -1,38 +1,59 @@
 package frc.robot.utility;
 
+import java.util.List;
+
 import edu.wpi.first.math.geometry.Pose2d;
 import edu.wpi.first.math.geometry.Rotation2d;
 import edu.wpi.first.math.geometry.Translation2d;
-import edu.wpi.first.networktables.DoubleArrayPublisher;
+import edu.wpi.first.math.trajectory.Trajectory;
 import edu.wpi.first.networktables.NetworkTable;
 import edu.wpi.first.networktables.NetworkTableInstance;
-import edu.wpi.first.networktables.StringPublisher;
-import edu.wpi.first.networktables.StructPublisher;
+import edu.wpi.first.util.sendable.SendableRegistry;
+import edu.wpi.first.wpilibj.smartdashboard.Field2d;
+import edu.wpi.first.wpilibj.smartdashboard.SendableBuilderImpl;
 
 /**
  * Shared gameplay publishers.
  */
 public final class GameplayDashboard {
     private static final NetworkTable GAMEPLAY_TABLE = NetworkTableInstance.getDefault().getTable("Gameplay");
-    private static final NetworkTable ENGINEERS_TARGET_TABLE = GAMEPLAY_TABLE.getSubTable("engineersTarget");
-    private static final StructPublisher<Pose2d> ENGINEERS_TARGET_POSE_PUBLISHER =
-            GAMEPLAY_TABLE.getStructTopic("engineersTargetPose", Pose2d.struct).publish();
-    private static final DoubleArrayPublisher ENGINEERS_TARGET_FIELD_POSE_PUBLISHER =
-            ENGINEERS_TARGET_TABLE.getDoubleArrayTopic("robotPose").publish();
-    private static final StringPublisher ENGINEERS_TARGET_FIELD_TYPE_PUBLISHER =
-            ENGINEERS_TARGET_TABLE.getStringTopic(".type").publish();
-    private static final double[] ENGINEERS_TARGET_FIELD_POSE = new double[3];
+    private static final Field2d GAMEPLAY_FIELD = publishField("Field");
+    private static final String SNOWBLOW_TRAJECTORY_OBJECT_NAME = "snowblowTrajectory";
 
     private GameplayDashboard() {
     }
 
-    public static void publishEngineersTarget(Translation2d target) {
+    public static void publishEngineersTarget(Pose2d robotPose, Translation2d target) {
+        if (robotPose == null || target == null) {
+            GAMEPLAY_FIELD.getObject(SNOWBLOW_TRAJECTORY_OBJECT_NAME).setTrajectory(new Trajectory());
+            return;
+        }
+
         Pose2d targetPose = new Pose2d(target, new Rotation2d());
-        ENGINEERS_TARGET_POSE_PUBLISHER.set(targetPose);
-        ENGINEERS_TARGET_FIELD_TYPE_PUBLISHER.set("Field2d");
-        ENGINEERS_TARGET_FIELD_POSE[0] = target.getX();
-        ENGINEERS_TARGET_FIELD_POSE[1] = target.getY();
-        ENGINEERS_TARGET_FIELD_POSE[2] = 0.0;
-        ENGINEERS_TARGET_FIELD_POSE_PUBLISHER.set(ENGINEERS_TARGET_FIELD_POSE);
+        GAMEPLAY_FIELD.setRobotPose(robotPose);
+        GAMEPLAY_FIELD.getObject(SNOWBLOW_TRAJECTORY_OBJECT_NAME)
+                .setTrajectory(createEngineersTargetTrajectory(robotPose, targetPose));
+    }
+
+    private static Field2d publishField(String fieldName) {
+        Field2d field = new Field2d();
+        NetworkTable fieldTable = GAMEPLAY_TABLE.getSubTable(fieldName);
+        SendableBuilderImpl builder = new SendableBuilderImpl();
+        builder.setTable(fieldTable);
+        SendableRegistry.publish(field, builder);
+        builder.startListeners();
+        fieldTable.getEntry(".name").setString(fieldName);
+        return field;
+    }
+
+    private static Trajectory createEngineersTargetTrajectory(Pose2d robotPose, Pose2d targetPose) {
+        Translation2d delta = targetPose.getTranslation().minus(robotPose.getTranslation());
+        Rotation2d pathHeading = delta.getNorm() > 1e-9 ? delta.getAngle() : robotPose.getRotation();
+        Translation2d midpoint = robotPose.getTranslation().plus(delta.times(0.5));
+
+        return new Trajectory(List.of(
+                new Trajectory.State(0.0, 0.0, 0.0, new Pose2d(robotPose.getTranslation(), pathHeading), 0.0),
+                new Trajectory.State(0.5, 0.0, 0.0, new Pose2d(midpoint, pathHeading), 0.0),
+                new Trajectory.State(1.0, 0.0, 0.0, new Pose2d(targetPose.getTranslation(), pathHeading), 0.0)));
     }
 }

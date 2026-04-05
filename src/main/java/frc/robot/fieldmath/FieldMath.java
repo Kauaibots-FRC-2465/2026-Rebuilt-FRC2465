@@ -20,6 +20,20 @@ public final class FieldMath {
     private static final double TARGET_SIDE_INSET_METERS = Meters.convertFrom(2.0, Feet);
     private static final double ENGINEER_TARGET_SIDE_INSET_METERS = Meters.convertFrom(3.0, Feet);
     private static final double ENGINEER_TARGET_FORWARD_LIMIT_METERS = Meters.convertFrom(170.0, Inches);
+    private static final double ENGINEER_TARGET_FORWARD_HALF_RANGE_METERS =
+            ENGINEER_TARGET_FORWARD_LIMIT_METERS * 0.5;
+    private static final double ENGINEER_TARGET_LATERAL_HALF_RANGE_METERS =
+            (FIELD_WIDTH_METERS - 2.0 * ENGINEER_TARGET_SIDE_INSET_METERS) * 0.5;
+    private static final double ENGINEER_TARGET_JOYSTICK_LATERAL_LIMIT =
+            ENGINEER_TARGET_LATERAL_HALF_RANGE_METERS
+                    / Math.hypot(
+                            ENGINEER_TARGET_LATERAL_HALF_RANGE_METERS,
+                            ENGINEER_TARGET_FORWARD_HALF_RANGE_METERS);
+    private static final double ENGINEER_TARGET_JOYSTICK_FORWARD_LIMIT =
+            ENGINEER_TARGET_FORWARD_HALF_RANGE_METERS
+                    / Math.hypot(
+                            ENGINEER_TARGET_LATERAL_HALF_RANGE_METERS,
+                            ENGINEER_TARGET_FORWARD_HALF_RANGE_METERS);
     private static final double DIRECTION_SPEED_THRESHOLD_METERS_PER_SECOND = 0.05;
     private static final double DIRECTION_DISTANCE_THRESHOLD_METERS = 0.001;
     private static final double EPSILON = 1e-9;
@@ -135,13 +149,22 @@ public final class FieldMath {
      * `operatorLeftX = +1` selects the driver's right edge,
      * `operatorLeftY = -1` selects the forward edge 170 inches off the alliance wall,
      * and `operatorLeftY = +1` selects the alliance wall itself.
+     *
+     * <p>The joystick is modeled as a unit circle while the target area is rectangular.
+     * To make the whole rectangle reachable, a similar rectangle is inscribed inside
+     * the unit circle, the raw stick values are rescaled into that rectangle, and any
+     * remaining overtravel is clipped at the rectangle boundary.
      */
     public static Translation2d getEngineerTargetInAllianceZone(
             Alliance alliance,
             double operatorLeftX,
             double operatorLeftY) {
-        double normalizedOperatorLeftX = clamp(operatorLeftX, -1.0, 1.0);
-        double normalizedOperatorLeftY = clamp(operatorLeftY, -1.0, 1.0);
+        double normalizedOperatorLeftX = normalizeEngineerJoystickAxis(
+                operatorLeftX,
+                ENGINEER_TARGET_JOYSTICK_LATERAL_LIMIT);
+        double normalizedOperatorLeftY = normalizeEngineerJoystickAxis(
+                operatorLeftY,
+                ENGINEER_TARGET_JOYSTICK_FORWARD_LIMIT);
 
         double forwardInterpolation = (1.0 - normalizedOperatorLeftY) * 0.5;
         double lateralInterpolation = (normalizedOperatorLeftX + 1.0) * 0.5;
@@ -230,5 +253,12 @@ public final class FieldMath {
 
     private static double lerp(double start, double end, double t) {
         return start + (end - start) * t;
+    }
+
+    private static double normalizeEngineerJoystickAxis(double axisValue, double inscribedRectangleLimit) {
+        if (!(inscribedRectangleLimit > EPSILON)) {
+            return 0.0;
+        }
+        return clamp(axisValue / inscribedRectangleLimit, -1.0, 1.0);
     }
 }
