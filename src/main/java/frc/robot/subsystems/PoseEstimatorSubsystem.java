@@ -91,6 +91,7 @@ public class PoseEstimatorSubsystem extends SubsystemBase {
     private static final double SLOW_ODOMETRY_THRESHOLD_MS = 2.0;
     private static final double SLOW_VISION_THRESHOLD_MS = 2.0;
     private static final double SLOW_PREDICTION_THRESHOLD_MS = 3.0;
+    private static final int MAX_CONSECUTIVE_INVALID_ODOMETRY_CYCLES_BEFORE_CLEAR = 3;
 
     private static class PoseDashboardPublisher {
         private final StructPublisher<Pose2d> posePublisher;
@@ -312,6 +313,8 @@ public class PoseEstimatorSubsystem extends SubsystemBase {
     private long cachedPredictionEpoch = -1L;
     private double cachedPredictionLookaheadSeconds = Double.NaN;
     private final PredictedFusedState cachedPredictedState = new PredictedFusedState();
+    private String lastPredictionOutcome = "neverRun";
+    private int consecutiveInvalidOdometryCycles = 0;
 
     private final Supplier<Pose2d> fusedPoseSupplier = new Supplier<Pose2d>() {
         private final PredictedFusedState predictedState = new PredictedFusedState();
@@ -345,13 +348,17 @@ public class PoseEstimatorSubsystem extends SubsystemBase {
         boolean visionValid = visionIsValidSupplier.getAsBoolean();
 
         if (odometryValid) {
+            consecutiveInvalidOdometryCycles = 0;
             long odometryStartMicros = SlowCallMonitor.nowMicros();
             updateOdometry();
             odometryMicros = SlowCallMonitor.nowMicros() - odometryStartMicros;
         } else {
-            odometryHistory.clear();
-            priorPose = null;
-            priorHeading = null;
+            consecutiveInvalidOdometryCycles++;
+            if (consecutiveInvalidOdometryCycles >= MAX_CONSECUTIVE_INVALID_ODOMETRY_CYCLES_BEFORE_CLEAR) {
+                odometryHistory.clear();
+                priorPose = null;
+                priorHeading = null;
+            }
         }
 
         if (visionValid) {
@@ -712,6 +719,7 @@ public class PoseEstimatorSubsystem extends SubsystemBase {
         yVarianceOdometry = initialYVarianceOdometry;
         thetaVarianceOdometry = initialThetaVarianceOdometry;
         lastFusedVisionTimestamp = null;
+        consecutiveInvalidOdometryCycles = 0;
         invalidatePredictionCache();
     }
 
@@ -785,6 +793,7 @@ public class PoseEstimatorSubsystem extends SubsystemBase {
 
         if (timeBetweenLatestAndPriorOdometry < 0) {
             outcome = "nonMonotonicOdometry";
+            lastPredictionOutcome = outcome;
             throw new IllegalStateException(
                     "CRITICAL: Odometry timestamps are non-monotonic or duplicate. dt=" +
                             timeBetweenLatestAndPriorOdometry +
@@ -885,6 +894,10 @@ public class PoseEstimatorSubsystem extends SubsystemBase {
         return odometryTimestampSupplier; 
     }
 
+    public String getLastPredictionOutcome() {
+        return lastPredictionOutcome;
+    }
+
     private void invalidatePredictionCache() {
         predictionCacheEpoch++;
         cachedPredictionEpoch = -1L;
@@ -911,6 +924,7 @@ public class PoseEstimatorSubsystem extends SubsystemBase {
             long timeSinceLatestOdometry,
             long timeBetweenLatestAndPriorOdometry,
             boolean returnValue) {
+        lastPredictionOutcome = outcome;
         long totalMicros = SlowCallMonitor.nowMicros() - predictionStartMicros;
         if (SlowCallMonitor.isSlow(totalMicros, SLOW_PREDICTION_THRESHOLD_MS)) {
             SlowCallMonitor.print(
