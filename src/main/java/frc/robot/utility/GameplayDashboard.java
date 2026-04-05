@@ -8,6 +8,7 @@ import edu.wpi.first.math.geometry.Translation2d;
 import edu.wpi.first.math.trajectory.Trajectory;
 import edu.wpi.first.networktables.NetworkTable;
 import edu.wpi.first.networktables.NetworkTableInstance;
+import edu.wpi.first.util.sendable.Sendable;
 import edu.wpi.first.util.sendable.SendableRegistry;
 import edu.wpi.first.wpilibj.smartdashboard.Field2d;
 import edu.wpi.first.wpilibj.smartdashboard.SendableBuilderImpl;
@@ -33,6 +34,15 @@ public final class GameplayDashboard {
         GAMEPLAY_FIELD.setRobotPose(robotPose);
         GAMEPLAY_FIELD.getObject(SNOWBLOW_TRAJECTORY_OBJECT_NAME)
                 .setTrajectory(createEngineersTargetTrajectory(robotPose, targetPose));
+    }
+
+    public static void publishSendable(String name, Sendable sendable) {
+        NetworkTable sendableTable = GAMEPLAY_TABLE.getSubTable(name);
+        SendableBuilderImpl builder = new SendableBuilderImpl();
+        builder.setTable(sendableTable);
+        SendableRegistry.publish(sendable, builder);
+        builder.startListeners();
+        sendableTable.getEntry(".name").setString(name);
     }
 
     private static Field2d publishField(String fieldName) {

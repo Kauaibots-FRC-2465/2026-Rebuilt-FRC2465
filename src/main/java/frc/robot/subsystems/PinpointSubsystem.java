@@ -115,6 +115,10 @@ public class PinpointSubsystem extends SubsystemBase {
         return () -> {return pinpoint.getPosition();};
     }
 
+    public void setPosition(Pose2d pose) {
+        pinpoint.setPosition(pose);
+    }
+
     public DoubleSupplier getHeadingSupplier(AngleUnit angleUnit) {
         return () -> pinpoint.getHeading(angleUnit);
     }

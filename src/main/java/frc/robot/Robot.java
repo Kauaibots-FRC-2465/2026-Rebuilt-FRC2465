@@ -49,7 +49,9 @@ public class Robot extends TimedRobot {
     }
 
     @Override
-    public void disabledInit() {}
+    public void disabledInit() {
+        m_robotContainer.resetPathPlannerAutoAssist();
+    }
 
     @Override
     public void disabledPeriodic() {}
@@ -77,6 +79,7 @@ public class Robot extends TimedRobot {
         if (m_autonomousCommand != null) {
             CommandScheduler.getInstance().cancel(m_autonomousCommand);
         }
+        m_robotContainer.resetPathPlannerAutoAssist();
     }
 
     @Override

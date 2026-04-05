@@ -277,9 +277,12 @@ public class PoseEstimatorSubsystem extends SubsystemBase {
         visionXDeviationSupplier = config.visionXDeviation;
         visionYDeviationSupplier = config.visionYDeviation;
         visionThetaDeviationSupplier = config.visionThetaDeviation;
-        xVarianceOdometry = config.initialXDeviation * config.initialXDeviation;
-        yVarianceOdometry = config.initialYDeviation * config.initialYDeviation;
-        thetaVarianceOdometry = config.initialThetaDeviation * config.initialThetaDeviation;
+        initialXVarianceOdometry = config.initialXDeviation * config.initialXDeviation;
+        initialYVarianceOdometry = config.initialYDeviation * config.initialYDeviation;
+        initialThetaVarianceOdometry = config.initialThetaDeviation * config.initialThetaDeviation;
+        xVarianceOdometry = initialXVarianceOdometry;
+        yVarianceOdometry = initialYVarianceOdometry;
+        thetaVarianceOdometry = initialThetaVarianceOdometry;
         fusedAnchor = odometryAnchor = new Pose2d();
     }
 
@@ -298,6 +301,9 @@ public class PoseEstimatorSubsystem extends SubsystemBase {
     private final DoubleSupplier visionXDeviationSupplier;
     private final DoubleSupplier visionYDeviationSupplier;
     private final DoubleSupplier visionThetaDeviationSupplier;
+    private final double initialXVarianceOdometry;
+    private final double initialYVarianceOdometry;
+    private final double initialThetaVarianceOdometry;
     private Supplier<Pose2d> visionPoseSupplier;
     private Supplier<Time> visionTimestampSupplier;
     private BooleanSupplier visionIsValidSupplier;
@@ -680,6 +686,33 @@ public class PoseEstimatorSubsystem extends SubsystemBase {
      */
     public Supplier<Pose2d> getFusedPoseSupplier() {
         return fusedPoseSupplier;
+    }
+
+    public void resetPose(Pose2d pose) {
+        if (pose == null) {
+            throw new IllegalArgumentException("Reset pose must not be null.");
+        }
+
+        long latestTimestampMicros = RobotController.getFPGATime();
+        long priorTimestampMicros = latestTimestampMicros - 20_000L;
+
+        odometryHistory.clear();
+        odometryHistory.getScratchpad().pose = pose;
+        odometryHistory.getScratchpad().timestamp = priorTimestampMicros;
+        odometryHistory.add();
+        odometryHistory.getScratchpad().pose = pose;
+        odometryHistory.getScratchpad().timestamp = latestTimestampMicros;
+        odometryHistory.add();
+
+        odometryAnchor = pose;
+        fusedAnchor = pose;
+        priorPose = pose;
+        priorHeading = pose.getRotation();
+        xVarianceOdometry = initialXVarianceOdometry;
+        yVarianceOdometry = initialYVarianceOdometry;
+        thetaVarianceOdometry = initialThetaVarianceOdometry;
+        lastFusedVisionTimestamp = null;
+        invalidatePredictionCache();
     }
 
     public boolean getPredictedFusedState(double lookaheadSeconds, PredictedFusedState out) {

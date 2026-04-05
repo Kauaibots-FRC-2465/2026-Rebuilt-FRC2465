@@ -8,6 +8,8 @@ package frc.robot;
 import static edu.wpi.first.units.Units.*;
 
 import java.io.File;
+import java.util.Arrays;
+import java.util.Comparator;
 
 import com.ctre.phoenix6.swerve.SwerveModule.DriveRequestType;
 import com.revrobotics.spark.SparkLowLevel.MotorType;
@@ -21,6 +23,7 @@ import com.pathplanner.lib.commands.PathPlannerAuto;
 import com.pathplanner.lib.config.PIDConstants;
 import com.pathplanner.lib.config.RobotConfig;
 import com.pathplanner.lib.controllers.PPHolonomicDriveController;
+import com.pathplanner.lib.events.EventTrigger;
 import com.pathplanner.lib.util.DriveFeedforwards;
 
 import edu.wpi.first.math.geometry.Pose2d;
@@ -33,6 +36,7 @@ import edu.wpi.first.networktables.NetworkTableInstance;
 import edu.wpi.first.units.measure.Angle;
 import edu.wpi.first.wpilibj.DriverStation;
 import edu.wpi.first.wpilibj.Filesystem;
+import edu.wpi.first.wpilibj.smartdashboard.SendableChooser;
 import edu.wpi.first.wpilibj2.command.Command;
 import edu.wpi.first.wpilibj2.command.CommandScheduler;
 import edu.wpi.first.wpilibj2.command.Commands;
@@ -49,11 +53,13 @@ import frc.robot.Commands.Rebound;
 import frc.robot.Commands.DataCollectionCommand;
 import frc.robot.Commands.HoodRestPositionCharacterization;
 import frc.robot.Commands.HoodTimingCharacterization;
+import frc.robot.Commands.PathPlannerAutoAssist;
 import frc.robot.Commands.ShooterConstants;
 import frc.robot.Commands.TestShootingCommand;
 import frc.robot.fieldmath.FieldMath;
 import frc.robot.generated.TunerConstants;
 import frc.robot.subsystems.CommandSwerveDrivetrain;
+import frc.robot.subsystems.BatteryMonitorSubsystem;
 import frc.robot.subsystems.IntakePositionSubsystem;
 import frc.robot.subsystems.KrakenFlywheelSubsystem;
 import frc.robot.subsystems.LimelightSubsystem;
@@ -131,6 +137,7 @@ public class RobotContainer implements Subsystem {
 
     public final CommandSwerveDrivetrain drivetrain = TunerConstants.createDrivetrain();
     
+    private final BatteryMonitorSubsystem batteryMontior = new BatteryMonitorSubsystem();
     public final WLEDSubsystem wled = new WLEDSubsystem();
     private final Command showLights = wled.showMarquee( Filesystem.getDeployDirectory().getAbsolutePath() + File.separator + "Sprite-0001.bmp");
     private final Command showStatic = wled.showMarquee(Filesystem.getDeployDirectory().getAbsolutePath() + File.separator + "Sprite-0002.bmp");
@@ -180,6 +187,7 @@ private Command showAllianceMarquee() {
 
     public final PoseEstimatorSubsystem poseEstimatorSubsystem;
     public final PoseEstimatorSubsystem.Configuration poseEstimatorConfiguration = new PoseEstimatorSubsystem.Configuration();
+    private final PinpointSubsystem pinpointSubsystem;
 
     public final SwerveDrivetrainSubsystem encapsulatedDrivetrain;
 
@@ -195,6 +203,8 @@ private Command showAllianceMarquee() {
     private final TestShootingCommand testShootingCommand;
     private final ScoreInHub scoreInHubCommand;
     private final SnowblowToAllianceWithOperatorAim snowblowToAllianceWithOperatorAimCommand;
+    private final PathPlannerAutoAssist pathPlannerAutoAssist;
+    private final SendableChooser<Command> autoChooser;
     // CTRE CAN MAP
     // 11 Encoder for Front Left Swerve
     // 12 Encoder for Back Left Swerve
@@ -234,7 +244,7 @@ private Command showAllianceMarquee() {
         poseEstimatorConfiguration.odoLongitudinalDeviationPerDistance =
         poseEstimatorConfiguration.odoLongitudinalDeviationPerRadian = 0.01;
 
-        PinpointSubsystem pinpointSubsystem = new PinpointSubsystem(
+        pinpointSubsystem = new PinpointSubsystem(
             -6.0625 /*y of x-forward pod*/,
             -2.5 /*x of y- strafe pod*/,
             Inch,
@@ -425,6 +435,11 @@ private Command showAllianceMarquee() {
             this::getDriverDriveRequest,
             this::getShooterAzimuthTrimDegrees,
             this::getEngineersTarget);
+        pathPlannerAutoAssist = new PathPlannerAutoAssist(
+                poseEstimatorSubsystem,
+                horizontalAim,
+                verticalAim,
+                shooter);
         RobotConfig config = null;
         try{
         config = RobotConfig.fromGUISettings();
@@ -434,10 +449,10 @@ private Command showAllianceMarquee() {
         }
 
         AutoBuilder.configure(
-            poseEstimatorSubsystem.getFusedPoseSupplier(), // Robot pose supplier
-            (Pose2d $) -> {}, // Method to reset odometry (will be called if your auto has a starting pose)
+            this::getPathPlannerPose, // Robot pose supplier
+            this::resetAutonomousPose, // Method to reset odometry (will be called if your auto has a starting pose)
             () -> {return drivetrain.getState().Speeds;}, // ChassisSpeeds supplier. MUST BE ROBOT RELATIVE
-            (ChassisSpeeds chassisSpeeds, DriveFeedforwards feedforwards) -> drivetrain.applyRequest(() -> new SwerveRequest.FieldCentric().withVelocityX(chassisSpeeds.vxMetersPerSecond).withVelocityY(chassisSpeeds.vyMetersPerSecond)), // Method that will drive the robot given ROBOT RELATIVE ChassisSpeeds. Also optionally outputs individual module feedforwards
+            this::applyPathPlannerDrive, // Method that will drive the robot given ROBOT RELATIVE ChassisSpeeds. Also optionally outputs individual module feedforwards
             new PPHolonomicDriveController( // PPHolonomicController is the built in path following controller for holonomic drive trains
                     new PIDConstants(5.0, 0.0, 0.0), // Translation PID constants
                     new PIDConstants(5.0, 0.0, 0.0) // Rotation PID constants
@@ -447,16 +462,18 @@ private Command showAllianceMarquee() {
               // Boolean supplier that controls when the path will be mirrored for the red alliance
               // This will flip the path being followed to the red side of the field.
               // THE ORIGIN WILL REMAIN ON THE BLUE SIDE
-
               var alliance = DriverStation.getAlliance();
               if (alliance.isPresent()) {
                 return alliance.get() == DriverStation.Alliance.Red;
               }
               return false;
             },
-            this // Reference to this subsystem to set requirements
+            drivetrain // Reference to the drivetrain so auto interrupts the default drive command
     );
 
+        configurePathPlannerBindings();
+        autoChooser = buildAutoChooser();
+        GameplayDashboard.publishSendable("AutoChooser", autoChooser);
         //hi :D
         configureBindings();
         // Debug tuning telemetry disabled to reduce NetworkTables traffic.
@@ -477,22 +494,13 @@ private Command showAllianceMarquee() {
         );
 
         //shooter.setDefaultCommand(shooter.cmdSetCoupledIPSFactor(this::getShooterPower, 1500.0));
-        shooter.setDefaultCommand(shooter.cmdSetCoupledIPS(this::getTuningShooterPower));
+        shooter.setDefaultCommand(shooter.cmdSetCoupledIPS(this::getDesiredShooterIps));
 
-        intakePosition.setDefaultCommand(
-            intakePosition.cmdSetAngle(() -> Degrees.of(
-                CommandScheduler.getInstance().isScheduled(dataCollectionCommand)
-                    ? 80
-                    : engineersController.a().getAsBoolean() && !CommandScheduler.getInstance().isScheduled(dataCollectionCommand)
-                        ? 109
-                    : 5.0)));
-        intakedrive.setDefaultCommand(intakedrive.cmdSetIPS(() ->
-            engineersController.a().getAsBoolean() && !CommandScheduler.getInstance().isScheduled(dataCollectionCommand)
-                ? 300.0
-                : 0.0)); //600 max
+        intakePosition.setDefaultCommand(intakePosition.cmdSetAngle(this::getDesiredIntakeAngle));
+        intakedrive.setDefaultCommand(intakedrive.cmdSetIPS(this::getDesiredIntakeDriveIps)); //600 max
 
         //hood.setDefaultCommand(hood.cmdSetScaledAngle(engineersController::getLeftTriggerAxis));
-        verticalAim.setDefaultCommand(verticalAim.cmdSetAngle(this::getHoodTuningAngle));
+        verticalAim.setDefaultCommand(verticalAim.cmdSetAngle(this::getDesiredHoodAngle));
         testController.povUp().onTrue(Commands.runOnce(() -> {
             if (CommandScheduler.getInstance().isScheduled(testShootingCommand)) {
                 testShootingCommand.trimHoodUp();
@@ -605,18 +613,82 @@ private Command showAllianceMarquee() {
             })
         );
 
-        horizontalAim.setDefaultCommand(
-            horizontalAim.cmdSetAngle(() -> Degrees.of(0.0)));
+        horizontalAim.setDefaultCommand(horizontalAim.cmdSetAngle(this::getDesiredHorizontalAimAngle));
 
         drivetrain.registerTelemetry(logger::telemeterize);
     }
 
-    public Command getAutonomousCommand() {
-        //NamedCommands.registerCommand("spinIntake", new SequentialCommandGroup(shooter.cmdSetCoupledIPS(() -> 1000)));
-        //NamedCommands.registerCommand("deployIntake", exampleSubsystem.exampleCommand());
-        //NamedCommands.registerCommand("someOtherCommand", new SomeOtherCommand());
+    private void configurePathPlannerBindings() {
+        NamedCommands.registerCommand(
+                "EnableSnowblowToAlliance",
+                Commands.runOnce(pathPlannerAutoAssist::enableSnowblowToAlliance));
+        NamedCommands.registerCommand(
+                "DisableSnowblowToAlliance",
+                Commands.runOnce(pathPlannerAutoAssist::disableShotAssist));
+        NamedCommands.registerCommand(
+                "EnableScoreInHub",
+                Commands.runOnce(pathPlannerAutoAssist::enableScoreInHub));
+        NamedCommands.registerCommand(
+                "EnableShootInHub",
+                Commands.runOnce(pathPlannerAutoAssist::enableScoreInHub));
+        NamedCommands.registerCommand(
+                "DisableScoreInHub",
+                Commands.runOnce(pathPlannerAutoAssist::disableShotAssist));
+        NamedCommands.registerCommand(
+                "DisableShootInHub",
+                Commands.runOnce(pathPlannerAutoAssist::disableShotAssist));
+        NamedCommands.registerCommand(
+                "ActivateIntake",
+                Commands.runOnce(pathPlannerAutoAssist::activateIntake));
+        NamedCommands.registerCommand(
+                "DeactivateIntake",
+                Commands.runOnce(pathPlannerAutoAssist::deactivateIntake));
+        NamedCommands.registerCommand(
+                "DisableAutoShot",
+                Commands.runOnce(pathPlannerAutoAssist::disableShotAssist));
 
-        return new PathPlannerAuto("Plow");
+        new EventTrigger("snowblowToAlliance")
+                .onTrue(Commands.runOnce(pathPlannerAutoAssist::enableSnowblowToAlliance));
+        new EventTrigger("snowblowToAlliance")
+                .onFalse(Commands.runOnce(pathPlannerAutoAssist::disableShotAssist));
+        new EventTrigger("scoreInHub")
+                .onTrue(Commands.runOnce(pathPlannerAutoAssist::enableScoreInHub));
+        new EventTrigger("scoreInHub")
+                .onFalse(Commands.runOnce(pathPlannerAutoAssist::disableShotAssist));
+        new EventTrigger("shootInHub")
+                .onTrue(Commands.runOnce(pathPlannerAutoAssist::enableScoreInHub));
+        new EventTrigger("shootInHub")
+                .onFalse(Commands.runOnce(pathPlannerAutoAssist::disableShotAssist));
+        new EventTrigger("intake")
+                .onTrue(Commands.runOnce(pathPlannerAutoAssist::activateIntake));
+        new EventTrigger("intake")
+                .onFalse(Commands.runOnce(pathPlannerAutoAssist::deactivateIntake));
+    }
+
+    private void resetAutonomousPose(Pose2d pose) {
+        pinpointSubsystem.setPosition(pose);
+        poseEstimatorSubsystem.resetPose(pose);
+        drivetrain.resetPose(pose);
+    }
+
+    private void applyPathPlannerDrive(ChassisSpeeds chassisSpeeds, DriveFeedforwards feedforwards) {
+        drivetrain.setControl(
+                pathPlannerAutoAssist.buildDriveRequest(
+                        drivetrain,
+                        chassisSpeeds,
+                        feedforwards,
+                        getShooterAzimuthTrimDegrees()));
+    }
+
+    public void resetPathPlannerAutoAssist() {
+        pathPlannerAutoAssist.reset();
+    }
+
+    public Command getAutonomousCommand() {
+        Command selectedAuto = autoChooser.getSelected();
+        return Commands.sequence(
+                Commands.runOnce(this::resetPathPlannerAutoAssist),
+                selectedAuto != null ? selectedAuto : Commands.none());
     }
 
     private void schedule(Command command) {
@@ -637,6 +709,48 @@ private Command showAllianceMarquee() {
                 engineersController.getLeftY());
     }
 
+    private Pose2d getPathPlannerPose() {
+        return drivetrain.getState().Pose;
+    }
+
+    private SendableChooser<Command> buildAutoChooser() {
+        SendableChooser<Command> chooser = new SendableChooser<>();
+        File autoDirectory = new File(Filesystem.getDeployDirectory(), "pathplanner/autos");
+        File[] autoFiles = autoDirectory.listFiles((dir, name) -> name.endsWith(".auto"));
+
+        if (autoFiles == null || autoFiles.length == 0) {
+            chooser.setDefaultOption("None", Commands.none());
+            return chooser;
+        }
+
+        Arrays.sort(autoFiles, Comparator.comparing(File::getName, String.CASE_INSENSITIVE_ORDER));
+
+        String defaultAutoName = Arrays.stream(autoFiles)
+                .map(File::getName)
+                .map(fileName -> fileName.substring(0, fileName.lastIndexOf('.')))
+                .filter("Test"::equals)
+                .findFirst()
+                .orElseGet(() -> {
+                    String firstFileName = autoFiles[0].getName();
+                    return firstFileName.substring(0, firstFileName.lastIndexOf('.'));
+                });
+
+        for (File autoFile : autoFiles) {
+            String fileName = autoFile.getName();
+            String autoName = fileName.substring(0, fileName.lastIndexOf('.'));
+            Command autoCommand = new PathPlannerAuto(autoName);
+
+            if (defaultAutoName.equals(autoName)) {
+                chooser.setDefaultOption(autoName, autoCommand);
+            } else {
+                chooser.addOption(autoName, autoCommand);
+            }
+        }
+
+        chooser.addOption("None", Commands.none());
+        return chooser;
+    }
+
     private SwerveRequest getDriverDriveRequest() {
         return drive.withVelocityX(-driversController.getLeftY() * MaxSpeed)
                 .withVelocityY(-driversController.getLeftX() * MaxSpeed)
@@ -649,11 +763,55 @@ private Command showAllianceMarquee() {
         return shooterTuneSpeed;
     }
 
+    private double getDesiredShooterIps() {
+        if (pathPlannerAutoAssist.hasShotOutputsActive()) {
+            return pathPlannerAutoAssist.getCommandedFlywheelIps();
+        }
+        return getTuningShooterPower();
+    }
+
     double hoodTuneAngle = ShooterConstants.COMMANDED_MAXIMUM_ALLOWED_HOOD_ANGLE_DEGREES;
 
 
     private Angle getHoodTuningAngle() {
         return Degrees.of(hoodTuneAngle);
+    }
+
+    private Angle getDesiredHoodAngle() {
+        if (pathPlannerAutoAssist.hasShotOutputsActive()) {
+            return Degrees.of(pathPlannerAutoAssist.getCommandedHoodAngleDegrees());
+        }
+        return getHoodTuningAngle();
+    }
+
+    private Angle getDesiredHorizontalAimAngle() {
+        if (pathPlannerAutoAssist.hasShotOutputsActive()) {
+            return Degrees.of(pathPlannerAutoAssist.getCommandedTurretDeltaDegrees());
+        }
+        return Degrees.of(0.0);
+    }
+
+    private Angle getDesiredIntakeAngle() {
+        if (CommandScheduler.getInstance().isScheduled(dataCollectionCommand)) {
+            return Degrees.of(80.0);
+        }
+        if (pathPlannerAutoAssist.isIntakeEnabled()) {
+            return Degrees.of(PathPlannerAutoAssist.AUTO_INTAKE_DEPLOY_ANGLE_DEGREES);
+        }
+        if (engineersController.a().getAsBoolean()) {
+            return Degrees.of(109.0);
+        }
+        return Degrees.of(5.0);
+    }
+
+    private double getDesiredIntakeDriveIps() {
+        if (CommandScheduler.getInstance().isScheduled(dataCollectionCommand)) {
+            return 0.0;
+        }
+        if (pathPlannerAutoAssist.isIntakeEnabled()) {
+            return PathPlannerAutoAssist.AUTO_INTAKE_DRIVE_SPEED_IPS;
+        }
+        return engineersController.a().getAsBoolean() ? 300.0 : 0.0;
     }
 
     private void adjustHoodTuneAngle(double deltaDegrees) {
@@ -692,7 +850,7 @@ private Command showAllianceMarquee() {
 
     public void publishGameplayTelemetry() {
         GameplayDashboard.publishEngineersTarget(
-                poseEstimatorSubsystem.getFusedPoseSupplier().get(),
+                drivetrain.getState().Pose,
                 getEngineersTarget());
     }
 
