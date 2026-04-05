@@ -170,6 +170,26 @@ class MovingShotMathTest {
     }
 
     @Test
+    void commandTrackingErrorReportsOvershootAndUndershootIndependentOfDirection() {
+        assertEquals(
+                -1.0,
+                MovingShotMath.computeCommandTrackingError(70.0, 72.0, 71.0),
+                1e-9);
+        assertEquals(
+                -1.0,
+                MovingShotMath.computeCommandTrackingError(72.0, 70.0, 71.0),
+                1e-9);
+        assertEquals(
+                1.0,
+                MovingShotMath.computeCommandTrackingError(70.0, 72.0, 73.0),
+                1e-9);
+        assertEquals(
+                1.0,
+                MovingShotMath.computeCommandTrackingError(72.0, 70.0, 69.0),
+                1e-9);
+    }
+
+    @Test
     void randomEmpiricalShootOnTheFlyStatesReturnReasonableSolutions() {
         Random random = new Random(RANDOM_SHOOT_ON_THE_FLY_SEED);
         BallTrajectoryLookup.MovingShotSolution solution = new BallTrajectoryLookup.MovingShotSolution();

@@ -163,6 +163,24 @@ final class MovingShotMath {
                 Math.min(maxTurretAngleDegrees, turretDeltaDegrees));
     }
 
+    static double computeCommandTrackingError(
+            double previousMeasuredValue,
+            double previousTargetValue,
+            double currentMeasuredValue) {
+        if (!Double.isFinite(previousMeasuredValue)
+                || !Double.isFinite(previousTargetValue)
+                || !Double.isFinite(currentMeasuredValue)) {
+            return Double.NaN;
+        }
+
+        double desiredDelta = previousTargetValue - previousMeasuredValue;
+        double targetError = currentMeasuredValue - previousTargetValue;
+        if (Math.abs(desiredDelta) <= 1e-9) {
+            return Math.abs(targetError);
+        }
+        return Math.signum(desiredDelta) * targetError;
+    }
+
     static boolean solveIdealMovingShotWithUpperHoodFallback(
             SparkAnglePositionSubsystem verticalAim,
             double hoodAngleStepDegrees,
@@ -178,7 +196,7 @@ final class MovingShotMath {
             double preferredRobotHeadingRadians,
             double minTurretAngleDegrees,
             double maxTurretAngleDegrees,
-            double preferredFlywheelCommandIps,
+            double currentFlywheelSpeedIps,
             BallTrajectoryLookup.MovingShotSolution out) {
         Objects.requireNonNull(verticalAim, "verticalAim must not be null");
         Objects.requireNonNull(out, "out must not be null");
@@ -193,7 +211,7 @@ final class MovingShotMath {
         if (shouldUseEmpiricalHubMovingShotModel(targetDistanceInches, targetElevationInches)) {
             return solveEmpiricalMovingShotWithTimeOfFlight(
                     verticalAim.getAngle().in(edu.wpi.first.units.Units.Degrees),
-                    preferredFlywheelCommandIps,
+                    currentFlywheelSpeedIps,
                     futureRobotXMeters,
                     futureRobotYMeters,
                     futureRobotHeadingRadians,
@@ -575,7 +593,7 @@ final class MovingShotMath {
 
     private static boolean solveEmpiricalMovingShotWithTimeOfFlight(
             double preferredHoodAngleDegrees,
-            double preferredFlywheelCommandIps,
+            double currentFlywheelSpeedIps,
             double futureRobotXMeters,
             double futureRobotYMeters,
             double futureRobotHeadingRadians,
@@ -612,13 +630,29 @@ final class MovingShotMath {
                 iteration++) {
             double equivalentTargetDistanceInches =
                     Math.hypot(equivalentTargetDxInches, equivalentTargetDyInches);
+            double commandedFlywheelCommandIps =
+                    ShortRangeHubFlywheelLookup.getFallbackManifoldFlywheelCommandIps(
+                            equivalentTargetDistanceInches);
+            if (!Double.isFinite(commandedFlywheelCommandIps)) {
+                return false;
+            }
+            double predictedFlywheelCommandIps = predictFlywheelSpeedIps(
+                    currentFlywheelSpeedIps,
+                    commandedFlywheelCommandIps);
+            if (!Double.isFinite(predictedFlywheelCommandIps)) {
+                return false;
+            }
             if (!ShortRangeHubFlywheelLookup.findPreferredLegalShot(
                     equivalentTargetDistanceInches,
-                    preferredFlywheelCommandIps,
+                    predictedFlywheelCommandIps,
                     preferredHoodAngleDegrees,
                     candidate)) {
                 return false;
             }
+            candidate.set(
+                    candidate.getHoodAngleDegrees(),
+                    commandedFlywheelCommandIps,
+                    predictedFlywheelCommandIps);
 
             double flightTimeSeconds = BallTrajectoryLookup.getEstimatedTimeOfFlightSecondsForCommandedShot(
                     candidate.getHoodAngleDegrees(),

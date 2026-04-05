@@ -62,7 +62,7 @@ public final class BallTrajectoryLookup {
     static final double LUT_ELEVATION_STEP_INCHES =
             ShooterConstants.FITTED_BALL_TRAJECTORY_LUT_ELEVATION_STEP_INCHES;
     static final int LUT_ELEVATION_BIN_COUNT = LUT_MAX_TARGET_ELEVATION_FEET + 1;
-    private static volatile LookupTables lookupTables;
+    private static LookupTables lookupTables;
     private static final double MIN_EXIT_SPEED_IPS = 1.0;
     private static final double SOLVER_TOLERANCE_INCHES = 0.01;
     private static final double SOLVER_TOLERANCE_IPS = 0.01;
@@ -249,8 +249,11 @@ public final class BallTrajectoryLookup {
                 targetElevationInches);
     }
 
-    public static void preloadLookupTables() {
-        getLookupTables();
+    public static synchronized void preloadLookupTables() {
+        if (lookupTables != null) {
+            return;
+        }
+        lookupTables = loadLookupTablesFromDeploy();
     }
 
     public static double getMaximumBallZElevationInches(
@@ -1274,16 +1277,11 @@ public final class BallTrajectoryLookup {
 
     private static LookupTables getLookupTables() {
         LookupTables loadedLookupTables = lookupTables;
-        if (loadedLookupTables != null) {
-            return loadedLookupTables;
+        if (loadedLookupTables == null) {
+            throw new IllegalStateException(
+                    "Ball trajectory LUTs were not preloaded during robot startup.");
         }
-
-        synchronized (BallTrajectoryLookup.class) {
-            if (lookupTables == null) {
-                lookupTables = loadLookupTablesFromDeploy();
-            }
-            return lookupTables;
-        }
+        return loadedLookupTables;
     }
 
     private static LookupTables loadLookupTablesFromDeploy() {

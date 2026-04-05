@@ -17,6 +17,7 @@ import edu.wpi.first.math.geometry.Translation2d;
 import edu.wpi.first.math.kinematics.ChassisSpeeds;
 import edu.wpi.first.wpilibj.DriverStation;
 import frc.robot.fieldmath.FieldMath;
+import frc.robot.fieldmath.TravelWindowDirectionTracker;
 import frc.robot.subsystems.CommandSwerveDrivetrain;
 import frc.robot.subsystems.PoseEstimatorSubsystem;
 import frc.robot.subsystems.ShooterSubsystem;
@@ -62,6 +63,14 @@ public class PathPlannerAutoAssist {
     private double commandedHoodAngleDegrees =
             ShooterConstants.COMMANDED_MAXIMUM_ALLOWED_HOOD_ANGLE_DEGREES;
     private double commandedFlywheelIps = 0.0;
+    private final TravelWindowDirectionTracker preferredHeadingTracker =
+            new TravelWindowDirectionTracker(
+                    Meters.convertFrom(
+                            ShooterConstants.COMMANDED_PREFERRED_HEADING_TRAVEL_WINDOW_INCHES,
+                            Inches),
+                    Meters.convertFrom(
+                            ShooterConstants.COMMANDED_PREFERRED_HEADING_MIN_SAMPLE_SPACING_INCHES,
+                            Inches));
     private Translation2d lastFieldRelativeDriveDirection = new Translation2d();
 
     public PathPlannerAutoAssist(
@@ -85,6 +94,7 @@ public class PathPlannerAutoAssist {
         shotMode = ShotMode.OFF;
         intakeEnabled = false;
         clearShotOutputs();
+        preferredHeadingTracker.reset();
         lastFieldRelativeDriveDirection = new Translation2d();
     }
 
@@ -137,7 +147,7 @@ public class PathPlannerAutoAssist {
         Objects.requireNonNull(robotRelativeSpeeds, "robotRelativeSpeeds must not be null");
         Objects.requireNonNull(feedforwards, "feedforwards must not be null");
 
-        updateLastDriveDirection(robotRelativeSpeeds);
+        updateLastDriveDirection();
         if (shotMode == ShotMode.OFF) {
             clearShotOutputs();
             return buildPathFollowingRequest(robotRelativeSpeeds, feedforwards);
@@ -173,16 +183,13 @@ public class PathPlannerAutoAssist {
                 .withRotationalDeadband(0.0);
     }
 
-    private void updateLastDriveDirection(ChassisSpeeds robotRelativeSpeeds) {
+    private void updateLastDriveDirection() {
         Pose2d currentPose = poseEstimator.getFusedPoseSupplier().get();
         if (currentPose == null) {
             return;
         }
 
-        lastFieldRelativeDriveDirection = FieldMath.updateLastDriveDirection(
-                currentPose,
-                robotRelativeSpeeds,
-                lastFieldRelativeDriveDirection);
+        lastFieldRelativeDriveDirection = preferredHeadingTracker.update(currentPose.getTranslation());
     }
 
     private SwerveRequest buildPathFollowingRequest(

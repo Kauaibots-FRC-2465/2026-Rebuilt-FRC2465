@@ -18,6 +18,7 @@ import edu.wpi.first.networktables.NetworkTable;
 import edu.wpi.first.networktables.NetworkTableInstance;
 import edu.wpi.first.wpilibj2.command.Command;
 import frc.robot.fieldmath.FieldMath;
+import frc.robot.fieldmath.TravelWindowDirectionTracker;
 import frc.robot.subsystems.CommandSwerveDrivetrain;
 import frc.robot.subsystems.PoseEstimatorSubsystem;
 import frc.robot.subsystems.ShooterSubsystem;
@@ -57,6 +58,14 @@ public class SnowblowToAllianceWithOperatorAim extends Command {
             new BallTrajectoryLookup.MovingShotSolution();
     private final double[] futureFieldPose = new double[3];
     private final double[] futureFieldVelocity = new double[3];
+    private final TravelWindowDirectionTracker preferredHeadingTracker =
+            new TravelWindowDirectionTracker(
+                    Meters.convertFrom(
+                            ShooterConstants.COMMANDED_PREFERRED_HEADING_TRAVEL_WINDOW_INCHES,
+                            Inches),
+                    Meters.convertFrom(
+                            ShooterConstants.COMMANDED_PREFERRED_HEADING_MIN_SAMPLE_SPACING_INCHES,
+                            Inches));
     private Translation2d lastFieldRelativeDriveDirection = new Translation2d();
 
     public SnowblowToAllianceWithOperatorAim(
@@ -100,6 +109,8 @@ public class SnowblowToAllianceWithOperatorAim extends Command {
 
     @Override
     public void initialize() {
+        preferredHeadingTracker.reset();
+        lastFieldRelativeDriveDirection = new Translation2d();
     }
 
     @Override
@@ -111,7 +122,7 @@ public class SnowblowToAllianceWithOperatorAim extends Command {
             return;
         }
 
-        updateLastDriveDirection(fieldCentricRequest);
+        updateLastDriveDirection();
         if (!poseEstimator.getPredictedFusedState(
                 ShooterConstants.COMMANDED_SHOOTER_LOOKAHEAD_SECONDS,
                 futureState)) {
@@ -214,13 +225,12 @@ public class SnowblowToAllianceWithOperatorAim extends Command {
         return true;
     }
 
-    private void updateLastDriveDirection(SwerveRequest.FieldCentric fieldCentricRequest) {
-        Translation2d fieldRelativeVelocity = new Translation2d(
-                fieldCentricRequest.VelocityX,
-                fieldCentricRequest.VelocityY).rotateBy(drivetrain.getDriverPerspectiveForward());
-        lastFieldRelativeDriveDirection = FieldMath.updateLastDriveDirection(
-                fieldRelativeVelocity,
-                lastFieldRelativeDriveDirection);
+    private void updateLastDriveDirection() {
+        Pose2d currentPose = poseEstimator.getFusedPoseSupplier().get();
+        if (currentPose == null) {
+            return;
+        }
+        lastFieldRelativeDriveDirection = preferredHeadingTracker.update(currentPose.getTranslation());
     }
 
     private Rotation2d getPreferredRobotHeading(Rotation2d fallbackHeading) {

@@ -231,6 +231,8 @@ private Command showAllianceMarquee() {
     private final PathPlannerAutoAssist pathPlannerAutoAssist;
     private final SendableChooser<Command> autoChooser;
     private final Map<String, PointTowardsZoneTrigger> pointTowardsZoneTriggers = new HashMap<>();
+    private final Map<String, PathPlannerPath> preloadedPointTowardsPaths = new HashMap<>();
+    private final Map<String, PathPlannerPath> preloadedFlippedPointTowardsPaths = new HashMap<>();
     private final Set<String> failedPointTowardsPaths = new HashSet<>();
     // CTRE CAN MAP
     // 11 Encoder for Front Left Swerve
@@ -463,6 +465,7 @@ private Command showAllianceMarquee() {
             shooter,
             this::getDriverDriveRequest,
             this::getEngineersTarget);
+        preloadPointTowardsPaths();
         pathPlannerAutoAssist = new PathPlannerAutoAssist(
                 poseEstimatorSubsystem,
                 horizontalAim,
@@ -788,22 +791,20 @@ private Command showAllianceMarquee() {
             return null;
         }
 
-        try {
-            PathPlannerPath path = PathPlannerPath.fromPathFile(currentPathName);
-            if (AutoBuilder.shouldFlip() && !path.preventFlipping) {
-                path = path.flipPath();
-            }
-
-            for (var zone : path.getPointTowardsZones()) {
-                if (getPointTowardsZoneTrigger(zone.name()).getAsBoolean()) {
-                    return zone.targetPosition();
-                }
-            }
-        } catch (FileVersionException | ParseException | java.io.IOException e) {
+        PathPlannerPath path = getActivePreloadedPointTowardsPath(currentPathName);
+        if (path == null) {
             if (failedPointTowardsPaths.add(currentPathName)) {
                 DriverStation.reportWarning(
-                        "Failed to load point towards zones for path: " + currentPathName,
-                        e.getStackTrace());
+                        "Point towards zones were not preloaded for path: " + currentPathName,
+                        new StackTraceElement[0]);
+            }
+            return null;
+        }
+
+        for (var zone : path.getPointTowardsZones()) {
+            PointTowardsZoneTrigger trigger = getPointTowardsZoneTrigger(zone.name());
+            if (trigger != null && trigger.getAsBoolean()) {
+                return zone.targetPosition();
             }
         }
 
@@ -811,7 +812,51 @@ private Command showAllianceMarquee() {
     }
 
     private PointTowardsZoneTrigger getPointTowardsZoneTrigger(String zoneName) {
-        return pointTowardsZoneTriggers.computeIfAbsent(zoneName, PointTowardsZoneTrigger::new);
+        return pointTowardsZoneTriggers.get(zoneName);
+    }
+
+    private void preloadPointTowardsPaths() {
+        File pathDirectory = new File(Filesystem.getDeployDirectory(), "pathplanner/paths");
+        File[] pathFiles = pathDirectory.listFiles((dir, name) -> name.endsWith(".path"));
+        if (pathFiles == null || pathFiles.length == 0) {
+            return;
+        }
+
+        Arrays.sort(pathFiles, Comparator.comparing(File::getName, String.CASE_INSENSITIVE_ORDER));
+
+        for (File pathFile : pathFiles) {
+            String fileName = pathFile.getName();
+            String pathName = fileName.substring(0, fileName.lastIndexOf('.'));
+            try {
+                PathPlannerPath path = PathPlannerPath.fromPathFile(pathName);
+                PathPlannerPath flippedPath = path.preventFlipping ? path : path.flipPath();
+                preloadedPointTowardsPaths.put(pathName, path);
+                preloadedFlippedPointTowardsPaths.put(pathName, flippedPath);
+                preloadPointTowardsZoneTriggers(path);
+                preloadPointTowardsZoneTriggers(flippedPath);
+            } catch (FileVersionException | ParseException | java.io.IOException e) {
+                failedPointTowardsPaths.add(pathName);
+                DriverStation.reportWarning(
+                        "Failed to preload point towards zones for path: " + pathName,
+                        e.getStackTrace());
+            }
+        }
+    }
+
+    private void preloadPointTowardsZoneTriggers(PathPlannerPath path) {
+        for (var zone : path.getPointTowardsZones()) {
+            String zoneName = zone.name();
+            if (!pointTowardsZoneTriggers.containsKey(zoneName)) {
+                pointTowardsZoneTriggers.put(zoneName, new PointTowardsZoneTrigger(zoneName));
+            }
+        }
+    }
+
+    private PathPlannerPath getActivePreloadedPointTowardsPath(String currentPathName) {
+        if (AutoBuilder.shouldFlip()) {
+            return preloadedFlippedPointTowardsPaths.get(currentPathName);
+        }
+        return preloadedPointTowardsPaths.get(currentPathName);
     }
 
     private SendableChooser<Command> buildAutoChooser() {
