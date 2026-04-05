@@ -14,7 +14,7 @@ public final class ShooterConstants {
         800.0
     };
     static final double COMMANDED_SHOOTER_LOOKAHEAD_SECONDS = 0.2;
-    static final double COMMANDED_PREFERRED_HEADING_TRAVEL_WINDOW_INCHES = 3.It sti0;
+    static final double COMMANDED_PREFERRED_HEADING_TRAVEL_WINDOW_INCHES = 3.0;
     static final double COMMANDED_PREFERRED_HEADING_MIN_SAMPLE_SPACING_INCHES = 0.25;
     static final double COMMANDED_SNOWBLOW_TARGET_ELEVATION_INCHES = 36.0;
     static final double COMMANDED_MOVING_SHOT_HOOD_SEARCH_STEP_DEGREES = 2.5;

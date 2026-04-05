@@ -81,6 +81,14 @@ public class SnowblowToAllianceWithOperatorAim extends Command {
     private final IntegerPublisher tuningPredictionInvalidCountPublisher;
     private final IntegerPublisher tuningNoSolutionCountPublisher;
     private final IntegerPublisher tuningNonFieldCentricCountPublisher;
+    private final BooleanPublisher tuningOdometryValidPublisher;
+    private final IntegerPublisher tuningPredictionHistorySizePublisher;
+    private final IntegerPublisher tuningConsecutiveInvalidOdometryCyclesPublisher;
+    private final IntegerPublisher tuningLatestOdometryTimestampMicrosPublisher;
+    private final IntegerPublisher tuningPriorOdometryTimestampMicrosPublisher;
+    private final IntegerPublisher tuningTimeSinceLatestOdometryMicrosPublisher;
+    private final IntegerPublisher tuningTimeBetweenLatestAndPriorOdometryMicrosPublisher;
+    private final StringPublisher tuningOdometryHistoryResetReasonPublisher;
     private final PoseEstimatorSubsystem.PredictedFusedState futureState =
             new PoseEstimatorSubsystem.PredictedFusedState();
     private final BallTrajectoryLookup.MovingShotSolution idealMovingShotSolution =
@@ -161,6 +169,21 @@ public class SnowblowToAllianceWithOperatorAim extends Command {
         tuningNoSolutionCountPublisher = tuningSnowblowTable.getIntegerTopic("noSolutionCount").publish();
         tuningNonFieldCentricCountPublisher =
                 tuningSnowblowTable.getIntegerTopic("nonFieldCentricCount").publish();
+        tuningOdometryValidPublisher = tuningSnowblowTable.getBooleanTopic("odometryValid").publish();
+        tuningPredictionHistorySizePublisher =
+                tuningSnowblowTable.getIntegerTopic("predictionHistorySize").publish();
+        tuningConsecutiveInvalidOdometryCyclesPublisher =
+                tuningSnowblowTable.getIntegerTopic("consecutiveInvalidOdometryCycles").publish();
+        tuningLatestOdometryTimestampMicrosPublisher =
+                tuningSnowblowTable.getIntegerTopic("latestOdometryTimestampMicros").publish();
+        tuningPriorOdometryTimestampMicrosPublisher =
+                tuningSnowblowTable.getIntegerTopic("priorOdometryTimestampMicros").publish();
+        tuningTimeSinceLatestOdometryMicrosPublisher =
+                tuningSnowblowTable.getIntegerTopic("timeSinceLatestOdometryMicros").publish();
+        tuningTimeBetweenLatestAndPriorOdometryMicrosPublisher =
+                tuningSnowblowTable.getIntegerTopic("timeBetweenLatestAndPriorOdometryMicros").publish();
+        tuningOdometryHistoryResetReasonPublisher =
+                tuningSnowblowTable.getStringTopic("odometryHistoryResetReason").publish();
 
         facingAngleDrive.withHeadingPID(5.0, 0.0, 0.0);
         facingAngleDrive.HeadingController.enableContinuousInput(-Math.PI, Math.PI);
@@ -192,6 +215,7 @@ public class SnowblowToAllianceWithOperatorAim extends Command {
         lastValidHoodAngleDegrees = verticalAim.getAngle().in(Degrees);
         lastValidFlywheelCommandIps = 0.0;
         publishFailureCounters();
+        publishPredictionDiagnostics();
     }
 
     @Override
@@ -210,6 +234,7 @@ public class SnowblowToAllianceWithOperatorAim extends Command {
             tuningAppliedFlywheelCommandIpsPublisher.set(0.0);
             tuningMeasuredFlywheelSpeedIpsPublisher.set(shooter.getMainFlywheelSpeedIPS());
             publishFailureCounters();
+            publishPredictionDiagnostics();
             drivetrain.setControl(requestedDrive);
             return;
         }
@@ -236,6 +261,7 @@ public class SnowblowToAllianceWithOperatorAim extends Command {
                     hasLatchedShotCommand ? lastValidFlywheelCommandIps : 0.0);
             tuningMeasuredFlywheelSpeedIpsPublisher.set(shooter.getMainFlywheelSpeedIPS());
             publishFailureCounters();
+            publishPredictionDiagnostics();
             if (hasLatchedShotCommand) {
                 applyHeldShotCommand();
             }
@@ -244,6 +270,7 @@ public class SnowblowToAllianceWithOperatorAim extends Command {
         }
         tuningPredictedStateValidPublisher.set(true);
         tuningPredictionOutcomePublisher.set(poseEstimator.getLastPredictionOutcome());
+        publishPredictionDiagnostics();
         publishFutureState();
 
         Pose2d futurePose = new Pose2d(
@@ -319,6 +346,7 @@ public class SnowblowToAllianceWithOperatorAim extends Command {
         tuningSolveDetailPublisher.set(interrupted ? "ENDED_INTERRUPTED" : "ENDED_FINISHED");
         tuningAppliedFlywheelCommandIpsPublisher.set(0.0);
         tuningMeasuredFlywheelSpeedIpsPublisher.set(shooter.getMainFlywheelSpeedIPS());
+        publishPredictionDiagnostics();
     }
 
     private BallTrajectoryLookup.FixedFlywheelShotStatus updateShooterSolution(
@@ -432,5 +460,21 @@ public class SnowblowToAllianceWithOperatorAim extends Command {
         tuningPredictionInvalidCountPublisher.set(predictionInvalidCount);
         tuningNoSolutionCountPublisher.set(noSolutionCount);
         tuningNonFieldCentricCountPublisher.set(nonFieldCentricCount);
+    }
+
+    private void publishPredictionDiagnostics() {
+        tuningOdometryValidPublisher.set(poseEstimator.getLastOdometryValid());
+        tuningPredictionHistorySizePublisher.set(poseEstimator.getLastPredictionHistorySize());
+        tuningConsecutiveInvalidOdometryCyclesPublisher.set(poseEstimator.getConsecutiveInvalidOdometryCycles());
+        tuningLatestOdometryTimestampMicrosPublisher.set(
+                poseEstimator.getLastPredictionLatestOdometryTimestampMicros());
+        tuningPriorOdometryTimestampMicrosPublisher.set(
+                poseEstimator.getLastPredictionPriorOdometryTimestampMicros());
+        tuningTimeSinceLatestOdometryMicrosPublisher.set(
+                poseEstimator.getLastPredictionTimeSinceLatestOdometryMicros());
+        tuningTimeBetweenLatestAndPriorOdometryMicrosPublisher.set(
+                poseEstimator.getLastPredictionTimeBetweenLatestAndPriorOdometryMicros());
+        tuningOdometryHistoryResetReasonPublisher.set(
+                poseEstimator.getLastOdometryHistoryResetReason());
     }
 }

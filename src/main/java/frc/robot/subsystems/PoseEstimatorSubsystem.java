@@ -92,6 +92,7 @@ public class PoseEstimatorSubsystem extends SubsystemBase {
     private static final double SLOW_VISION_THRESHOLD_MS = 2.0;
     private static final double SLOW_PREDICTION_THRESHOLD_MS = 3.0;
     private static final int MAX_CONSECUTIVE_INVALID_ODOMETRY_CYCLES_BEFORE_CLEAR = 3;
+    private static final long MAX_PREDICTION_ODOMETRY_GAP_MICROS = 200_000L;
 
     private static class PoseDashboardPublisher {
         private final StructPublisher<Pose2d> posePublisher;
@@ -315,6 +316,13 @@ public class PoseEstimatorSubsystem extends SubsystemBase {
     private final PredictedFusedState cachedPredictedState = new PredictedFusedState();
     private String lastPredictionOutcome = "neverRun";
     private int consecutiveInvalidOdometryCycles = 0;
+    private boolean lastOdometryValid = false;
+    private int lastPredictionHistorySize = 0;
+    private long lastPredictionLatestOdometryTimestampMicros = -1L;
+    private long lastPredictionPriorOdometryTimestampMicros = -1L;
+    private long lastPredictionTimeSinceLatestOdometryMicros = -1L;
+    private long lastPredictionTimeBetweenLatestAndPriorOdometryMicros = -1L;
+    private String lastOdometryHistoryResetReason = "never";
 
     private final Supplier<Pose2d> fusedPoseSupplier = new Supplier<Pose2d>() {
         private final PredictedFusedState predictedState = new PredictedFusedState();
@@ -346,6 +354,7 @@ public class PoseEstimatorSubsystem extends SubsystemBase {
         long visionMicros = 0L;
         boolean odometryValid = odometryIsValidSupplier.getAsBoolean();
         boolean visionValid = visionIsValidSupplier.getAsBoolean();
+        lastOdometryValid = odometryValid;
 
         if (odometryValid) {
             consecutiveInvalidOdometryCycles = 0;
@@ -358,6 +367,7 @@ public class PoseEstimatorSubsystem extends SubsystemBase {
                 odometryHistory.clear();
                 priorPose = null;
                 priorHeading = null;
+                lastOdometryHistoryResetReason = "consecutiveInvalidOdometry";
             }
         }
 
@@ -574,6 +584,7 @@ public class PoseEstimatorSubsystem extends SubsystemBase {
                 odometryHistory.clear();
                 priorPose = null;
                 priorHeading = null;
+                lastOdometryHistoryResetReason = "timestampReversed";
             }
         }
 
@@ -720,6 +731,7 @@ public class PoseEstimatorSubsystem extends SubsystemBase {
         thetaVarianceOdometry = initialThetaVarianceOdometry;
         lastFusedVisionTimestamp = null;
         consecutiveInvalidOdometryCycles = 0;
+        lastOdometryHistoryResetReason = "resetPose";
         invalidatePredictionCache();
     }
 
@@ -794,6 +806,11 @@ public class PoseEstimatorSubsystem extends SubsystemBase {
         if (timeBetweenLatestAndPriorOdometry < 0) {
             outcome = "nonMonotonicOdometry";
             lastPredictionOutcome = outcome;
+            updatePredictionDiagnostics(
+                    latestOdometryTimestamp,
+                    priorOdometryTimestamp,
+                    timeSinceLatestOdometry,
+                    timeBetweenLatestAndPriorOdometry);
             throw new IllegalStateException(
                     "CRITICAL: Odometry timestamps are non-monotonic or duplicate. dt=" +
                             timeBetweenLatestAndPriorOdometry +
@@ -814,7 +831,7 @@ public class PoseEstimatorSubsystem extends SubsystemBase {
             cachePrediction(lookaheadSeconds, out);
             return result;
         }
-        if (timeBetweenLatestAndPriorOdometry > 50000) {
+        if (timeBetweenLatestAndPriorOdometry > MAX_PREDICTION_ODOMETRY_GAP_MICROS) {
             outcome = "odometryGap";
             out.setInvalid();
             boolean result = printSlowPredictionAndReturn(
@@ -898,6 +915,38 @@ public class PoseEstimatorSubsystem extends SubsystemBase {
         return lastPredictionOutcome;
     }
 
+    public boolean getLastOdometryValid() {
+        return lastOdometryValid;
+    }
+
+    public int getConsecutiveInvalidOdometryCycles() {
+        return consecutiveInvalidOdometryCycles;
+    }
+
+    public int getLastPredictionHistorySize() {
+        return lastPredictionHistorySize;
+    }
+
+    public long getLastPredictionLatestOdometryTimestampMicros() {
+        return lastPredictionLatestOdometryTimestampMicros;
+    }
+
+    public long getLastPredictionPriorOdometryTimestampMicros() {
+        return lastPredictionPriorOdometryTimestampMicros;
+    }
+
+    public long getLastPredictionTimeSinceLatestOdometryMicros() {
+        return lastPredictionTimeSinceLatestOdometryMicros;
+    }
+
+    public long getLastPredictionTimeBetweenLatestAndPriorOdometryMicros() {
+        return lastPredictionTimeBetweenLatestAndPriorOdometryMicros;
+    }
+
+    public String getLastOdometryHistoryResetReason() {
+        return lastOdometryHistoryResetReason;
+    }
+
     private void invalidatePredictionCache() {
         predictionCacheEpoch++;
         cachedPredictionEpoch = -1L;
@@ -915,6 +964,19 @@ public class PoseEstimatorSubsystem extends SubsystemBase {
         return Math.round(timestamp.in(Microseconds));
     }
 
+    private void updatePredictionDiagnostics(
+            long latestOdometryTimestamp,
+            long priorOdometryTimestamp,
+            long timeSinceLatestOdometry,
+            long timeBetweenLatestAndPriorOdometry) {
+        lastPredictionHistorySize = odometryHistory.size();
+        lastPredictionLatestOdometryTimestampMicros = latestOdometryTimestamp;
+        lastPredictionPriorOdometryTimestampMicros = priorOdometryTimestamp;
+        lastPredictionTimeSinceLatestOdometryMicros = timeSinceLatestOdometry;
+        lastPredictionTimeBetweenLatestAndPriorOdometryMicros =
+                timeBetweenLatestAndPriorOdometry;
+    }
+
     private boolean printSlowPredictionAndReturn(
             long predictionStartMicros,
             double lookaheadSeconds,
@@ -925,6 +987,11 @@ public class PoseEstimatorSubsystem extends SubsystemBase {
             long timeBetweenLatestAndPriorOdometry,
             boolean returnValue) {
         lastPredictionOutcome = outcome;
+        updatePredictionDiagnostics(
+                latestOdometryTimestamp,
+                priorOdometryTimestamp,
+                timeSinceLatestOdometry,
+                timeBetweenLatestAndPriorOdometry);
         long totalMicros = SlowCallMonitor.nowMicros() - predictionStartMicros;
         if (SlowCallMonitor.isSlow(totalMicros, SLOW_PREDICTION_THRESHOLD_MS)) {
             SlowCallMonitor.print(
