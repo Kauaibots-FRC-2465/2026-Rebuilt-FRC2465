@@ -22,6 +22,7 @@ import com.revrobotics.spark.config.SparkBaseConfig.IdleMode;
 //import com.revrobotics.spark.SparkMax;
 import com.ctre.phoenix6.swerve.SwerveRequest;
 import com.pathplanner.lib.auto.AutoBuilder;
+import com.pathplanner.lib.auto.NamedCommands;
 import com.pathplanner.lib.commands.PathPlannerAuto;
 import com.pathplanner.lib.config.PIDConstants;
 import com.pathplanner.lib.config.RobotConfig;
@@ -404,7 +405,9 @@ private Command showAllianceMarquee() {
             2.7,
             0.0095,
             2,
-            30),
+            30,
+            false,
+            MAIN_FLYWHEEL_VELOCITY_SAMPLE_WINDOW_SECONDS),
           new ShooterSubsystem.FlywheelConfig(
             MotorData.BACKSPIN.id,
             MotorData.BACKSPIN.name,
@@ -425,7 +428,9 @@ private Command showAllianceMarquee() {
           2.3,                        // | kS
           0.013,                       // | kV 
           2,                          // | kP
-          20                 // | Peak current
+          20,                 // | Peak current
+          false,
+          MAIN_FLYWHEEL_VELOCITY_SAMPLE_WINDOW_SECONDS
         );
         dataCollectionCommand = new DataCollectionCommand(
                 poseEstimatorSubsystem,
@@ -697,6 +702,25 @@ private Command showAllianceMarquee() {
     }
 
     private void configurePathPlannerBindings() {
+        NamedCommands.registerCommand(
+                "EnableSnowblowToAlliance",
+                Commands.runOnce(pathPlannerAutoAssist::enableSnowblowToAlliance));
+        NamedCommands.registerCommand(
+                "DisableSnowblowToAlliance",
+                Commands.runOnce(pathPlannerAutoAssist::disableShotAssist));
+        NamedCommands.registerCommand(
+                "EnableScoreInHub",
+                Commands.runOnce(pathPlannerAutoAssist::enableScoreInHub));
+        NamedCommands.registerCommand(
+                "DisableScoreInHub",
+                Commands.runOnce(pathPlannerAutoAssist::disableShotAssist));
+        NamedCommands.registerCommand(
+                "EnableIntake",
+                Commands.runOnce(pathPlannerAutoAssist::activateIntake));
+        NamedCommands.registerCommand(
+                "DisableIntake",
+                Commands.runOnce(pathPlannerAutoAssist::deactivateIntake));
+
         new EventTrigger("SnowblowToAlliance")
                 .onTrue(Commands.runOnce(pathPlannerAutoAssist::enableSnowblowToAlliance));
         new EventTrigger("SnowblowToAlliance")
