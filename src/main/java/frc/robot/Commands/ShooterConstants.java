@@ -12,7 +12,7 @@ public final class ShooterConstants {
         405.0, 415.0, 425.0, 435.0, 460.0, 470.0, 475.0, 495.0,
         550.0, 555.0, 565.0, 600.0, 640.0, 680.0, 720.0, 760.0,
         800.0
-    };
+    }; 
     static final double COMMANDED_SHOOTER_LOOKAHEAD_SECONDS = 0.2;
     static final double COMMANDED_PREFERRED_HEADING_TRAVEL_WINDOW_INCHES = 3.0;
     static final double COMMANDED_PREFERRED_HEADING_MIN_SAMPLE_SPACING_INCHES = 0.25;
