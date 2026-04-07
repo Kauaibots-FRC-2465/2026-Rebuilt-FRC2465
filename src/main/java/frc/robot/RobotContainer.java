@@ -410,7 +410,7 @@ private Command showAllianceMarquee() {
             0.0095,
             2,
             30,
-            false,
+            true,
             MAIN_FLYWHEEL_VELOCITY_SAMPLE_WINDOW_SECONDS),
           new ShooterSubsystem.FlywheelConfig(
             MotorData.BACKSPIN.id,
