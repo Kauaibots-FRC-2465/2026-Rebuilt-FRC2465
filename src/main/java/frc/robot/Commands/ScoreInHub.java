@@ -23,6 +23,7 @@ import edu.wpi.first.wpilibj.Timer;
 import edu.wpi.first.wpilibj2.command.Command;
 import frc.robot.fieldmath.FieldMath;
 import frc.robot.subsystems.CommandSwerveDrivetrain;
+import frc.robot.subsystems.PinpointSubsystem;
 import frc.robot.subsystems.PoseEstimatorSubsystem;
 import frc.robot.subsystems.ShooterSubsystem;
 import frc.robot.subsystems.SparkAnglePositionSubsystem;
@@ -40,8 +41,13 @@ public class ScoreInHub extends Command {
     private static final double TRANSIENT_SOLUTION_HOLD_SECONDS = 0.25;
     private static final boolean ENABLE_SPEED_UP_ACCELERATION_LIMIT = false;
     private static final double SPEED_UP_ACCELERATION_LIMIT_METERS_PER_SECOND_SQUARED = 0.1524;
+    private static final double MAX_ACTIVE_TRANSLATIONAL_SPEED_METERS_PER_SECOND = 0.5;
+    private static final double RADIAL_SPEED_LIMIT_VIABLE_MARGIN = 0.90;
+    private static final double RADIAL_SPEED_LIMIT_SEARCH_TOLERANCE_METERS_PER_SECOND = 0.02;
+    private static final int RADIAL_SPEED_LIMIT_SEARCH_MAX_ITERATIONS = 10;
 
     private final CommandSwerveDrivetrain drivetrain;
+    private final PinpointSubsystem pinpointSubsystem;
     private final PoseEstimatorSubsystem poseEstimator;
     private final SparkAnglePositionSubsystem horizontalAim;
     private final SparkAnglePositionSubsystem verticalAim;
@@ -60,6 +66,16 @@ public class ScoreInHub extends Command {
     private final DoublePublisher robotHeadingDegreesPublisher;
     private final DoublePublisher hoodTrackingErrorDegreesPublisher;
     private final DoublePublisher flywheelPredictionErrorIpsPublisher;
+    private final DoublePublisher tuningPredictedVelocityXMetersPerSecondPublisher;
+    private final DoublePublisher tuningPredictedVelocityYMetersPerSecondPublisher;
+    private final DoublePublisher tuningPredictedOmegaRadiansPerSecondPublisher;
+    private final DoublePublisher tuningPinpointVelocityXMetersPerSecondPublisher;
+    private final DoublePublisher tuningPinpointVelocityYMetersPerSecondPublisher;
+    private final DoublePublisher tuningPinpointOmegaRadiansPerSecondPublisher;
+    private final DoublePublisher tuningLookupTargetDistanceInchesPublisher;
+    private final DoublePublisher tuningSelectedHoodAngleDegreesPublisher;
+    private final DoublePublisher tuningModeledFlywheelCommandIpsPublisher;
+    private final DoublePublisher tuningCommandedFlywheelCommandIpsPublisher;
     private final edu.wpi.first.networktables.DoubleArrayPublisher futurePosePublisher;
     private final edu.wpi.first.networktables.DoubleArrayPublisher futureVelocityPublisher;
     private final BooleanPublisher validSolutionPublisher;
@@ -70,6 +86,10 @@ public class ScoreInHub extends Command {
             new BallTrajectoryLookup.MovingShotSolution();
     private final BallTrajectoryLookup.MovingShotSolution movingShotSolution =
             new BallTrajectoryLookup.MovingShotSolution();
+    private final BallTrajectoryLookup.MovingShotSolution radialSpeedLimitSearchSolution =
+            new BallTrajectoryLookup.MovingShotSolution();
+    private final MovingShotMath.EmpiricalMovingShotDebugInfo empiricalDebugInfo =
+            new MovingShotMath.EmpiricalMovingShotDebugInfo();
     private final double[] futureFieldPose = new double[3];
     private final double[] futureFieldVelocity = new double[3];
     private Rotation2d lastValidRobotHeadingTarget = new Rotation2d();
@@ -78,6 +98,8 @@ public class ScoreInHub extends Command {
     private double lastValidSolutionTimestampSeconds = Double.NEGATIVE_INFINITY;
     private boolean hasLatchedValidSolution = false;
     private double lastVelocityLimitTimestampSeconds = Double.NaN;
+    private double latchedMaximumTowardHubRadialSpeedMetersPerSecond = Double.POSITIVE_INFINITY;
+    private double lastCommandedFlywheelSetpointIps = 0.0;
     private double previousCycleMeasuredHoodAngleDegrees = Double.NaN;
     private double previousCycleCommandedHoodAngleDegrees = Double.NaN;
     private double previousCycleMeasuredFlywheelSpeedIps = Double.NaN;
@@ -85,12 +107,14 @@ public class ScoreInHub extends Command {
 
     public ScoreInHub(
             CommandSwerveDrivetrain drivetrain,
+            PinpointSubsystem pinpointSubsystem,
             PoseEstimatorSubsystem poseEstimator,
             SparkAnglePositionSubsystem horizontalAim,
             SparkAnglePositionSubsystem verticalAim,
             ShooterSubsystem shooter,
             Supplier<SwerveRequest> driveRequestSupplier) {
         this.drivetrain = Objects.requireNonNull(drivetrain, "drivetrain must not be null");
+        this.pinpointSubsystem = Objects.requireNonNull(pinpointSubsystem, "pinpointSubsystem must not be null");
         this.poseEstimator = Objects.requireNonNull(poseEstimator, "poseEstimator must not be null");
         this.horizontalAim = Objects.requireNonNull(horizontalAim, "horizontalAim must not be null");
         this.verticalAim = Objects.requireNonNull(verticalAim, "verticalAim must not be null");
@@ -114,6 +138,31 @@ public class ScoreInHub extends Command {
         futureVelocityPublisher = scoreTable.getDoubleArrayTopic("futureVelocity").publish();
         validSolutionPublisher = scoreTable.getBooleanTopic("validSolution").publish();
         fieldTypePublisher = scoreTable.getStringTopic(".type").publish();
+        NetworkTable tuningScoreTable =
+                NetworkTableInstance.getDefault().getTable("Tuning").getSubTable("ScoreInHub");
+        tuningPredictedVelocityXMetersPerSecondPublisher =
+                tuningScoreTable.getDoubleTopic("predictedVelocityXMetersPerSecond").publish();
+        tuningPredictedVelocityYMetersPerSecondPublisher =
+                tuningScoreTable.getDoubleTopic("predictedVelocityYMetersPerSecond").publish();
+        tuningPredictedOmegaRadiansPerSecondPublisher =
+                tuningScoreTable.getDoubleTopic("predictedOmegaRadiansPerSecond").publish();
+        tuningPinpointVelocityXMetersPerSecondPublisher =
+                tuningScoreTable.getDoubleTopic("pinpointVelocityXMetersPerSecond").publish();
+        tuningPinpointVelocityYMetersPerSecondPublisher =
+                tuningScoreTable.getDoubleTopic("pinpointVelocityYMetersPerSecond").publish();
+        tuningPinpointOmegaRadiansPerSecondPublisher =
+                tuningScoreTable.getDoubleTopic("pinpointOmegaRadiansPerSecond").publish();
+        tuningLookupTargetDistanceInchesPublisher =
+                tuningScoreTable.getDoubleTopic("lookupTargetDistanceInches").publish();
+        tuningSelectedHoodAngleDegreesPublisher =
+                tuningScoreTable.getDoubleTopic("selectedHoodAngleDegrees").publish();
+        tuningModeledFlywheelCommandIpsPublisher =
+                tuningScoreTable.getDoubleTopic("modeledFlywheelCommandIps").publish();
+        tuningCommandedFlywheelCommandIpsPublisher =
+                tuningScoreTable.getDoubleTopic("commandedFlywheelCommandIps").publish();
+        publishPredictedVelocityTelemetry(Double.NaN, Double.NaN, Double.NaN);
+        publishPinpointVelocityTelemetry(Double.NaN, Double.NaN, Double.NaN);
+        publishEmpiricalSolverTelemetry();
         // Debug dashboard telemetry disabled to reduce NetworkTables traffic.
         // fieldTypePublisher.set("Field2d");
 
@@ -126,12 +175,18 @@ public class ScoreInHub extends Command {
     @Override
     public void initialize() {
         lastVelocityLimitTimestampSeconds = Double.NaN;
+        latchedMaximumTowardHubRadialSpeedMetersPerSecond = Double.POSITIVE_INFINITY;
+        lastCommandedFlywheelSetpointIps = shooter.getMainFlywheelSpeedIPS();
         previousCycleMeasuredHoodAngleDegrees = Double.NaN;
         previousCycleCommandedHoodAngleDegrees = Double.NaN;
         previousCycleMeasuredFlywheelSpeedIps = Double.NaN;
         previousCyclePredictedFlywheelSpeedIps = Double.NaN;
         hoodTrackingErrorDegreesPublisher.set(Double.NaN);
         flywheelPredictionErrorIpsPublisher.set(Double.NaN);
+        publishPredictedVelocityTelemetry(Double.NaN, Double.NaN, Double.NaN);
+        publishPinpointVelocityTelemetry(Double.NaN, Double.NaN, Double.NaN);
+        empiricalDebugInfo.invalidate();
+        publishEmpiricalSolverTelemetry();
     }
 
     @Override
@@ -145,6 +200,10 @@ public class ScoreInHub extends Command {
         SwerveRequest requestedDrive = driveRequestSupplier.get();
         if (!(requestedDrive instanceof SwerveRequest.FieldCentric fieldCentricRequest)) {
             clearSolutionTelemetry();
+            publishPredictedVelocityTelemetry(Double.NaN, Double.NaN, Double.NaN);
+            publishCurrentPinpointVelocityTelemetry();
+            empiricalDebugInfo.invalidate();
+            publishEmpiricalSolverTelemetry();
             drivetrain.setControl(requestedDrive);
             long totalMicros = SlowCallMonitor.nowMicros() - executeStartMicros;
             if (SlowCallMonitor.isSlow(totalMicros, SLOW_EXECUTE_THRESHOLD_MS)) {
@@ -157,14 +216,11 @@ public class ScoreInHub extends Command {
         }
 
         publishTrackingDiagnostics();
+        publishCurrentPinpointVelocityTelemetry();
 
+        Translation2d requestedVelocityMetersPerSecond = limitTranslationalAcceleration(fieldCentricRequest);
         double limitedVelocityXMetersPerSecond;
         double limitedVelocityYMetersPerSecond;
-        {
-            Translation2d limitedVelocity = limitTranslationalAcceleration(fieldCentricRequest);
-            limitedVelocityXMetersPerSecond = limitedVelocity.getX();
-            limitedVelocityYMetersPerSecond = limitedVelocity.getY();
-        }
 
         long predictionStartMicros = SlowCallMonitor.nowMicros();
         if (!poseEstimator.getPredictedFusedState(
@@ -172,6 +228,16 @@ public class ScoreInHub extends Command {
                 futureState)) {
             predictionMicros = SlowCallMonitor.nowMicros() - predictionStartMicros;
             clearSolutionTelemetry();
+            publishPredictedVelocityTelemetry(Double.NaN, Double.NaN, Double.NaN);
+            empiricalDebugInfo.invalidate();
+            publishEmpiricalSolverTelemetry();
+            Translation2d fallbackVelocityMetersPerSecond = clampTowardHubRadialSpeed(
+                    requestedVelocityMetersPerSecond,
+                    getCurrentRobotPosition(),
+                    target,
+                    MAX_ACTIVE_TRANSLATIONAL_SPEED_METERS_PER_SECOND);
+            limitedVelocityXMetersPerSecond = fallbackVelocityMetersPerSecond.getX();
+            limitedVelocityYMetersPerSecond = fallbackVelocityMetersPerSecond.getY();
             boolean holdingLastSolution = shouldHoldLastSolution();
             if (holdingLastSolution) {
                 applyHeldShotCommand(
@@ -180,7 +246,10 @@ public class ScoreInHub extends Command {
                         limitedVelocityYMetersPerSecond);
             } else {
                 applyNoSolutionShotCommand(getCurrentRobotPosition(), target);
-                drivetrain.setControl(requestedDrive);
+                drivetrain.setControl(
+                        fieldCentricRequest
+                                .withVelocityX(limitedVelocityXMetersPerSecond)
+                                .withVelocityY(limitedVelocityYMetersPerSecond));
             }
             long totalMicros = SlowCallMonitor.nowMicros() - executeStartMicros;
             if (SlowCallMonitor.isSlow(totalMicros, SLOW_EXECUTE_THRESHOLD_MS)
@@ -197,6 +266,10 @@ public class ScoreInHub extends Command {
             return;
         }
         predictionMicros = SlowCallMonitor.nowMicros() - predictionStartMicros;
+        publishPredictedVelocityTelemetry(
+                futureState.vxMetersPerSecond,
+                futureState.vyMetersPerSecond,
+                futureState.omegaRadiansPerSecond);
         publishFutureState();
 
         Pose2d futurePose = new Pose2d(
@@ -209,6 +282,13 @@ public class ScoreInHub extends Command {
                 futurePose.getTranslation(),
                 target,
                 futurePose.getRotation());
+        Translation2d limitedVelocityMetersPerSecond = limitTowardHubRadialVelocityForViableShot(
+                requestedVelocityMetersPerSecond,
+                futurePose.getTranslation(),
+                target,
+                preferredRobotHeading);
+        limitedVelocityXMetersPerSecond = limitedVelocityMetersPerSecond.getX();
+        limitedVelocityYMetersPerSecond = limitedVelocityMetersPerSecond.getY();
         Rotation2d robotHeadingTarget = preferredRobotHeading;
         long solutionStartMicros = SlowCallMonitor.nowMicros();
         if (updateShooterSolution(target, preferredRobotHeading)) {
@@ -278,6 +358,11 @@ public class ScoreInHub extends Command {
     @Override
     public void end(boolean interrupted) {
         lastVelocityLimitTimestampSeconds = Double.NaN;
+        latchedMaximumTowardHubRadialSpeedMetersPerSecond = Double.POSITIVE_INFINITY;
+        publishPredictedVelocityTelemetry(Double.NaN, Double.NaN, Double.NaN);
+        publishPinpointVelocityTelemetry(Double.NaN, Double.NaN, Double.NaN);
+        empiricalDebugInfo.invalidate();
+        publishEmpiricalSolverTelemetry();
     }
 
     private Translation2d getTarget() {
@@ -308,8 +393,11 @@ public class ScoreInHub extends Command {
                         horizontalAim.getMinimumAngle().in(Degrees),
                         horizontalAim.getMaximumAngle().in(Degrees),
                         shooter.getMainFlywheelSpeedIPS(),
+                        lastCommandedFlywheelSetpointIps,
                         idealMovingShotSolution,
-                        movingShotSolution);
+                        movingShotSolution,
+                        empiricalDebugInfo);
+        publishEmpiricalSolverTelemetry();
         if (fixedFlywheelStatus == BallTrajectoryLookup.FixedFlywheelShotStatus.NO_SOLUTION) {
             long solverMicros = SlowCallMonitor.nowMicros() - solverStartMicros;
             long totalMicros = SlowCallMonitor.nowMicros() - functionStartMicros;
@@ -516,6 +604,217 @@ public class ScoreInHub extends Command {
         previousCyclePredictedFlywheelSpeedIps = MovingShotMath.predictFlywheelSpeedIps(
                 previousCycleMeasuredFlywheelSpeedIps,
                 commandedFlywheelIps);
+        lastCommandedFlywheelSetpointIps = commandedFlywheelIps;
+    }
+
+    private void publishPredictedVelocityTelemetry(
+            double vxMetersPerSecond,
+            double vyMetersPerSecond,
+            double omegaRadiansPerSecond) {
+        tuningPredictedVelocityXMetersPerSecondPublisher.set(vxMetersPerSecond);
+        tuningPredictedVelocityYMetersPerSecondPublisher.set(vyMetersPerSecond);
+        tuningPredictedOmegaRadiansPerSecondPublisher.set(omegaRadiansPerSecond);
+    }
+
+    private void publishCurrentPinpointVelocityTelemetry() {
+        publishPinpointVelocityTelemetry(
+                pinpointSubsystem.getVelocityXMetersPerSecond(),
+                pinpointSubsystem.getVelocityYMetersPerSecond(),
+                pinpointSubsystem.getHeadingVelocityRadiansPerSecond());
+    }
+
+    private void publishPinpointVelocityTelemetry(
+            double vxMetersPerSecond,
+            double vyMetersPerSecond,
+            double omegaRadiansPerSecond) {
+        tuningPinpointVelocityXMetersPerSecondPublisher.set(vxMetersPerSecond);
+        tuningPinpointVelocityYMetersPerSecondPublisher.set(vyMetersPerSecond);
+        tuningPinpointOmegaRadiansPerSecondPublisher.set(omegaRadiansPerSecond);
+    }
+
+    private void publishEmpiricalSolverTelemetry() {
+        if (!empiricalDebugInfo.isValid()) {
+            tuningLookupTargetDistanceInchesPublisher.set(Double.NaN);
+            tuningSelectedHoodAngleDegreesPublisher.set(Double.NaN);
+            tuningModeledFlywheelCommandIpsPublisher.set(Double.NaN);
+            tuningCommandedFlywheelCommandIpsPublisher.set(Double.NaN);
+            return;
+        }
+
+        tuningLookupTargetDistanceInchesPublisher.set(empiricalDebugInfo.getLookupTargetDistanceInches());
+        tuningSelectedHoodAngleDegreesPublisher.set(empiricalDebugInfo.getSelectedHoodAngleDegrees());
+        tuningModeledFlywheelCommandIpsPublisher.set(empiricalDebugInfo.getModeledFlywheelCommandIps());
+        tuningCommandedFlywheelCommandIpsPublisher.set(empiricalDebugInfo.getCommandedFlywheelCommandIps());
+    }
+
+    private Translation2d limitTowardHubRadialVelocityForViableShot(
+            Translation2d requestedVelocityMetersPerSecond,
+            Translation2d futureRobotPosition,
+            Translation2d target,
+            Rotation2d preferredRobotHeading) {
+        double minimumAllowedRadialSpeedMetersPerSecond = MAX_ACTIVE_TRANSLATIONAL_SPEED_METERS_PER_SECOND;
+        if (requestedVelocityMetersPerSecond == null
+                || futureRobotPosition == null
+                || target == null
+                || preferredRobotHeading == null) {
+            return requestedVelocityMetersPerSecond;
+        }
+
+        double targetDxMeters = target.getX() - futureRobotPosition.getX();
+        double targetDyMeters = target.getY() - futureRobotPosition.getY();
+        double targetDistanceMeters = Math.hypot(targetDxMeters, targetDyMeters);
+        if (!(targetDistanceMeters > 1e-9)) {
+            return requestedVelocityMetersPerSecond;
+        }
+
+        double radialUnitXMeters = targetDxMeters / targetDistanceMeters;
+        double radialUnitYMeters = targetDyMeters / targetDistanceMeters;
+        double requestedRadialSpeedMetersPerSecond =
+                requestedVelocityMetersPerSecond.getX() * radialUnitXMeters
+                        + requestedVelocityMetersPerSecond.getY() * radialUnitYMeters;
+        if (!Double.isFinite(requestedRadialSpeedMetersPerSecond)
+                || requestedRadialSpeedMetersPerSecond <= minimumAllowedRadialSpeedMetersPerSecond + 1e-9) {
+            return requestedVelocityMetersPerSecond;
+        }
+
+        double tangentialVelocityXMetersPerSecond =
+                requestedVelocityMetersPerSecond.getX() - requestedRadialSpeedMetersPerSecond * radialUnitXMeters;
+        double tangentialVelocityYMetersPerSecond =
+                requestedVelocityMetersPerSecond.getY() - requestedRadialSpeedMetersPerSecond * radialUnitYMeters;
+        double currentMaximumAllowedRadialSpeedMetersPerSecond = Math.max(
+                minimumAllowedRadialSpeedMetersPerSecond,
+                latchedMaximumTowardHubRadialSpeedMetersPerSecond);
+        double candidateRadialSpeedMetersPerSecond = Math.min(
+                requestedRadialSpeedMetersPerSecond,
+                currentMaximumAllowedRadialSpeedMetersPerSecond);
+        if (hasViableHubShotForVelocity(
+                tangentialVelocityXMetersPerSecond + candidateRadialSpeedMetersPerSecond * radialUnitXMeters,
+                tangentialVelocityYMetersPerSecond + candidateRadialSpeedMetersPerSecond * radialUnitYMeters,
+                target,
+                preferredRobotHeading)) {
+            if (requestedRadialSpeedMetersPerSecond <= currentMaximumAllowedRadialSpeedMetersPerSecond + 1e-9) {
+                return requestedVelocityMetersPerSecond;
+            }
+            return new Translation2d(
+                    tangentialVelocityXMetersPerSecond + candidateRadialSpeedMetersPerSecond * radialUnitXMeters,
+                    tangentialVelocityYMetersPerSecond + candidateRadialSpeedMetersPerSecond * radialUnitYMeters);
+        }
+
+        if (!hasViableHubShotForVelocity(
+                tangentialVelocityXMetersPerSecond
+                        + minimumAllowedRadialSpeedMetersPerSecond * radialUnitXMeters,
+                tangentialVelocityYMetersPerSecond
+                        + minimumAllowedRadialSpeedMetersPerSecond * radialUnitYMeters,
+                target,
+                preferredRobotHeading)) {
+            latchedMaximumTowardHubRadialSpeedMetersPerSecond = minimumAllowedRadialSpeedMetersPerSecond;
+            return new Translation2d(
+                    tangentialVelocityXMetersPerSecond
+                            + minimumAllowedRadialSpeedMetersPerSecond * radialUnitXMeters,
+                    tangentialVelocityYMetersPerSecond
+                            + minimumAllowedRadialSpeedMetersPerSecond * radialUnitYMeters);
+        }
+
+        double lowRadialSpeedMetersPerSecond = minimumAllowedRadialSpeedMetersPerSecond;
+        double highRadialSpeedMetersPerSecond = candidateRadialSpeedMetersPerSecond;
+        double bestViableRadialSpeedMetersPerSecond = lowRadialSpeedMetersPerSecond;
+        for (int iteration = 0; iteration < RADIAL_SPEED_LIMIT_SEARCH_MAX_ITERATIONS; iteration++) {
+            if (highRadialSpeedMetersPerSecond - lowRadialSpeedMetersPerSecond
+                    <= RADIAL_SPEED_LIMIT_SEARCH_TOLERANCE_METERS_PER_SECOND) {
+                break;
+            }
+
+            double midRadialSpeedMetersPerSecond =
+                    0.5 * (lowRadialSpeedMetersPerSecond + highRadialSpeedMetersPerSecond);
+            boolean hasViableShot = hasViableHubShotForVelocity(
+                    tangentialVelocityXMetersPerSecond + midRadialSpeedMetersPerSecond * radialUnitXMeters,
+                    tangentialVelocityYMetersPerSecond + midRadialSpeedMetersPerSecond * radialUnitYMeters,
+                    target,
+                    preferredRobotHeading);
+            if (hasViableShot) {
+                bestViableRadialSpeedMetersPerSecond = midRadialSpeedMetersPerSecond;
+                lowRadialSpeedMetersPerSecond = midRadialSpeedMetersPerSecond;
+            } else {
+                highRadialSpeedMetersPerSecond = midRadialSpeedMetersPerSecond;
+            }
+        }
+
+        latchedMaximumTowardHubRadialSpeedMetersPerSecond = Math.min(
+                currentMaximumAllowedRadialSpeedMetersPerSecond,
+                Math.max(
+                        minimumAllowedRadialSpeedMetersPerSecond,
+                        RADIAL_SPEED_LIMIT_VIABLE_MARGIN * bestViableRadialSpeedMetersPerSecond));
+        double limitedRadialSpeedMetersPerSecond = Math.min(
+                requestedRadialSpeedMetersPerSecond,
+                latchedMaximumTowardHubRadialSpeedMetersPerSecond);
+        return new Translation2d(
+                tangentialVelocityXMetersPerSecond + limitedRadialSpeedMetersPerSecond * radialUnitXMeters,
+                tangentialVelocityYMetersPerSecond + limitedRadialSpeedMetersPerSecond * radialUnitYMeters);
+    }
+
+    private boolean hasViableHubShotForVelocity(
+            double robotFieldVxMetersPerSecond,
+            double robotFieldVyMetersPerSecond,
+            Translation2d target,
+            Rotation2d preferredRobotHeading) {
+        return MovingShotMath.solveIdealMovingShotWithUpperHoodFallback(
+                verticalAim,
+                ShooterConstants.COMMANDED_MOVING_SHOT_HOOD_SEARCH_STEP_DEGREES,
+                futureState.xMeters,
+                futureState.yMeters,
+                futureState.headingRadians,
+                robotFieldVxMetersPerSecond,
+                robotFieldVyMetersPerSecond,
+                target.getX(),
+                target.getY(),
+                ShooterConstants.COMMANDED_SCORE_IN_HUB_TARGET_ELEVATION_INCHES,
+                ShooterConstants.COMMANDED_MAXIMUM_SHOOTING_HEIGHT_INCHES,
+                preferredRobotHeading.getRadians(),
+                horizontalAim.getMinimumAngle().in(Degrees),
+                horizontalAim.getMaximumAngle().in(Degrees),
+                shooter.getMainFlywheelSpeedIPS(),
+                lastCommandedFlywheelSetpointIps,
+                radialSpeedLimitSearchSolution);
+    }
+
+    private static Translation2d clampTowardHubRadialSpeed(
+            Translation2d requestedVelocity,
+            Translation2d robotPosition,
+            Translation2d target,
+            double maximumTowardHubRadialSpeedMetersPerSecond) {
+        if (requestedVelocity == null
+                || robotPosition == null
+                || target == null
+                || !Double.isFinite(maximumTowardHubRadialSpeedMetersPerSecond)
+                || maximumTowardHubRadialSpeedMetersPerSecond < 0.0) {
+            return requestedVelocity;
+        }
+
+        double targetDxMeters = target.getX() - robotPosition.getX();
+        double targetDyMeters = target.getY() - robotPosition.getY();
+        double targetDistanceMeters = Math.hypot(targetDxMeters, targetDyMeters);
+        if (!(targetDistanceMeters > 1e-9)) {
+            return requestedVelocity;
+        }
+
+        double radialUnitXMeters = targetDxMeters / targetDistanceMeters;
+        double radialUnitYMeters = targetDyMeters / targetDistanceMeters;
+        double requestedRadialSpeedMetersPerSecond =
+                requestedVelocity.getX() * radialUnitXMeters
+                        + requestedVelocity.getY() * radialUnitYMeters;
+        if (!(requestedRadialSpeedMetersPerSecond > maximumTowardHubRadialSpeedMetersPerSecond)) {
+            return requestedVelocity;
+        }
+
+        double tangentialVelocityXMetersPerSecond =
+                requestedVelocity.getX() - requestedRadialSpeedMetersPerSecond * radialUnitXMeters;
+        double tangentialVelocityYMetersPerSecond =
+                requestedVelocity.getY() - requestedRadialSpeedMetersPerSecond * radialUnitYMeters;
+        return new Translation2d(
+                tangentialVelocityXMetersPerSecond
+                        + maximumTowardHubRadialSpeedMetersPerSecond * radialUnitXMeters,
+                tangentialVelocityYMetersPerSecond
+                        + maximumTowardHubRadialSpeedMetersPerSecond * radialUnitYMeters);
     }
 
     private Translation2d limitTranslationalAcceleration(SwerveRequest.FieldCentric fieldCentricRequest) {

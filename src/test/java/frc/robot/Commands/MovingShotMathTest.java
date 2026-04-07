@@ -155,6 +155,34 @@ class MovingShotMathTest {
     }
 
     @Test
+    void empiricalLookupDistanceBiasesDistanceShorterByRadialClosure() {
+        Translation2d effectiveVelocityIps = new Translation2d(20.0, 0.0);
+
+        assertEquals(
+                110.0,
+                MovingShotMath.getEmpiricalMovingShotLookupDistanceInches(
+                        120.0,
+                        100.0,
+                        0.0,
+                        effectiveVelocityIps),
+                1e-9);
+    }
+
+    @Test
+    void empiricalLookupDistanceNeverGoesNegativeAndStaysInsideEmpiricalMinimum() {
+        Translation2d effectiveVelocityIps = new Translation2d(1000.0, 0.0);
+
+        assertEquals(
+                ShooterConstants.DATA_COLLECTION_SHORT_RANGE_MIN_DISTANCE_INCHES,
+                MovingShotMath.getEmpiricalMovingShotLookupDistanceInches(
+                        120.0,
+                        100.0,
+                        0.0,
+                        effectiveVelocityIps),
+                1e-9);
+    }
+
+    @Test
     void headingTowardTargetPointsDirectlyAtHubAndFallsBackWhenCoincident() {
         Rotation2d targetHeading = MovingShotMath.getHeadingTowardTarget(
                 3.0,
@@ -186,6 +214,30 @@ class MovingShotMathTest {
         assertEquals(
                 1.0,
                 MovingShotMath.computeCommandTrackingError(72.0, 70.0, 69.0),
+                1e-9);
+    }
+
+    @Test
+    void flywheelPredictionFromPreviousSetpointUsesPreviousCommandAndFallsBackToCurrentSpeed() {
+        double currentFlywheelSpeedIps = 100.0;
+        double previousCommandedFlywheelSetpointIps = 400.0;
+        double expectedPredictedSpeedIps = Math.min(
+                previousCommandedFlywheelSetpointIps,
+                currentFlywheelSpeedIps
+                        + ShooterConstants.COMMANDED_MOVING_SHOT_FLYWHEEL_SPIN_UP_RATE_IPS_PER_SECOND
+                                * ShooterConstants.COMMANDED_MOVING_SHOT_FLYWHEEL_PREDICTION_SECONDS);
+
+        assertEquals(
+                expectedPredictedSpeedIps,
+                MovingShotMath.predictFlywheelSpeedFromPreviousSetpointIps(
+                        currentFlywheelSpeedIps,
+                        previousCommandedFlywheelSetpointIps),
+                1e-9);
+        assertEquals(
+                currentFlywheelSpeedIps,
+                MovingShotMath.predictFlywheelSpeedFromPreviousSetpointIps(
+                        currentFlywheelSpeedIps,
+                        Double.NaN),
                 1e-9);
     }
 

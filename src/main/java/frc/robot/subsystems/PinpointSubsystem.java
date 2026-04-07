@@ -4,8 +4,9 @@
 
 package frc.robot.subsystems;
 
-import static edu.wpi.first.units.Units.Inch;
 import static edu.wpi.first.units.Units.Microseconds;
+import static edu.wpi.first.units.Units.Meters;
+import static edu.wpi.first.units.Units.Radians;
 
 import java.util.function.BooleanSupplier;
 import java.util.function.DoubleSupplier;
@@ -121,6 +122,27 @@ public class PinpointSubsystem extends SubsystemBase {
 
     public DoubleSupplier getHeadingSupplier(AngleUnit angleUnit) {
         return () -> pinpoint.getHeading(angleUnit);
+    }
+
+    public double getVelocityXMetersPerSecond() {
+        if (pinpoint.getDeviceStatus() != GoBildaPinpointFRCDriver.DeviceStatus.READY) {
+            return Double.NaN;
+        }
+        return pinpoint.getVelX(Meters);
+    }
+
+    public double getVelocityYMetersPerSecond() {
+        if (pinpoint.getDeviceStatus() != GoBildaPinpointFRCDriver.DeviceStatus.READY) {
+            return Double.NaN;
+        }
+        return pinpoint.getVelY(Meters);
+    }
+
+    public double getHeadingVelocityRadiansPerSecond() {
+        if (pinpoint.getDeviceStatus() != GoBildaPinpointFRCDriver.DeviceStatus.READY) {
+            return Double.NaN;
+        }
+        return pinpoint.getHeadingVelocity(Radians);
     }
 
     private static String describeDeviceStatus(GoBildaPinpointFRCDriver.DeviceStatus status) {

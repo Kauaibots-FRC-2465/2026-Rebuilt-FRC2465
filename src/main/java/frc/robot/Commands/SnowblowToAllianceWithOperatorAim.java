@@ -89,6 +89,9 @@ public class SnowblowToAllianceWithOperatorAim extends Command {
     private final IntegerPublisher tuningTimeSinceLatestOdometryMicrosPublisher;
     private final IntegerPublisher tuningTimeBetweenLatestAndPriorOdometryMicrosPublisher;
     private final StringPublisher tuningOdometryHistoryResetReasonPublisher;
+    private final DoublePublisher tuningPredictedVelocityXMetersPerSecondPublisher;
+    private final DoublePublisher tuningPredictedVelocityYMetersPerSecondPublisher;
+    private final DoublePublisher tuningPredictedOmegaRadiansPerSecondPublisher;
     private final PoseEstimatorSubsystem.PredictedFusedState futureState =
             new PoseEstimatorSubsystem.PredictedFusedState();
     private final BallTrajectoryLookup.MovingShotSolution idealMovingShotSolution =
@@ -101,6 +104,7 @@ public class SnowblowToAllianceWithOperatorAim extends Command {
     private double lastValidTurretDeltaDegrees = 0.0;
     private double lastValidHoodAngleDegrees = ShooterConstants.COMMANDED_MAXIMUM_ALLOWED_HOOD_ANGLE_DEGREES;
     private double lastValidFlywheelCommandIps = 0.0;
+    private double lastCommandedFlywheelSetpointIps = 0.0;
     private boolean hasLatchedShotCommand = false;
     private final TravelWindowDirectionTracker preferredHeadingTracker =
             new TravelWindowDirectionTracker(
@@ -184,7 +188,13 @@ public class SnowblowToAllianceWithOperatorAim extends Command {
                 tuningSnowblowTable.getIntegerTopic("timeBetweenLatestAndPriorOdometryMicros").publish();
         tuningOdometryHistoryResetReasonPublisher =
                 tuningSnowblowTable.getStringTopic("odometryHistoryResetReason").publish();
-
+        tuningPredictedVelocityXMetersPerSecondPublisher =
+                tuningSnowblowTable.getDoubleTopic("predictedVelocityXMetersPerSecond").publish();
+        tuningPredictedVelocityYMetersPerSecondPublisher =
+                tuningSnowblowTable.getDoubleTopic("predictedVelocityYMetersPerSecond").publish();
+        tuningPredictedOmegaRadiansPerSecondPublisher =
+                tuningSnowblowTable.getDoubleTopic("predictedOmegaRadiansPerSecond").publish();
+        publishPredictedVelocityTelemetry(Double.NaN, Double.NaN, Double.NaN);
         facingAngleDrive.withHeadingPID(5.0, 0.0, 0.0);
         facingAngleDrive.HeadingController.enableContinuousInput(-Math.PI, Math.PI);
 
@@ -209,11 +219,13 @@ public class SnowblowToAllianceWithOperatorAim extends Command {
         tuningMeasuredFlywheelSpeedIpsPublisher.set(shooter.getMainFlywheelSpeedIPS());
         tuningTargetDistanceInchesPublisher.set(Double.NaN);
         tuningTargetElevationInchesPublisher.set(ShooterConstants.COMMANDED_SNOWBLOW_TARGET_ELEVATION_INCHES);
+        publishPredictedVelocityTelemetry(Double.NaN, Double.NaN, Double.NaN);
         hasLatchedShotCommand = false;
         lastValidRobotHeadingTarget = new Rotation2d();
         lastValidTurretDeltaDegrees = 0.0;
         lastValidHoodAngleDegrees = verticalAim.getAngle().in(Degrees);
         lastValidFlywheelCommandIps = 0.0;
+        lastCommandedFlywheelSetpointIps = shooter.getMainFlywheelSpeedIPS();
         publishFailureCounters();
         publishPredictionDiagnostics();
     }
@@ -233,6 +245,7 @@ public class SnowblowToAllianceWithOperatorAim extends Command {
             tuningSolveDetailPublisher.set("SKIPPED_NON_FIELD_CENTRIC_REQUEST");
             tuningAppliedFlywheelCommandIpsPublisher.set(0.0);
             tuningMeasuredFlywheelSpeedIpsPublisher.set(shooter.getMainFlywheelSpeedIPS());
+            publishPredictedVelocityTelemetry(Double.NaN, Double.NaN, Double.NaN);
             publishFailureCounters();
             publishPredictionDiagnostics();
             drivetrain.setControl(requestedDrive);
@@ -260,6 +273,7 @@ public class SnowblowToAllianceWithOperatorAim extends Command {
             tuningAppliedFlywheelCommandIpsPublisher.set(
                     hasLatchedShotCommand ? lastValidFlywheelCommandIps : 0.0);
             tuningMeasuredFlywheelSpeedIpsPublisher.set(shooter.getMainFlywheelSpeedIPS());
+            publishPredictedVelocityTelemetry(Double.NaN, Double.NaN, Double.NaN);
             publishFailureCounters();
             publishPredictionDiagnostics();
             if (hasLatchedShotCommand) {
@@ -271,6 +285,10 @@ public class SnowblowToAllianceWithOperatorAim extends Command {
         tuningPredictedStateValidPublisher.set(true);
         tuningPredictionOutcomePublisher.set(poseEstimator.getLastPredictionOutcome());
         publishPredictionDiagnostics();
+        publishPredictedVelocityTelemetry(
+                futureState.vxMetersPerSecond,
+                futureState.vyMetersPerSecond,
+                futureState.omegaRadiansPerSecond);
         publishFutureState();
 
         Pose2d futurePose = new Pose2d(
@@ -346,6 +364,7 @@ public class SnowblowToAllianceWithOperatorAim extends Command {
         tuningSolveDetailPublisher.set(interrupted ? "ENDED_INTERRUPTED" : "ENDED_FINISHED");
         tuningAppliedFlywheelCommandIpsPublisher.set(0.0);
         tuningMeasuredFlywheelSpeedIpsPublisher.set(shooter.getMainFlywheelSpeedIPS());
+        publishPredictedVelocityTelemetry(Double.NaN, Double.NaN, Double.NaN);
         publishPredictionDiagnostics();
     }
 
@@ -367,6 +386,7 @@ public class SnowblowToAllianceWithOperatorAim extends Command {
                         horizontalAim.getMinimumAngle().in(Degrees),
                         horizontalAim.getMaximumAngle().in(Degrees),
                         shooter.getMainFlywheelSpeedIPS(),
+                        lastCommandedFlywheelSetpointIps,
                         idealMovingShotSolution,
                         movingShotSolution);
         if (fixedFlywheelStatus == BallTrajectoryLookup.FixedFlywheelShotStatus.NO_SOLUTION) {
@@ -397,6 +417,7 @@ public class SnowblowToAllianceWithOperatorAim extends Command {
         verticalAim.setAngle(Degrees.of(commandedHoodAngleDegrees));
         horizontalAim.setAngle(Degrees.of(clampedTurretDeltaDegrees));
         shooter.setCoupledIPS(idealFlywheelCommandIps);
+        lastCommandedFlywheelSetpointIps = idealFlywheelCommandIps;
         lastValidRobotHeadingTarget = Rotation2d.fromDegrees(movingShotSolution.getRobotHeadingDegrees());
         lastValidTurretDeltaDegrees = clampedTurretDeltaDegrees;
         lastValidHoodAngleDegrees = commandedHoodAngleDegrees;
@@ -454,6 +475,7 @@ public class SnowblowToAllianceWithOperatorAim extends Command {
         verticalAim.setAngle(Degrees.of(lastValidHoodAngleDegrees));
         horizontalAim.setAngle(Degrees.of(lastValidTurretDeltaDegrees));
         shooter.setCoupledIPS(lastValidFlywheelCommandIps);
+        lastCommandedFlywheelSetpointIps = lastValidFlywheelCommandIps;
     }
 
     private void publishFailureCounters() {
@@ -477,4 +499,14 @@ public class SnowblowToAllianceWithOperatorAim extends Command {
         tuningOdometryHistoryResetReasonPublisher.set(
                 poseEstimator.getLastOdometryHistoryResetReason());
     }
+
+    private void publishPredictedVelocityTelemetry(
+            double vxMetersPerSecond,
+            double vyMetersPerSecond,
+            double omegaRadiansPerSecond) {
+        tuningPredictedVelocityXMetersPerSecondPublisher.set(vxMetersPerSecond);
+        tuningPredictedVelocityYMetersPerSecondPublisher.set(vyMetersPerSecond);
+        tuningPredictedOmegaRadiansPerSecondPublisher.set(omegaRadiansPerSecond);
+    }
+
 }

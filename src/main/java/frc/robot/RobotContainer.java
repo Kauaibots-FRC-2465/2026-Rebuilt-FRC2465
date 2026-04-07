@@ -104,7 +104,9 @@ public class RobotContainer implements Subsystem {
     private static final double HOOD_TUNE_ANGLE_STEP_DEGREES = 5.0;
     private static final double SHOOTER_TUNE_SPEED_STEP_IPS = 40;
     private static final double HORIZONTAL_AIM_TRIM_STEP_DEGREES = 1.0;
-    private static final double ACTIVE_INTAKE_ANGLE_STEP_DEGREES = 0.2;
+    // Intake trim needs a larger step so the Kraken position loop can overcome
+    // mechanism load and produce a visible change per D-pad press.
+    private static final double ACTIVE_INTAKE_ANGLE_STEP_DEGREES = 0.5;
     private static final double DEFAULT_ACTIVE_INTAKE_ANGLE_DEGREES = 109.0;
     private static final double MAIN_FLYWHEEL_VELOCITY_SAMPLE_WINDOW_SECONDS = 0.010;
     private static final double DRIVE_TUNING_LOW_SPEED_METERS_PER_SECOND = 1.0;
@@ -452,6 +454,7 @@ private Command showAllianceMarquee() {
             this::getDriverDriveRequest);
         scoreInHubCommand = new ScoreInHub(
             drivetrain,
+            pinpointSubsystem,
             poseEstimatorSubsystem,
             horizontalAim,
             verticalAim,

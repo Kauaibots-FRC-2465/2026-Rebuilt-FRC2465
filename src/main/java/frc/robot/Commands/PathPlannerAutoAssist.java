@@ -256,6 +256,7 @@ public class PathPlannerAutoAssist {
                         horizontalAim.getMinimumAngle().in(Degrees),
                         horizontalAim.getMaximumAngle().in(Degrees),
                         shooter.getMainFlywheelSpeedIPS(),
+                        commandedFlywheelIps,
                         idealMovingShotSolution,
                         movingShotSolution);
         if (fixedFlywheelStatus == BallTrajectoryLookup.FixedFlywheelShotStatus.NO_SOLUTION) {

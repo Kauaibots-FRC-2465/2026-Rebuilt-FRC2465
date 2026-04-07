@@ -73,6 +73,7 @@ public class SnowblowToAlliance extends Command {
                             ShooterConstants.COMMANDED_PREFERRED_HEADING_MIN_SAMPLE_SPACING_INCHES,
                             Inches));
     private Translation2d lastFieldRelativeDriveDirection = new Translation2d();
+    private double lastCommandedFlywheelSetpointIps = 0.0;
 
     public SnowblowToAlliance(
             CommandSwerveDrivetrain drivetrain,
@@ -116,6 +117,7 @@ public class SnowblowToAlliance extends Command {
     public void initialize() {
         preferredHeadingTracker.reset();
         lastFieldRelativeDriveDirection = new Translation2d();
+        lastCommandedFlywheelSetpointIps = shooter.getMainFlywheelSpeedIPS();
     }
 
     @Override
@@ -133,6 +135,7 @@ public class SnowblowToAlliance extends Command {
                 futureState)) {
             clearSolutionTelemetry();
             shooter.setCoupledIPS(0.0);
+            lastCommandedFlywheelSetpointIps = 0.0;
             horizontalAim.setAngle(Degrees.of(0.0));
             drivetrain.setControl(requestedDrive);
             return;
@@ -203,10 +206,12 @@ public class SnowblowToAlliance extends Command {
                         horizontalAim.getMinimumAngle().in(Degrees),
                         horizontalAim.getMaximumAngle().in(Degrees),
                         shooter.getMainFlywheelSpeedIPS(),
+                        lastCommandedFlywheelSetpointIps,
                         idealMovingShotSolution,
                         movingShotSolution);
         if (fixedFlywheelStatus == BallTrajectoryLookup.FixedFlywheelShotStatus.NO_SOLUTION) {
             shooter.setCoupledIPS(0.0);
+            lastCommandedFlywheelSetpointIps = 0.0;
             horizontalAim.setAngle(Degrees.of(0.0));
             return false;
         }
@@ -235,6 +240,7 @@ public class SnowblowToAlliance extends Command {
         verticalAim.setAngle(Degrees.of(commandedHoodAngleDegrees));
         horizontalAim.setAngle(Degrees.of(clampedTurretDeltaDegrees));
         shooter.setCoupledIPS(idealFlywheelCommandIps);
+        lastCommandedFlywheelSetpointIps = idealFlywheelCommandIps;
         return true;
     }
 
