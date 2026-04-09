@@ -32,6 +32,11 @@ class MovingShotMathTest {
     private static final double MAX_TURRET_ANGLE_DEGREES = 180.0;
     private static final double INTERIOR_HOOD_EDGE_MARGIN_DEGREES = 0.001;
     private static final double MANIFOLD_SPEED_TOLERANCE_IPS = 1e-3;
+    private static final double EMPIRICAL_PHYSICS_LANDING_TOLERANCE_INCHES = 30.0;
+    private static final double PHYSICS_SIMULATION_DT_SECONDS = 0.002;
+    private static final double PHYSICS_MAX_SIMULATION_TIME_SECONDS = 5.0;
+    private static final double GRAVITY_IPS2 = 386.08858267716535;
+    private static final double ANGLED_PHYSICS_TANGENTIAL_TO_RADIAL_RATIO = 0.2;
     private static final double GLOBAL_MIN_EMPIRICAL_FLYWHEEL_IPS =
             computeGlobalEmpiricalFlywheelBound(true);
     private static final double GLOBAL_MAX_EMPIRICAL_FLYWHEEL_IPS =
@@ -273,6 +278,117 @@ class MovingShotMathTest {
     void empiricalMovingShotStaysOnLookupManifoldAtFormerlyBadStraightPoints() {
         assertFormerlyBadStraightPointSolvesOnLookupManifold(221.0, 0.5);
         assertFormerlyBadStraightPointSolvesOnLookupManifold(158.0, 1.0);
+    }
+
+    @Test
+    void stationaryEmpiricalShotsLandNearTargetInPhysicsModel() {
+        int[] distanceRowIndexes = {0, 1, 2, 3, 4, 5, 6, 7};
+
+        for (int distanceRowIndex : distanceRowIndexes) {
+            double targetDistanceInches =
+                    ShooterConstants.DATA_COLLECTION_SHORT_RANGE_DISTANCES_INCHES[distanceRowIndex];
+            double preferredHoodAngleDegrees = ShortRangeHubFlywheelLookup.getIdealHoodAngleDegrees(targetDistanceInches);
+            double currentFlywheelSpeedIps =
+                    ShortRangeHubFlywheelLookup.getFallbackManifoldFlywheelCommandIps(targetDistanceInches);
+            BallTrajectoryLookup.MovingShotSolution solution = solveEmpiricalMovingShotForVelocity(
+                    targetDistanceInches,
+                    preferredHoodAngleDegrees,
+                    currentFlywheelSpeedIps,
+                    0.0,
+                    0.0);
+
+            assertTrue(
+                    solution.isValid(),
+                    () -> String.format(
+                            "Expected a valid stationary empirical solution at %.1f in",
+                            targetDistanceInches));
+            assertEmpiricalShotLandsNearTargetInPhysicsModel(
+                    targetDistanceInches,
+                    solution,
+                    String.format("stationary %.1f in", targetDistanceInches));
+        }
+    }
+
+    @Test
+    void movingEmpiricalShotsLandNearTargetInPhysicsModel() {
+        int[] distanceRowIndexes = {4, 5, 6, 7};
+        double[] towardHubSpeedsMetersPerSecond = {0.25, 0.5, 1.0};
+
+        for (int distanceRowIndex : distanceRowIndexes) {
+            double targetDistanceInches =
+                    ShooterConstants.DATA_COLLECTION_SHORT_RANGE_DISTANCES_INCHES[distanceRowIndex];
+            double preferredHoodAngleDegrees = ShortRangeHubFlywheelLookup.getIdealHoodAngleDegrees(targetDistanceInches);
+            double currentFlywheelSpeedIps =
+                    ShortRangeHubFlywheelLookup.getFallbackManifoldFlywheelCommandIps(targetDistanceInches);
+
+            for (double towardHubSpeedMetersPerSecond : towardHubSpeedsMetersPerSecond) {
+                BallTrajectoryLookup.MovingShotSolution solution = solveEmpiricalMovingShotForVelocity(
+                        targetDistanceInches,
+                        preferredHoodAngleDegrees,
+                        currentFlywheelSpeedIps,
+                        towardHubSpeedMetersPerSecond,
+                        0.0);
+
+                assertTrue(
+                        solution.isValid(),
+                        () -> String.format(
+                                "Expected a valid moving empirical solution at %.1f in and %.1f m/s toward the hub",
+                                targetDistanceInches,
+                                towardHubSpeedMetersPerSecond));
+                assertEmpiricalShotLandsNearTargetInPhysicsModel(
+                        targetDistanceInches,
+                        solution,
+                        String.format(
+                                "moving %.1f in at %.1f m/s toward hub",
+                                targetDistanceInches,
+                                towardHubSpeedMetersPerSecond));
+            }
+        }
+    }
+
+    @Test
+    void angledEmpiricalShotsLandNearTargetInPhysicsModel() {
+        int[] distanceRowIndexes = {4, 5, 6, 7};
+        double[] towardHubSpeedsMetersPerSecond = {0.5, 1.0};
+        double[] tangentialSigns = {-1.0, 1.0};
+
+        for (int distanceRowIndex : distanceRowIndexes) {
+            double targetDistanceInches =
+                    ShooterConstants.DATA_COLLECTION_SHORT_RANGE_DISTANCES_INCHES[distanceRowIndex];
+            double preferredHoodAngleDegrees = ShortRangeHubFlywheelLookup.getIdealHoodAngleDegrees(targetDistanceInches);
+            double currentFlywheelSpeedIps =
+                    ShortRangeHubFlywheelLookup.getFallbackManifoldFlywheelCommandIps(targetDistanceInches);
+
+            for (double towardHubSpeedMetersPerSecond : towardHubSpeedsMetersPerSecond) {
+                double tangentialMagnitudeMetersPerSecond =
+                        towardHubSpeedMetersPerSecond * ANGLED_PHYSICS_TANGENTIAL_TO_RADIAL_RATIO;
+                for (double tangentialSign : tangentialSigns) {
+                    double tangentialSpeedMetersPerSecond = tangentialSign * tangentialMagnitudeMetersPerSecond;
+                    BallTrajectoryLookup.MovingShotSolution solution = solveEmpiricalMovingShotForVelocity(
+                            targetDistanceInches,
+                            preferredHoodAngleDegrees,
+                            currentFlywheelSpeedIps,
+                            towardHubSpeedMetersPerSecond,
+                            tangentialSpeedMetersPerSecond);
+
+                    assertTrue(
+                            solution.isValid(),
+                            () -> String.format(
+                                    "Expected a valid angled empirical solution at %.1f in and (%.1f, %.1f) m/s",
+                                    targetDistanceInches,
+                                    towardHubSpeedMetersPerSecond,
+                                    tangentialSpeedMetersPerSecond));
+                    assertEmpiricalShotLandsNearTargetInPhysicsModel(
+                            targetDistanceInches,
+                            solution,
+                            String.format(
+                                    "angled %.1f in at (%.1f, %.1f) m/s",
+                                    targetDistanceInches,
+                                    towardHubSpeedMetersPerSecond,
+                                    tangentialSpeedMetersPerSecond));
+                }
+            }
+        }
     }
 
     @Test
@@ -1198,6 +1314,30 @@ class MovingShotMathTest {
                         shorterShotSolution.getFlywheelCommandIps()));
     }
 
+    private static void assertEmpiricalShotLandsNearTargetInPhysicsModel(
+            double targetDistanceInches,
+            BallTrajectoryLookup.MovingShotSolution solution,
+            String label) {
+        double missDistanceInches = simulateDescendingPlanarMissDistanceAtTargetHeightInches(
+                solution,
+                targetDistanceInches,
+                TARGET_ELEVATION_INCHES);
+
+        assertTrue(
+                Double.isFinite(missDistanceInches),
+                () -> String.format(
+                        "Expected a finite descending miss distance for %s, but got %.6f",
+                        label,
+                        missDistanceInches));
+        assertTrue(
+                missDistanceInches <= EMPIRICAL_PHYSICS_LANDING_TOLERANCE_INCHES,
+                () -> String.format(
+                        "Expected empirical shot for %s to land within %.1f in of the target in the physics model, but miss was %.3f in",
+                        label,
+                        EMPIRICAL_PHYSICS_LANDING_TOLERANCE_INCHES,
+                        missDistanceInches));
+    }
+
     private static double getLauncherRelativeHorizontalExitVelocityIps(
             BallTrajectoryLookup.MovingShotSolution solution) {
         double trueHoodAngleDegrees =
@@ -1206,8 +1346,152 @@ class MovingShotMathTest {
                 * Math.cos(Math.toRadians(trueHoodAngleDegrees));
     }
 
+    private static double simulateDescendingPlanarMissDistanceAtTargetHeightInches(
+            BallTrajectoryLookup.MovingShotSolution solution,
+            double targetDistanceInches,
+            double targetHeightInches) {
+        double trueHoodAngleDegrees =
+                ShooterConstants.getTrueAngleDegreesForCommandedAngle(solution.getHoodAngleDegrees());
+        if (!Double.isFinite(trueHoodAngleDegrees)
+                || !Double.isFinite(solution.getLauncherRelativeExitVelocityIps())
+                || !Double.isFinite(solution.getFieldRelativeExitVelocityIps())
+                || !Double.isFinite(solution.getShotAzimuthDegrees())
+                || !Double.isFinite(targetDistanceInches)
+                || !Double.isFinite(targetHeightInches)) {
+            return Double.NaN;
+        }
+
+        double hoodAngleRadians = Math.toRadians(trueHoodAngleDegrees);
+        double shotAzimuthRadians = Math.toRadians(solution.getShotAzimuthDegrees());
+        double verticalExitVelocityIps =
+                solution.getLauncherRelativeExitVelocityIps() * Math.sin(hoodAngleRadians);
+        double horizontalExitVelocityIpsSquared =
+                solution.getFieldRelativeExitVelocityIps() * solution.getFieldRelativeExitVelocityIps()
+                        - verticalExitVelocityIps * verticalExitVelocityIps;
+        double fieldHorizontalExitVelocityIps = Math.sqrt(Math.max(0.0, horizontalExitVelocityIpsSquared));
+        double vxIps = fieldHorizontalExitVelocityIps * Math.cos(shotAzimuthRadians);
+        double vyIps = fieldHorizontalExitVelocityIps * Math.sin(shotAzimuthRadians);
+        double vzIps = verticalExitVelocityIps;
+        double launchXInches = BallTrajectoryLookup.getLaunchXInches(trueHoodAngleDegrees);
+        double xInches = launchXInches * Math.cos(shotAzimuthRadians);
+        double yInches = launchXInches * Math.sin(shotAzimuthRadians);
+        double zInches = BallTrajectoryLookup.getLaunchZInches(trueHoodAngleDegrees);
+        double spinProxyIps = getSpinProxyIpsForCorrectedExitVelocity(
+                trueHoodAngleDegrees,
+                solution.getLauncherRelativeExitVelocityIps());
+        boolean hasStartedDescending = vzIps <= 0.0;
+
+        for (double timeSeconds = 0.0;
+                timeSeconds < PHYSICS_MAX_SIMULATION_TIME_SECONDS;
+                timeSeconds += PHYSICS_SIMULATION_DT_SECONDS) {
+            double previousXInches = xInches;
+            double previousYInches = yInches;
+            double previousZInches = zInches;
+            double previousVzIps = vzIps;
+            double horizontalSpeedIps = Math.hypot(vxIps, vyIps);
+            double speedIps = Math.hypot(horizontalSpeedIps, vzIps);
+            double dragCoefficientPerInch =
+                    ShooterConstants.FITTED_TRAJECTORY_DRAG_COEFFICIENT_BASE_PER_INCH
+                            + ShooterConstants.FITTED_TRAJECTORY_DRAG_COEFFICIENT_LOG_SLOPE_PER_INCH
+                                    * Math.log(Math.max(1.0, speedIps)
+                                            / ShooterConstants.FITTED_TRAJECTORY_DRAG_LOG_REFERENCE_SPEED_IPS);
+            dragCoefficientPerInch = Math.max(0.0, dragCoefficientPerInch);
+            double dragGainPerSecond = dragCoefficientPerInch * speedIps;
+            double magnusGainPerSecond =
+                    ShooterConstants.FITTED_TRAJECTORY_MAGNUS_PER_SPIN_INCH * spinProxyIps * speedIps;
+            double horizontalAccelerationIps2 =
+                    -dragGainPerSecond * horizontalSpeedIps - magnusGainPerSecond * vzIps;
+            double horizontalUnitX = horizontalSpeedIps > 1e-9 ? vxIps / horizontalSpeedIps : 0.0;
+            double horizontalUnitY = horizontalSpeedIps > 1e-9 ? vyIps / horizontalSpeedIps : 0.0;
+            double axIps2 = horizontalAccelerationIps2 * horizontalUnitX;
+            double ayIps2 = horizontalAccelerationIps2 * horizontalUnitY;
+            double azIps2 = -GRAVITY_IPS2 - dragGainPerSecond * vzIps + magnusGainPerSecond * horizontalSpeedIps;
+
+            double nextVxIps = vxIps + axIps2 * PHYSICS_SIMULATION_DT_SECONDS;
+            double nextVyIps = vyIps + ayIps2 * PHYSICS_SIMULATION_DT_SECONDS;
+            double nextVzIps = vzIps + azIps2 * PHYSICS_SIMULATION_DT_SECONDS;
+            double nextXInches = xInches + 0.5 * (vxIps + nextVxIps) * PHYSICS_SIMULATION_DT_SECONDS;
+            double nextYInches = yInches + 0.5 * (vyIps + nextVyIps) * PHYSICS_SIMULATION_DT_SECONDS;
+            double nextZInches = zInches + 0.5 * (vzIps + nextVzIps) * PHYSICS_SIMULATION_DT_SECONDS;
+
+            if (!hasStartedDescending && nextVzIps <= 0.0) {
+                hasStartedDescending = true;
+            }
+
+            if (hasStartedDescending
+                    && previousZInches >= targetHeightInches
+                    && nextZInches <= targetHeightInches
+                    && (previousVzIps <= 0.0 || nextVzIps <= 0.0)) {
+                double ratio = (targetHeightInches - previousZInches) / (nextZInches - previousZInches);
+                double hitXInches = interpolate(previousXInches, nextXInches, ratio);
+                double hitYInches = interpolate(previousYInches, nextYInches, ratio);
+                return Math.hypot(hitXInches - targetDistanceInches, hitYInches);
+            }
+
+            xInches = nextXInches;
+            yInches = nextYInches;
+            zInches = nextZInches;
+            vxIps = nextVxIps;
+            vyIps = nextVyIps;
+            vzIps = nextVzIps;
+
+            if (zInches <= 0.0 && targetHeightInches > 0.0) {
+                return Double.NaN;
+            }
+        }
+
+        return Double.NaN;
+    }
+
+    private static double getSpinProxyIpsForCorrectedExitVelocity(
+            double trueHoodAngleDegrees,
+            double correctedExitVelocityIps) {
+        double angleExitScale = interpolateDescending(
+                trueHoodAngleDegrees,
+                ShooterConstants.TRUE_HOOD_ANGLES_DEGREES,
+                ShooterConstants.FITTED_COMMAND_ANGLE_EXIT_SCALES);
+        if (!(angleExitScale > 0.0)) {
+            return 0.0;
+        }
+        double baseExitVelocityIps = correctedExitVelocityIps / angleExitScale;
+        double estimatedFlywheelCommandIps = FlywheelBallExitInterpolator.getSetIpsForBallExitIps(baseExitVelocityIps);
+        if (!Double.isFinite(estimatedFlywheelCommandIps)) {
+            return 0.0;
+        }
+        return Math.max(0.0, estimatedFlywheelCommandIps - ShooterConstants.MEASURED_BACKSPIN_CANCEL_LIMIT_COMMAND_IPS)
+                * angleExitScale;
+    }
+
     private static double interpolate(double value0, double value1, double ratio) {
         return value0 + (value1 - value0) * ratio;
+    }
+
+    private static double interpolateDescending(
+            double value,
+            double[] sampleXs,
+            double[] sampleYs) {
+        if (!Double.isFinite(value)
+                || sampleXs == null
+                || sampleYs == null
+                || sampleXs.length != sampleYs.length
+                || sampleXs.length == 0) {
+            return Double.NaN;
+        }
+        if (value >= sampleXs[0]) {
+            return sampleYs[0];
+        }
+        if (value <= sampleXs[sampleXs.length - 1]) {
+            return sampleYs[sampleYs.length - 1];
+        }
+        for (int i = 1; i < sampleXs.length; i++) {
+            double upperX = sampleXs[i - 1];
+            double lowerX = sampleXs[i];
+            if (value <= upperX + 1e-9 && value >= lowerX - 1e-9) {
+                double ratio = (value - upperX) / (lowerX - upperX);
+                return interpolate(sampleYs[i - 1], sampleYs[i], ratio);
+            }
+        }
+        return Double.NaN;
     }
 
     private static void assertFinite(double value, String label) {
