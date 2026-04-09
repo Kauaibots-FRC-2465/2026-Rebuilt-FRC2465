@@ -64,6 +64,12 @@ class BallTrajectoryLookupTest {
             double maximumHeightInches) {
     }
 
+    private record CommandedShotCandidate(
+            double targetDistanceInches,
+            double commandedHoodAngleDegrees,
+            double flywheelCommandIps) {
+    }
+
     private static double[] buildTableBallExitIps(double[] commandSpeedsIps) {
         double[] tableBallExitIps = new double[commandSpeedsIps.length];
         for (int i = 0; i < commandSpeedsIps.length; i++) {
@@ -195,6 +201,43 @@ class BallTrajectoryLookupTest {
         assertTrue(
                 !solved,
                 "Moving-shot solve should reject near-hub inward-speed cases that only work by launching backward");
+    }
+
+    @Test
+    void commandedShotTimeOfFlightOnlyUsesDescendingTargetSamples() {
+        CommandedShotCandidate ascendingCandidate = findCommandedShotByTargetVerticalTrend(true);
+        assertNotNull(
+                ascendingCandidate,
+                "Expected at least one commanded shot to still be rising at the target distance");
+        double ascendingTimeOfFlightSeconds = BallTrajectoryLookup.getEstimatedTimeOfFlightSecondsForCommandedShot(
+                ascendingCandidate.commandedHoodAngleDegrees(),
+                ascendingCandidate.flywheelCommandIps(),
+                ascendingCandidate.targetDistanceInches());
+        assertTrue(
+                !Double.isFinite(ascendingTimeOfFlightSeconds),
+                () -> String.format(
+                        "Expected rising commanded shots to be rejected for TOF. distance=%.1f hood=%.1f cmd=%.1f got=%.6f",
+                        ascendingCandidate.targetDistanceInches(),
+                        ascendingCandidate.commandedHoodAngleDegrees(),
+                        ascendingCandidate.flywheelCommandIps(),
+                        ascendingTimeOfFlightSeconds));
+
+        CommandedShotCandidate descendingCandidate = findCommandedShotByTargetVerticalTrend(false);
+        assertNotNull(
+                descendingCandidate,
+                "Expected at least one commanded shot to be descending at the target distance");
+        double descendingTimeOfFlightSeconds = BallTrajectoryLookup.getEstimatedTimeOfFlightSecondsForCommandedShot(
+                descendingCandidate.commandedHoodAngleDegrees(),
+                descendingCandidate.flywheelCommandIps(),
+                descendingCandidate.targetDistanceInches());
+        assertTrue(
+                Double.isFinite(descendingTimeOfFlightSeconds) && descendingTimeOfFlightSeconds > 0.0,
+                () -> String.format(
+                        "Expected descending commanded shots to keep a finite TOF. distance=%.1f hood=%.1f cmd=%.1f got=%.6f",
+                        descendingCandidate.targetDistanceInches(),
+                        descendingCandidate.commandedHoodAngleDegrees(),
+                        descendingCandidate.flywheelCommandIps(),
+                        descendingTimeOfFlightSeconds));
     }
 
     @Test
@@ -476,6 +519,60 @@ class BallTrajectoryLookupTest {
         double launchHeightInches = BallTrajectoryLookup.getLaunchZInches(hoodAngleDegrees);
         double verticalExitVelocityIps = exitVelocityIps * Math.sin(Math.toRadians(hoodAngleDegrees));
         return launchHeightInches + (verticalExitVelocityIps * verticalExitVelocityIps) / (2.0 * GRAVITY_IPS2);
+    }
+
+    private static CommandedShotCandidate findCommandedShotByTargetVerticalTrend(boolean ascending) {
+        double deltaDistanceInches = 0.5;
+        double[] commandedHoodAnglesDegrees = new double[ShooterConstants.COMMANDED_HOOD_ANGLE_CHANGES_DEGREES.length];
+        for (int i = 0; i < commandedHoodAnglesDegrees.length; i++) {
+            commandedHoodAnglesDegrees[i] =
+                    ShooterConstants.MEASURED_HOOD_ANGLE_AT_MECHANISM_ZERO_DEGREES
+                            - ShooterConstants.COMMANDED_HOOD_ANGLE_CHANGES_DEGREES[i];
+        }
+
+        for (double commandedHoodAngleDegrees : commandedHoodAnglesDegrees) {
+            for (double commandedFlywheelIps : ShooterConstants.COMMANDED_FLYWHEEL_SET_IPS) {
+                double trueHoodAngleDegrees =
+                        ShooterConstants.getTrueAngleDegreesForCommandedAngle(commandedHoodAngleDegrees);
+                double estimatedExitVelocityIps =
+                        BallTrajectoryLookup.getEstimatedExitVelocityIpsForCommandedShot(
+                                commandedHoodAngleDegrees,
+                                commandedFlywheelIps);
+                if (!Double.isFinite(trueHoodAngleDegrees) || !Double.isFinite(estimatedExitVelocityIps)) {
+                    continue;
+                }
+
+                for (double targetDistanceInches = 40.0; targetDistanceInches <= 230.0; targetDistanceInches += 1.0) {
+                    double lowerHeightInches = BallTrajectoryLookup.getHeightAtDistanceInches(
+                            trueHoodAngleDegrees,
+                            estimatedExitVelocityIps,
+                            targetDistanceInches - deltaDistanceInches);
+                    double upperHeightInches = BallTrajectoryLookup.getHeightAtDistanceInches(
+                            trueHoodAngleDegrees,
+                            estimatedExitVelocityIps,
+                            targetDistanceInches + deltaDistanceInches);
+                    if (!Double.isFinite(lowerHeightInches) || !Double.isFinite(upperHeightInches)) {
+                        continue;
+                    }
+
+                    double heightDeltaInches = upperHeightInches - lowerHeightInches;
+                    if (ascending && heightDeltaInches > 1e-6) {
+                        return new CommandedShotCandidate(
+                                targetDistanceInches,
+                                commandedHoodAngleDegrees,
+                                commandedFlywheelIps);
+                    }
+                    if (!ascending && heightDeltaInches < -1e-6) {
+                        return new CommandedShotCandidate(
+                                targetDistanceInches,
+                                commandedHoodAngleDegrees,
+                                commandedFlywheelIps);
+                    }
+                }
+            }
+        }
+
+        return null;
     }
 
     private static double getAngleExitScale(double hoodAngleDegrees) {

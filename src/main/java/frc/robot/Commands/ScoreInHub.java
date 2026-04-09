@@ -46,6 +46,32 @@ public class ScoreInHub extends Command {
     private static final double RADIAL_SPEED_LIMIT_SEARCH_TOLERANCE_METERS_PER_SECOND = 0.02;
     private static final int RADIAL_SPEED_LIMIT_SEARCH_MAX_ITERATIONS = 10;
 
+    @FunctionalInterface
+    interface HubShotViabilityEvaluator {
+        boolean hasViableShot(double robotFieldVxMetersPerSecond, double robotFieldVyMetersPerSecond);
+    }
+
+    static final class TravelVelocityLimitResult {
+        private final Translation2d limitedVelocityMetersPerSecond;
+        private final double updatedMaximumTowardHubTravelSpeedMetersPerSecond;
+
+        TravelVelocityLimitResult(
+                Translation2d limitedVelocityMetersPerSecond,
+                double updatedMaximumTowardHubTravelSpeedMetersPerSecond) {
+            this.limitedVelocityMetersPerSecond = limitedVelocityMetersPerSecond;
+            this.updatedMaximumTowardHubTravelSpeedMetersPerSecond =
+                    updatedMaximumTowardHubTravelSpeedMetersPerSecond;
+        }
+
+        Translation2d getLimitedVelocityMetersPerSecond() {
+            return limitedVelocityMetersPerSecond;
+        }
+
+        double getUpdatedMaximumTowardHubTravelSpeedMetersPerSecond() {
+            return updatedMaximumTowardHubTravelSpeedMetersPerSecond;
+        }
+    }
+
     private final CommandSwerveDrivetrain drivetrain;
     private final PinpointSubsystem pinpointSubsystem;
     private final PoseEstimatorSubsystem poseEstimator;
@@ -98,7 +124,7 @@ public class ScoreInHub extends Command {
     private double lastValidSolutionTimestampSeconds = Double.NEGATIVE_INFINITY;
     private boolean hasLatchedValidSolution = false;
     private double lastVelocityLimitTimestampSeconds = Double.NaN;
-    private double latchedMaximumTowardHubRadialSpeedMetersPerSecond = Double.POSITIVE_INFINITY;
+    private double latchedMaximumTowardHubTravelSpeedMetersPerSecond = Double.POSITIVE_INFINITY;
     private double lastCommandedFlywheelSetpointIps = 0.0;
     private double previousCycleMeasuredHoodAngleDegrees = Double.NaN;
     private double previousCycleCommandedHoodAngleDegrees = Double.NaN;
@@ -175,7 +201,7 @@ public class ScoreInHub extends Command {
     @Override
     public void initialize() {
         lastVelocityLimitTimestampSeconds = Double.NaN;
-        latchedMaximumTowardHubRadialSpeedMetersPerSecond = Double.POSITIVE_INFINITY;
+        latchedMaximumTowardHubTravelSpeedMetersPerSecond = Double.POSITIVE_INFINITY;
         lastCommandedFlywheelSetpointIps = shooter.getMainFlywheelSpeedIPS();
         previousCycleMeasuredHoodAngleDegrees = Double.NaN;
         previousCycleCommandedHoodAngleDegrees = Double.NaN;
@@ -234,9 +260,16 @@ public class ScoreInHub extends Command {
             publishPredictedVelocityTelemetry(Double.NaN, Double.NaN, Double.NaN);
             empiricalDebugInfo.invalidate();
             publishEmpiricalSolverTelemetry();
-            Translation2d fallbackFieldVelocityMetersPerSecond = clampTowardHubRadialSpeed(
+            Translation2d currentRobotPosition = getCurrentRobotPosition();
+            if (isDrivingAwayFromHub(
                     requestedFieldRelativeVelocityMetersPerSecond,
-                    getCurrentRobotPosition(),
+                    currentRobotPosition,
+                    target)) {
+                latchedMaximumTowardHubTravelSpeedMetersPerSecond = Double.POSITIVE_INFINITY;
+            }
+            Translation2d fallbackFieldVelocityMetersPerSecond = clampTowardHubTravelSpeed(
+                    requestedFieldRelativeVelocityMetersPerSecond,
+                    currentRobotPosition,
                     target,
                     MAX_ACTIVE_TRANSLATIONAL_SPEED_METERS_PER_SECOND);
             Translation2d fallbackOperatorPerspectiveVelocityMetersPerSecond =
@@ -287,7 +320,7 @@ public class ScoreInHub extends Command {
                 futurePose.getTranslation(),
                 target,
                 futurePose.getRotation());
-        Translation2d limitedFieldRelativeVelocityMetersPerSecond = limitTowardHubRadialVelocityForViableShot(
+        Translation2d limitedFieldRelativeVelocityMetersPerSecond = limitTowardHubTravelVelocityForViableShot(
                 requestedFieldRelativeVelocityMetersPerSecond,
                 futurePose.getTranslation(),
                 target,
@@ -365,7 +398,7 @@ public class ScoreInHub extends Command {
     @Override
     public void end(boolean interrupted) {
         lastVelocityLimitTimestampSeconds = Double.NaN;
-        latchedMaximumTowardHubRadialSpeedMetersPerSecond = Double.POSITIVE_INFINITY;
+        latchedMaximumTowardHubTravelSpeedMetersPerSecond = Double.POSITIVE_INFINITY;
         publishPredictedVelocityTelemetry(Double.NaN, Double.NaN, Double.NaN);
         publishPinpointVelocityTelemetry(Double.NaN, Double.NaN, Double.NaN);
         empiricalDebugInfo.invalidate();
@@ -654,24 +687,52 @@ public class ScoreInHub extends Command {
         tuningCommandedFlywheelCommandIpsPublisher.set(empiricalDebugInfo.getCommandedFlywheelCommandIps());
     }
 
-    private Translation2d limitTowardHubRadialVelocityForViableShot(
+    private Translation2d limitTowardHubTravelVelocityForViableShot(
             Translation2d requestedVelocityMetersPerSecond,
             Translation2d futureRobotPosition,
             Translation2d target,
             Rotation2d preferredRobotHeading) {
-        double minimumAllowedRadialSpeedMetersPerSecond = MAX_ACTIVE_TRANSLATIONAL_SPEED_METERS_PER_SECOND;
+        TravelVelocityLimitResult limitResult = limitTowardHubTravelVelocityForViableShot(
+                requestedVelocityMetersPerSecond,
+                futureRobotPosition,
+                target,
+                MAX_ACTIVE_TRANSLATIONAL_SPEED_METERS_PER_SECOND,
+                latchedMaximumTowardHubTravelSpeedMetersPerSecond,
+                (robotFieldVxMetersPerSecond, robotFieldVyMetersPerSecond) -> hasViableHubShotForVelocity(
+                        robotFieldVxMetersPerSecond,
+                        robotFieldVyMetersPerSecond,
+                        target,
+                        preferredRobotHeading));
+        latchedMaximumTowardHubTravelSpeedMetersPerSecond =
+                limitResult.getUpdatedMaximumTowardHubTravelSpeedMetersPerSecond();
+        return limitResult.getLimitedVelocityMetersPerSecond();
+    }
+
+    static TravelVelocityLimitResult limitTowardHubTravelVelocityForViableShot(
+            Translation2d requestedVelocityMetersPerSecond,
+            Translation2d futureRobotPosition,
+            Translation2d target,
+            double minimumAllowedTravelSpeedMetersPerSecond,
+            double currentMaximumTowardHubTravelSpeedMetersPerSecond,
+            HubShotViabilityEvaluator shotViabilityEvaluator) {
         if (requestedVelocityMetersPerSecond == null
                 || futureRobotPosition == null
                 || target == null
-                || preferredRobotHeading == null) {
-            return requestedVelocityMetersPerSecond;
+                || shotViabilityEvaluator == null
+                || !Double.isFinite(minimumAllowedTravelSpeedMetersPerSecond)
+                || minimumAllowedTravelSpeedMetersPerSecond < 0.0) {
+            return new TravelVelocityLimitResult(
+                    requestedVelocityMetersPerSecond,
+                    currentMaximumTowardHubTravelSpeedMetersPerSecond);
         }
 
         double targetDxMeters = target.getX() - futureRobotPosition.getX();
         double targetDyMeters = target.getY() - futureRobotPosition.getY();
         double targetDistanceMeters = Math.hypot(targetDxMeters, targetDyMeters);
         if (!(targetDistanceMeters > 1e-9)) {
-            return requestedVelocityMetersPerSecond;
+            return new TravelVelocityLimitResult(
+                    requestedVelocityMetersPerSecond,
+                    currentMaximumTowardHubTravelSpeedMetersPerSecond);
         }
 
         double radialUnitXMeters = targetDxMeters / targetDistanceMeters;
@@ -679,84 +740,89 @@ public class ScoreInHub extends Command {
         double requestedRadialSpeedMetersPerSecond =
                 requestedVelocityMetersPerSecond.getX() * radialUnitXMeters
                         + requestedVelocityMetersPerSecond.getY() * radialUnitYMeters;
-        if (!Double.isFinite(requestedRadialSpeedMetersPerSecond)
-                || requestedRadialSpeedMetersPerSecond <= minimumAllowedRadialSpeedMetersPerSecond + 1e-9) {
-            return requestedVelocityMetersPerSecond;
+        if (!Double.isFinite(requestedRadialSpeedMetersPerSecond)) {
+            return new TravelVelocityLimitResult(
+                    requestedVelocityMetersPerSecond,
+                    currentMaximumTowardHubTravelSpeedMetersPerSecond);
+        }
+        if (requestedRadialSpeedMetersPerSecond < -1e-9) {
+            return new TravelVelocityLimitResult(requestedVelocityMetersPerSecond, Double.POSITIVE_INFINITY);
         }
 
-        double tangentialVelocityXMetersPerSecond =
-                requestedVelocityMetersPerSecond.getX() - requestedRadialSpeedMetersPerSecond * radialUnitXMeters;
-        double tangentialVelocityYMetersPerSecond =
-                requestedVelocityMetersPerSecond.getY() - requestedRadialSpeedMetersPerSecond * radialUnitYMeters;
-        double currentMaximumAllowedRadialSpeedMetersPerSecond = Math.max(
-                minimumAllowedRadialSpeedMetersPerSecond,
-                latchedMaximumTowardHubRadialSpeedMetersPerSecond);
-        double candidateRadialSpeedMetersPerSecond = Math.min(
-                requestedRadialSpeedMetersPerSecond,
-                currentMaximumAllowedRadialSpeedMetersPerSecond);
-        if (hasViableHubShotForVelocity(
-                tangentialVelocityXMetersPerSecond + candidateRadialSpeedMetersPerSecond * radialUnitXMeters,
-                tangentialVelocityYMetersPerSecond + candidateRadialSpeedMetersPerSecond * radialUnitYMeters,
-                target,
-                preferredRobotHeading)) {
-            if (requestedRadialSpeedMetersPerSecond <= currentMaximumAllowedRadialSpeedMetersPerSecond + 1e-9) {
-                return requestedVelocityMetersPerSecond;
+        double requestedTravelSpeedMetersPerSecond = requestedVelocityMetersPerSecond.getNorm();
+        if (!(requestedTravelSpeedMetersPerSecond > 1e-9)) {
+            return new TravelVelocityLimitResult(
+                    requestedVelocityMetersPerSecond,
+                    currentMaximumTowardHubTravelSpeedMetersPerSecond);
+        }
+        if (requestedRadialSpeedMetersPerSecond <= 1e-9
+                || requestedTravelSpeedMetersPerSecond <= minimumAllowedTravelSpeedMetersPerSecond + 1e-9) {
+            return new TravelVelocityLimitResult(
+                    requestedVelocityMetersPerSecond,
+                    currentMaximumTowardHubTravelSpeedMetersPerSecond);
+        }
+
+        Translation2d travelUnitVector = requestedVelocityMetersPerSecond.div(requestedTravelSpeedMetersPerSecond);
+        double currentMaximumAllowedTravelSpeedMetersPerSecond = Math.max(
+                minimumAllowedTravelSpeedMetersPerSecond,
+                currentMaximumTowardHubTravelSpeedMetersPerSecond);
+        double candidateTravelSpeedMetersPerSecond = Math.min(
+                requestedTravelSpeedMetersPerSecond,
+                currentMaximumAllowedTravelSpeedMetersPerSecond);
+        if (shotViabilityEvaluator.hasViableShot(
+                travelUnitVector.getX() * candidateTravelSpeedMetersPerSecond,
+                travelUnitVector.getY() * candidateTravelSpeedMetersPerSecond)) {
+            if (requestedTravelSpeedMetersPerSecond <= currentMaximumAllowedTravelSpeedMetersPerSecond + 1e-9) {
+                return new TravelVelocityLimitResult(
+                        requestedVelocityMetersPerSecond,
+                        currentMaximumTowardHubTravelSpeedMetersPerSecond);
             }
-            return new Translation2d(
-                    tangentialVelocityXMetersPerSecond + candidateRadialSpeedMetersPerSecond * radialUnitXMeters,
-                    tangentialVelocityYMetersPerSecond + candidateRadialSpeedMetersPerSecond * radialUnitYMeters);
+            return new TravelVelocityLimitResult(
+                    travelUnitVector.times(candidateTravelSpeedMetersPerSecond),
+                    currentMaximumTowardHubTravelSpeedMetersPerSecond);
         }
 
-        if (!hasViableHubShotForVelocity(
-                tangentialVelocityXMetersPerSecond
-                        + minimumAllowedRadialSpeedMetersPerSecond * radialUnitXMeters,
-                tangentialVelocityYMetersPerSecond
-                        + minimumAllowedRadialSpeedMetersPerSecond * radialUnitYMeters,
-                target,
-                preferredRobotHeading)) {
-            latchedMaximumTowardHubRadialSpeedMetersPerSecond = minimumAllowedRadialSpeedMetersPerSecond;
-            return new Translation2d(
-                    tangentialVelocityXMetersPerSecond
-                            + minimumAllowedRadialSpeedMetersPerSecond * radialUnitXMeters,
-                    tangentialVelocityYMetersPerSecond
-                            + minimumAllowedRadialSpeedMetersPerSecond * radialUnitYMeters);
+        if (!shotViabilityEvaluator.hasViableShot(
+                travelUnitVector.getX() * minimumAllowedTravelSpeedMetersPerSecond,
+                travelUnitVector.getY() * minimumAllowedTravelSpeedMetersPerSecond)) {
+            return new TravelVelocityLimitResult(
+                    travelUnitVector.times(minimumAllowedTravelSpeedMetersPerSecond),
+                    minimumAllowedTravelSpeedMetersPerSecond);
         }
 
-        double lowRadialSpeedMetersPerSecond = minimumAllowedRadialSpeedMetersPerSecond;
-        double highRadialSpeedMetersPerSecond = candidateRadialSpeedMetersPerSecond;
-        double bestViableRadialSpeedMetersPerSecond = lowRadialSpeedMetersPerSecond;
+        double lowTravelSpeedMetersPerSecond = minimumAllowedTravelSpeedMetersPerSecond;
+        double highTravelSpeedMetersPerSecond = candidateTravelSpeedMetersPerSecond;
+        double bestViableTravelSpeedMetersPerSecond = lowTravelSpeedMetersPerSecond;
         for (int iteration = 0; iteration < RADIAL_SPEED_LIMIT_SEARCH_MAX_ITERATIONS; iteration++) {
-            if (highRadialSpeedMetersPerSecond - lowRadialSpeedMetersPerSecond
+            if (highTravelSpeedMetersPerSecond - lowTravelSpeedMetersPerSecond
                     <= RADIAL_SPEED_LIMIT_SEARCH_TOLERANCE_METERS_PER_SECOND) {
                 break;
             }
 
-            double midRadialSpeedMetersPerSecond =
-                    0.5 * (lowRadialSpeedMetersPerSecond + highRadialSpeedMetersPerSecond);
-            boolean hasViableShot = hasViableHubShotForVelocity(
-                    tangentialVelocityXMetersPerSecond + midRadialSpeedMetersPerSecond * radialUnitXMeters,
-                    tangentialVelocityYMetersPerSecond + midRadialSpeedMetersPerSecond * radialUnitYMeters,
-                    target,
-                    preferredRobotHeading);
+            double midTravelSpeedMetersPerSecond =
+                    0.5 * (lowTravelSpeedMetersPerSecond + highTravelSpeedMetersPerSecond);
+            boolean hasViableShot = shotViabilityEvaluator.hasViableShot(
+                    travelUnitVector.getX() * midTravelSpeedMetersPerSecond,
+                    travelUnitVector.getY() * midTravelSpeedMetersPerSecond);
             if (hasViableShot) {
-                bestViableRadialSpeedMetersPerSecond = midRadialSpeedMetersPerSecond;
-                lowRadialSpeedMetersPerSecond = midRadialSpeedMetersPerSecond;
+                bestViableTravelSpeedMetersPerSecond = midTravelSpeedMetersPerSecond;
+                lowTravelSpeedMetersPerSecond = midTravelSpeedMetersPerSecond;
             } else {
-                highRadialSpeedMetersPerSecond = midRadialSpeedMetersPerSecond;
+                highTravelSpeedMetersPerSecond = midTravelSpeedMetersPerSecond;
             }
         }
 
-        latchedMaximumTowardHubRadialSpeedMetersPerSecond = Math.min(
-                currentMaximumAllowedRadialSpeedMetersPerSecond,
+        double updatedMaximumTowardHubTravelSpeedMetersPerSecond = Math.min(
+                currentMaximumAllowedTravelSpeedMetersPerSecond,
                 Math.max(
-                        minimumAllowedRadialSpeedMetersPerSecond,
-                        RADIAL_SPEED_LIMIT_VIABLE_MARGIN * bestViableRadialSpeedMetersPerSecond));
-        double limitedRadialSpeedMetersPerSecond = Math.min(
-                requestedRadialSpeedMetersPerSecond,
-                latchedMaximumTowardHubRadialSpeedMetersPerSecond);
-        return new Translation2d(
-                tangentialVelocityXMetersPerSecond + limitedRadialSpeedMetersPerSecond * radialUnitXMeters,
-                tangentialVelocityYMetersPerSecond + limitedRadialSpeedMetersPerSecond * radialUnitYMeters);
+                        minimumAllowedTravelSpeedMetersPerSecond,
+                        RADIAL_SPEED_LIMIT_VIABLE_MARGIN * bestViableTravelSpeedMetersPerSecond));
+        double limitedTravelSpeedMetersPerSecond = Math.min(
+                requestedTravelSpeedMetersPerSecond,
+                updatedMaximumTowardHubTravelSpeedMetersPerSecond);
+        return new TravelVelocityLimitResult(
+                travelUnitVector.times(limitedTravelSpeedMetersPerSecond),
+                updatedMaximumTowardHubTravelSpeedMetersPerSecond);
     }
 
     private boolean hasViableHubShotForVelocity(
@@ -816,16 +882,16 @@ public class ScoreInHub extends Command {
         return fieldRelativeVelocity.rotateBy(drivetrain.getDriverPerspectiveForward().unaryMinus());
     }
 
-    private static Translation2d clampTowardHubRadialSpeed(
+    private static Translation2d clampTowardHubTravelSpeed(
             Translation2d requestedVelocity,
             Translation2d robotPosition,
             Translation2d target,
-            double maximumTowardHubRadialSpeedMetersPerSecond) {
+            double maximumTowardHubTravelSpeedMetersPerSecond) {
         if (requestedVelocity == null
                 || robotPosition == null
                 || target == null
-                || !Double.isFinite(maximumTowardHubRadialSpeedMetersPerSecond)
-                || maximumTowardHubRadialSpeedMetersPerSecond < 0.0) {
+                || !Double.isFinite(maximumTowardHubTravelSpeedMetersPerSecond)
+                || maximumTowardHubTravelSpeedMetersPerSecond < 0.0) {
             return requestedVelocity;
         }
 
@@ -841,19 +907,36 @@ public class ScoreInHub extends Command {
         double requestedRadialSpeedMetersPerSecond =
                 requestedVelocity.getX() * radialUnitXMeters
                         + requestedVelocity.getY() * radialUnitYMeters;
-        if (!(requestedRadialSpeedMetersPerSecond > maximumTowardHubRadialSpeedMetersPerSecond)) {
+        if (!(requestedRadialSpeedMetersPerSecond > 1e-9)) {
             return requestedVelocity;
         }
+        double requestedTravelSpeedMetersPerSecond = requestedVelocity.getNorm();
+        if (!(requestedTravelSpeedMetersPerSecond > maximumTowardHubTravelSpeedMetersPerSecond)) {
+            return requestedVelocity;
+        }
+        return requestedVelocity.times(
+                maximumTowardHubTravelSpeedMetersPerSecond / requestedTravelSpeedMetersPerSecond);
+    }
 
-        double tangentialVelocityXMetersPerSecond =
-                requestedVelocity.getX() - requestedRadialSpeedMetersPerSecond * radialUnitXMeters;
-        double tangentialVelocityYMetersPerSecond =
-                requestedVelocity.getY() - requestedRadialSpeedMetersPerSecond * radialUnitYMeters;
-        return new Translation2d(
-                tangentialVelocityXMetersPerSecond
-                        + maximumTowardHubRadialSpeedMetersPerSecond * radialUnitXMeters,
-                tangentialVelocityYMetersPerSecond
-                        + maximumTowardHubRadialSpeedMetersPerSecond * radialUnitYMeters);
+    private static boolean isDrivingAwayFromHub(
+            Translation2d requestedVelocity,
+            Translation2d robotPosition,
+            Translation2d target) {
+        if (requestedVelocity == null || robotPosition == null || target == null) {
+            return false;
+        }
+
+        double targetDxMeters = target.getX() - robotPosition.getX();
+        double targetDyMeters = target.getY() - robotPosition.getY();
+        double targetDistanceMeters = Math.hypot(targetDxMeters, targetDyMeters);
+        if (!(targetDistanceMeters > 1e-9)) {
+            return false;
+        }
+
+        double requestedRadialSpeedMetersPerSecond =
+                (requestedVelocity.getX() * targetDxMeters + requestedVelocity.getY() * targetDyMeters)
+                        / targetDistanceMeters;
+        return requestedRadialSpeedMetersPerSecond < -1e-9;
     }
 
     private Translation2d limitTranslationalAcceleration(SwerveRequest.FieldCentric fieldCentricRequest) {

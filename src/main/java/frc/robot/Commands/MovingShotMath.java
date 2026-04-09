@@ -1000,6 +1000,12 @@ final class MovingShotMath {
 
         double targetDxInches = Inches.convertFrom(targetXMeters - futureRobotXMeters, Meters);
         double targetDyInches = Inches.convertFrom(targetYMeters - futureRobotYMeters, Meters);
+        double targetDistanceInches = Math.hypot(targetDxInches, targetDyInches);
+        if (!(targetDistanceInches > 1e-9)) {
+            return false;
+        }
+        double targetUnitX = targetDxInches / targetDistanceInches;
+        double targetUnitY = targetDyInches / targetDistanceInches;
         double robotFieldVxIps = Inches.convertFrom(robotFieldVxMetersPerSecond, Meters);
         double robotFieldVyIps = Inches.convertFrom(robotFieldVyMetersPerSecond, Meters);
         Translation2d effectiveRobotFieldVelocityIps = clampEmpiricalMovingShotRobotFieldVelocityIps(
@@ -1022,6 +1028,11 @@ final class MovingShotMath {
         for (int iteration = 0;
                 iteration < ShooterConstants.COMMANDED_EMPIRICAL_MOVING_SHOT_MAX_ITERATIONS;
                 iteration++) {
+            double equivalentForwardDistanceInches =
+                    equivalentTargetDxInches * targetUnitX + equivalentTargetDyInches * targetUnitY;
+            if (!(equivalentForwardDistanceInches > 1e-9)) {
+                return false;
+            }
             double equivalentTargetDistanceInches =
                     Math.hypot(equivalentTargetDxInches, equivalentTargetDyInches);
             double lookupTargetDistanceInches = getRawEmpiricalMovingShotLookupDistanceInches(
@@ -1047,6 +1058,7 @@ final class MovingShotMath {
                     lookupTargetDistanceInches,
                     modeledFlywheelCommandIps,
                     preferredHoodAngleDegrees,
+                    false,
                     candidate)) {
                 return false;
             }

@@ -262,6 +262,20 @@ final class ShortRangeHubFlywheelLookup {
             double preferredFlywheelCommandIps,
             double preferredHoodAngleDegrees,
             EmpiricalShotCandidate out) {
+        return findPreferredLegalShot(
+                targetDistanceInches,
+                preferredFlywheelCommandIps,
+                preferredHoodAngleDegrees,
+                true,
+                out);
+    }
+
+    static boolean findPreferredLegalShot(
+            double targetDistanceInches,
+            double preferredFlywheelCommandIps,
+            double preferredHoodAngleDegrees,
+            boolean allowFinalExtrapolation,
+            EmpiricalShotCandidate out) {
         if (out == null) {
             throw new IllegalArgumentException("EmpiricalShotCandidate output must not be null.");
         }
@@ -356,7 +370,8 @@ final class ShortRangeHubFlywheelLookup {
             }
         }
 
-        if (out.isValid()
+        if (allowFinalExtrapolation
+                && out.isValid()
                 && Double.isFinite(preferredFlywheelCommandIps)
                 && (preferredFlywheelCommandIps < legalRange.minimum - EPSILON
                         || preferredFlywheelCommandIps > legalRange.maximum + EPSILON)) {
@@ -504,12 +519,18 @@ final class ShortRangeHubFlywheelLookup {
         }
 
         int lowerDistanceIndex = upperDistanceIndex - 1;
-        return interpolate(
-                DISTANCES_INCHES[lowerDistanceIndex],
-                getRowBoundary(lowerDistanceIndex, minimumBoundary),
-                DISTANCES_INCHES[upperDistanceIndex],
-                getRowBoundary(upperDistanceIndex, minimumBoundary),
-                clampedTargetDistanceInches);
+        double[] lowerHoodAnglesDegrees = HOOD_ANGLES_DEGREES_BY_DISTANCE[lowerDistanceIndex];
+        double[] upperHoodAnglesDegrees = HOOD_ANGLES_DEGREES_BY_DISTANCE[upperDistanceIndex];
+        double minimumSharedHoodAngleDegrees = Math.max(
+                lowerHoodAnglesDegrees[0],
+                upperHoodAnglesDegrees[0]);
+        double maximumSharedHoodAngleDegrees = Math.min(
+                lowerHoodAnglesDegrees[lowerHoodAnglesDegrees.length - 1],
+                upperHoodAnglesDegrees[upperHoodAnglesDegrees.length - 1]);
+        if (minimumSharedHoodAngleDegrees > maximumSharedHoodAngleDegrees + EPSILON) {
+            return Double.NaN;
+        }
+        return minimumBoundary ? minimumSharedHoodAngleDegrees : maximumSharedHoodAngleDegrees;
     }
 
     private static double getInterpolatedRowSpeedBoundary(double targetDistanceInches, boolean minimumBoundary) {

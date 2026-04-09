@@ -810,7 +810,7 @@ public final class BallTrajectoryLookup {
             double hoodAngleDegrees,
             double exitVelocityIps,
             double targetRadialDistanceInches) {
-        DistanceSample distanceSample = getDistanceSampleAtTarget(
+        DistanceSample distanceSample = getDescendingDistanceSampleAtTarget(
                 hoodAngleDegrees,
                 exitVelocityIps,
                 targetRadialDistanceInches);
@@ -901,6 +901,17 @@ public final class BallTrajectoryLookup {
         }
 
         return null;
+    }
+
+    private static DistanceSample getDescendingDistanceSampleAtTarget(
+            double hoodAngleDegrees,
+            double exitVelocityIps,
+            double targetRadialDistanceInches) {
+        DistanceSample distanceSample = getDistanceSampleAtTarget(
+                hoodAngleDegrees,
+                exitVelocityIps,
+                targetRadialDistanceInches);
+        return distanceSample != null && distanceSample.isDescending() ? distanceSample : null;
     }
 
     static double getMaximumBallZElevationForSolvedShotInches(
@@ -1003,11 +1014,11 @@ public final class BallTrajectoryLookup {
             double hoodAngleDegrees,
             double exitVelocityIps,
             double targetRadialDistanceInches) {
-        DistanceSample distanceSample = getDistanceSampleAtTarget(
+        DistanceSample distanceSample = getDescendingDistanceSampleAtTarget(
                 hoodAngleDegrees,
                 exitVelocityIps,
                 targetRadialDistanceInches);
-        return distanceSample != null && distanceSample.isDescending();
+        return distanceSample != null;
     }
 
     private static double selectBestDescendingCandidate(
