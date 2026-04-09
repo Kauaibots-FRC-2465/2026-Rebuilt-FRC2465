@@ -14,6 +14,11 @@ import frc.robot.OverrideCommand;
  * so they can be scheduled as a single unit.
  */
 public class ShooterSubsystem extends SubsystemBase {
+    private static final double KICKER_IDLE_REVERSE_MAGNITUDE_IPS = 200.0;
+    private static final double KICKER_FORWARD_ENABLE_MAIN_FLYWHEEL_IPS = 200.0;
+    private static final double KICKER_COMMAND_SCALE = 0.7;
+    private static final double COMMAND_EPSILON_IPS = 1e-9;
+
     /**
      * Configuration for one internally owned flywheel.
      */
@@ -105,7 +110,7 @@ public class ShooterSubsystem extends SubsystemBase {
 
     public ShooterSubsystem(
             String canBusName,
-            FlywheelConfig mainFlywheelConfig,
+            FlywheelConfig mainFlyw
             FlywheelConfig mirroredMainFlywheelConfig,
             FlywheelConfig kickerConfig,
             FlywheelConfig backspinConfig) {
@@ -127,16 +132,17 @@ public class ShooterSubsystem extends SubsystemBase {
     public void setIPS(double mainFlywheelIps, double kickerIps, double backspinIps) {
         mainFlywheel.setIPS(mainFlywheelIps);
         mirroredMainFlywheel.setIPS(mainFlywheelIps);
-        kicker.setIPS(kickerIps*.7);
+        kicker.setIPS(kickerIps * KICKER_COMMAND_SCALE);
         backspinFlywheel.setIPS(backspinIps);
     }
 
     /**
-     * Sets a symmetric shooter speed where kicker runs opposite the main and
-     * backspin flywheels.
+     * Sets a symmetric shooter speed where the kicker follows the main flywheel's
+     * API-layer sign after spin-up, and otherwise runs opposite for idle and
+     * pre-spinup purge.
      */
     public void setCoupledIPS(double ips) {
-        setIPS(ips, -ips, ips);
+        setIPS(ips, getCoupledKickerCommandIps(ips), ips);
     }
 
     /**
@@ -164,7 +170,7 @@ public class ShooterSubsystem extends SubsystemBase {
 
     /**
      * Returns a command that continuously drives the shooter in the common
-     * coupled mode: main and backspin positive, kicker negative.
+     * coupled mode.
      */
     public Command cmdSetCoupledIPS(DoubleSupplier ipsSupplier) {
         Objects.requireNonNull(ipsSupplier, "ipsSupplier must not be null");
@@ -199,6 +205,16 @@ public class ShooterSubsystem extends SubsystemBase {
 
     public double getBackspinFlywheelSpeedIPS() {
         return backspinFlywheel.getSpeedIPS();
+    }
+
+    private double getCoupledKickerCommandIps(double mainFlywheelCommandIps) {
+        if (Math.abs(mainFlywheelCommandIps) <= COMMAND_EPSILON_IPS) {
+            return -KICKER_IDLE_REVERSE_MAGNITUDE_IPS;
+        }
+        if (Math.abs(mainFlywheel.getSpeedIPS()) < KICKER_FORWARD_ENABLE_MAIN_FLYWHEEL_IPS) {
+            return -Math.copySign(KICKER_IDLE_REVERSE_MAGNITUDE_IPS, mainFlywheelCommandIps);
+        }
+        return mainFlywheelCommandIps;
     }
 
     public void recoverIfResetOccurred() {

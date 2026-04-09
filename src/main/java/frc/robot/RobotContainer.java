@@ -106,7 +106,6 @@ public class RobotContainer implements Subsystem {
     private static final double HORIZONTAL_AIM_TRIM_STEP_DEGREES = 1.0;
     private static final double ACTIVE_INTAKE_ANGLE_STEP_DEGREES = 0.2;
     private static final double DEFAULT_ACTIVE_INTAKE_ANGLE_DEGREES = 109.0;
-    private static final double IDLE_REVERSE_KICKER_IPS = 200.0;
     private static final double MAIN_FLYWHEEL_VELOCITY_SAMPLE_WINDOW_SECONDS = 0.010;
     private static final double DRIVE_TUNING_LOW_SPEED_METERS_PER_SECOND = 1.0;
     private static final double DRIVE_TUNING_HIGH_SPEED_METERS_PER_SECOND = 2.0;
@@ -409,7 +408,7 @@ private Command showAllianceMarquee() {
             0.0095,
             2,
             30,
-            false,
+            true,
             MAIN_FLYWHEEL_VELOCITY_SAMPLE_WINDOW_SECONDS),
           new ShooterSubsystem.FlywheelConfig(
             MotorData.BACKSPIN.id,
@@ -528,10 +527,7 @@ private Command showAllianceMarquee() {
         );
 
         //shooter.setDefaultCommand(shooter.cmdSetCoupledIPSFactor(this::getShooterPower, 1500.0));
-        shooter.setDefaultCommand(shooter.cmdSetIPS(
-                this::getDesiredShooterIps,
-                this::getDesiredKickerIps,
-                this::getDesiredBackspinIps));
+        shooter.setDefaultCommand(shooter.cmdSetCoupledIPS(this::getDesiredShooterIps));
 
         intakePosition.setDefaultCommand(intakePosition.cmdSetAngle(this::getDesiredIntakeAngle));
         intakedrive.setDefaultCommand(intakedrive.cmdSetIPS(this::getDesiredIntakeDriveIps)); //600 max
@@ -939,18 +935,6 @@ private Command showAllianceMarquee() {
             return pathPlannerAutoAssist.getCommandedFlywheelIps();
         }
         return getTuningShooterPower();
-    }
-
-    private double getDesiredKickerIps() {
-        double desiredShooterIps = getDesiredShooterIps();
-        if (Math.abs(desiredShooterIps) > 1e-9) {
-            return -desiredShooterIps;
-        }
-        return IDLE_REVERSE_KICKER_IPS;
-    }
-
-    private double getDesiredBackspinIps() {
-        return getDesiredShooterIps();
     }
 
     double hoodTuneAngle = ShooterConstants.COMMANDED_MAXIMUM_ALLOWED_HOOD_ANGLE_DEGREES;
