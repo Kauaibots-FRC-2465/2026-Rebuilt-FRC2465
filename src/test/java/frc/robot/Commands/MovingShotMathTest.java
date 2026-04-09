@@ -37,6 +37,13 @@ class MovingShotMathTest {
     private static final double PHYSICS_MAX_SIMULATION_TIME_SECONDS = 5.0;
     private static final double GRAVITY_IPS2 = 386.08858267716535;
     private static final double ANGLED_PHYSICS_TANGENTIAL_TO_RADIAL_RATIO = 0.2;
+    private static final double LOCAL_CONTINUITY_DISTANCE_STEP_INCHES = 1.0;
+    private static final double LOCAL_CONTINUITY_MAX_HOOD_STEP_DEGREES = 8.0;
+    private static final double LOCAL_CONTINUITY_MAX_FLYWHEEL_STEP_IPS = 40.0;
+    private static final double LOCAL_CONTINUITY_MAX_AZIMUTH_STEP_DEGREES = 8.0;
+    private static final double LOCAL_CONTINUITY_MAX_SPEED_LIMIT_STEP_METERS_PER_SECOND = 0.60;
+    private static final double MINIMUM_ALLOWED_TRAVEL_SPEED_METERS_PER_SECOND = 0.5;
+    private static final double VIABLE_SPEED_MARGIN = 0.90;
     private static final double GLOBAL_MIN_EMPIRICAL_FLYWHEEL_IPS =
             computeGlobalEmpiricalFlywheelBound(true);
     private static final double GLOBAL_MAX_EMPIRICAL_FLYWHEEL_IPS =
@@ -389,6 +396,18 @@ class MovingShotMathTest {
                 }
             }
         }
+    }
+
+    @Test
+    void empiricalMovingShotRemainsLocallyContinuousForStraightApproachWhenFlywheelStateIsCarriedForward() {
+        assertEmpiricalMovingShotLocalContinuity(new Translation2d(0.5, 0.0), "straight");
+    }
+
+    @Test
+    void empiricalMovingShotRemainsLocallyContinuousForAngledApproachWhenFlywheelStateIsCarriedForward() {
+        assertEmpiricalMovingShotLocalContinuity(
+                new Translation2d(0.5, 0.5 * ANGLED_PHYSICS_TANGENTIAL_TO_RADIAL_RATIO),
+                "angled");
     }
 
     @Test
@@ -981,6 +1000,22 @@ class MovingShotMathTest {
             double currentFlywheelSpeedIps,
             double robotFieldVxMetersPerSecond,
             double robotFieldVyMetersPerSecond) {
+        return solveEmpiricalMovingShotForVelocity(
+                targetDistanceInches,
+                preferredHoodAngleDegrees,
+                currentFlywheelSpeedIps,
+                currentFlywheelSpeedIps,
+                robotFieldVxMetersPerSecond,
+                robotFieldVyMetersPerSecond);
+    }
+
+    private static BallTrajectoryLookup.MovingShotSolution solveEmpiricalMovingShotForVelocity(
+            double targetDistanceInches,
+            double preferredHoodAngleDegrees,
+            double currentFlywheelSpeedIps,
+            double previousCommandedFlywheelSetpointIps,
+            double robotFieldVxMetersPerSecond,
+            double robotFieldVyMetersPerSecond) {
         BallTrajectoryLookup.MovingShotSolution solution = new BallTrajectoryLookup.MovingShotSolution();
         boolean solved = MovingShotMath.solveIdealMovingShotWithUpperHoodFallback(
                 ShooterConstants.COMMANDED_MINIMUM_ALLOWED_HOOD_ANGLE_DEGREES,
@@ -1000,7 +1035,7 @@ class MovingShotMathTest {
                 MIN_TURRET_ANGLE_DEGREES,
                 MAX_TURRET_ANGLE_DEGREES,
                 currentFlywheelSpeedIps,
-                currentFlywheelSpeedIps,
+                previousCommandedFlywheelSetpointIps,
                 solution);
         if (!solved) {
             solution.invalidate();
@@ -1312,6 +1347,285 @@ class MovingShotMathTest {
                         longerShotSolution.getFlywheelCommandIps(),
                         shorterShotSolution.getHoodAngleDegrees(),
                         shorterShotSolution.getFlywheelCommandIps()));
+    }
+
+    private static void assertEmpiricalMovingShotLocalContinuity(
+            Translation2d requestedVelocityMetersPerSecond,
+            String label) {
+        double travelSpeedMetersPerSecond = requestedVelocityMetersPerSecond.getNorm();
+        Translation2d travelUnitVector = requestedVelocityMetersPerSecond.div(travelSpeedMetersPerSecond);
+        double currentFlywheelSpeedIps =
+                ShortRangeHubFlywheelLookup.getFallbackManifoldFlywheelCommandIps(
+                        ShooterConstants.DATA_COLLECTION_SHORT_RANGE_EMPIRICAL_MAX_DISTANCE_INCHES);
+        double previousCommandedFlywheelSetpointIps = currentFlywheelSpeedIps;
+        double currentPreferredHoodAngleDegrees =
+                ShortRangeHubFlywheelLookup.getIdealHoodAngleDegrees(
+                        ShooterConstants.DATA_COLLECTION_SHORT_RANGE_EMPIRICAL_MAX_DISTANCE_INCHES);
+        BallTrajectoryLookup.MovingShotSolution previousSolution = null;
+        double previousMaximumTravelSpeedMetersPerSecond = Double.NaN;
+
+        for (double targetDistanceInches = ShooterConstants.DATA_COLLECTION_SHORT_RANGE_EMPIRICAL_MAX_DISTANCE_INCHES;
+                targetDistanceInches >= ShooterConstants.DATA_COLLECTION_SHORT_RANGE_MIN_DISTANCE_INCHES - 1e-9;
+                targetDistanceInches -= LOCAL_CONTINUITY_DISTANCE_STEP_INCHES) {
+            double maximumTravelSpeedMetersPerSecond = findMaximumStrictEmpiricalTravelSpeedMetersPerSecond(
+                    targetDistanceInches,
+                    travelUnitVector,
+                    currentPreferredHoodAngleDegrees,
+                    currentFlywheelSpeedIps,
+                    previousCommandedFlywheelSetpointIps);
+            double limitedTravelSpeedMetersPerSecond =
+                    Math.min(travelSpeedMetersPerSecond, maximumTravelSpeedMetersPerSecond);
+            Translation2d limitedVelocityMetersPerSecond =
+                    travelUnitVector.times(limitedTravelSpeedMetersPerSecond);
+            BallTrajectoryLookup.MovingShotSolution solution = solveEmpiricalMovingShotForVelocity(
+                    targetDistanceInches,
+                    currentPreferredHoodAngleDegrees,
+                    currentFlywheelSpeedIps,
+                    previousCommandedFlywheelSetpointIps,
+                    limitedVelocityMetersPerSecond.getX(),
+                    limitedVelocityMetersPerSecond.getY());
+            String continuitySolveDescription = describeEmpiricalContinuitySolve(
+                    targetDistanceInches,
+                    limitedVelocityMetersPerSecond,
+                    currentPreferredHoodAngleDegrees,
+                    currentFlywheelSpeedIps,
+                    previousCommandedFlywheelSetpointIps);
+
+            assertTrue(
+                    solution.isValid(),
+                    String.format(
+                            "Expected a valid %s continuity solution at %.1f in with current %.3f and previous %.3f IPS. %s",
+                            label,
+                            targetDistanceInches,
+                            currentFlywheelSpeedIps,
+                            previousCommandedFlywheelSetpointIps,
+                            continuitySolveDescription));
+            assertTrue(
+                    Double.isFinite(maximumTravelSpeedMetersPerSecond),
+                    String.format(
+                            "Expected a finite %s max speed at %.1f in with current %.3f and previous %.3f IPS",
+                            label,
+                            targetDistanceInches,
+                            currentFlywheelSpeedIps,
+                            previousCommandedFlywheelSetpointIps));
+
+            if (previousSolution != null) {
+                double hoodDeltaDegrees =
+                        Math.abs(solution.getHoodAngleDegrees() - previousSolution.getHoodAngleDegrees());
+                double flywheelDeltaIps =
+                        Math.abs(solution.getFlywheelCommandIps() - previousSolution.getFlywheelCommandIps());
+                double azimuthDeltaDegrees = Math.abs(MathUtil.inputModulus(
+                        solution.getShotAzimuthDegrees() - previousSolution.getShotAzimuthDegrees(),
+                        -180.0,
+                        180.0));
+                double maximumTravelSpeedDeltaMetersPerSecond =
+                        Math.abs(maximumTravelSpeedMetersPerSecond - previousMaximumTravelSpeedMetersPerSecond);
+
+                assertTrue(
+                        hoodDeltaDegrees <= LOCAL_CONTINUITY_MAX_HOOD_STEP_DEGREES,
+                        String.format(
+                                "Expected %s hood continuity across %.1f in -> %.1f in, but delta was %.3f deg (%.3f -> %.3f)",
+                                label,
+                                previousSolution.getTargetRadialDistanceInches(),
+                                targetDistanceInches,
+                                hoodDeltaDegrees,
+                                previousSolution.getHoodAngleDegrees(),
+                                solution.getHoodAngleDegrees()));
+                assertTrue(
+                        flywheelDeltaIps <= LOCAL_CONTINUITY_MAX_FLYWHEEL_STEP_IPS,
+                        String.format(
+                                "Expected %s flywheel continuity across %.1f in -> %.1f in, but delta was %.3f ips (%.3f -> %.3f)",
+                                label,
+                                previousSolution.getTargetRadialDistanceInches(),
+                                targetDistanceInches,
+                                flywheelDeltaIps,
+                                previousSolution.getFlywheelCommandIps(),
+                                solution.getFlywheelCommandIps()));
+                assertTrue(
+                        azimuthDeltaDegrees <= LOCAL_CONTINUITY_MAX_AZIMUTH_STEP_DEGREES,
+                        String.format(
+                                "Expected %s azimuth continuity across %.1f in -> %.1f in, but delta was %.3f deg (%.3f -> %.3f)",
+                                label,
+                                previousSolution.getTargetRadialDistanceInches(),
+                                targetDistanceInches,
+                                azimuthDeltaDegrees,
+                                previousSolution.getShotAzimuthDegrees(),
+                                solution.getShotAzimuthDegrees()));
+                assertTrue(
+                        maximumTravelSpeedDeltaMetersPerSecond <= LOCAL_CONTINUITY_MAX_SPEED_LIMIT_STEP_METERS_PER_SECOND,
+                        String.format(
+                                "Expected %s max-speed continuity across %.1f in -> %.1f in, but delta was %.3f m/s (%.3f -> %.3f)",
+                                label,
+                                previousSolution.getTargetRadialDistanceInches(),
+                                targetDistanceInches,
+                                maximumTravelSpeedDeltaMetersPerSecond,
+                                previousMaximumTravelSpeedMetersPerSecond,
+                                maximumTravelSpeedMetersPerSecond));
+            }
+
+            BallTrajectoryLookup.MovingShotSolution solutionCopy = new BallTrajectoryLookup.MovingShotSolution();
+            solutionCopy.copyFrom(solution);
+            previousSolution = solutionCopy;
+            previousMaximumTravelSpeedMetersPerSecond = maximumTravelSpeedMetersPerSecond;
+            currentPreferredHoodAngleDegrees = solution.getHoodAngleDegrees();
+            previousCommandedFlywheelSetpointIps = solution.getFlywheelCommandIps();
+            currentFlywheelSpeedIps = MovingShotMath.predictFlywheelSpeedFromPreviousSetpointIps(
+                    currentFlywheelSpeedIps,
+                    previousCommandedFlywheelSetpointIps);
+        }
+    }
+
+    private static double findMaximumStrictEmpiricalTravelSpeedMetersPerSecond(
+            double targetDistanceInches,
+            Translation2d travelUnitVector,
+            double preferredHoodAngleDegrees,
+            double currentFlywheelSpeedIps,
+            double previousCommandedFlywheelSetpointIps) {
+        double lowMetersPerSecond = MINIMUM_ALLOWED_TRAVEL_SPEED_METERS_PER_SECOND;
+        double highMetersPerSecond = Math.max(lowMetersPerSecond, 10.0);
+        if (!hasStrictViableEmpiricalHubShot(
+                targetDistanceInches,
+                travelUnitVector.times(lowMetersPerSecond),
+                preferredHoodAngleDegrees,
+                currentFlywheelSpeedIps,
+                previousCommandedFlywheelSetpointIps)) {
+            return lowMetersPerSecond;
+        }
+        while (hasStrictViableEmpiricalHubShot(
+                targetDistanceInches,
+                travelUnitVector.times(highMetersPerSecond),
+                preferredHoodAngleDegrees,
+                currentFlywheelSpeedIps,
+                previousCommandedFlywheelSetpointIps)) {
+            highMetersPerSecond *= 2.0;
+            if (highMetersPerSecond > 40.0) {
+                return highMetersPerSecond;
+            }
+        }
+
+        double bestViableMetersPerSecond = lowMetersPerSecond;
+        for (int iteration = 0; iteration < 25; iteration++) {
+            double midMetersPerSecond = 0.5 * (lowMetersPerSecond + highMetersPerSecond);
+            if (hasStrictViableEmpiricalHubShot(
+                    targetDistanceInches,
+                    travelUnitVector.times(midMetersPerSecond),
+                    preferredHoodAngleDegrees,
+                    currentFlywheelSpeedIps,
+                    previousCommandedFlywheelSetpointIps)) {
+                bestViableMetersPerSecond = midMetersPerSecond;
+                lowMetersPerSecond = midMetersPerSecond;
+            } else {
+                highMetersPerSecond = midMetersPerSecond;
+            }
+        }
+        return Math.max(
+                MINIMUM_ALLOWED_TRAVEL_SPEED_METERS_PER_SECOND,
+                VIABLE_SPEED_MARGIN * bestViableMetersPerSecond);
+    }
+
+    private static boolean hasStrictViableEmpiricalHubShot(
+            double targetDistanceInches,
+            Translation2d robotFieldVelocityMetersPerSecond,
+            double preferredHoodAngleDegrees,
+            double currentFlywheelSpeedIps,
+            double previousCommandedFlywheelSetpointIps) {
+        BallTrajectoryLookup.MovingShotSolution solution = new BallTrajectoryLookup.MovingShotSolution();
+        return MovingShotMath.solveIdealMovingShotWithUpperHoodFallback(
+                ShooterConstants.COMMANDED_MINIMUM_ALLOWED_HOOD_ANGLE_DEGREES,
+                ShooterConstants.COMMANDED_MAXIMUM_ALLOWED_HOOD_ANGLE_DEGREES,
+                preferredHoodAngleDegrees,
+                ShooterConstants.COMMANDED_MOVING_SHOT_HOOD_SEARCH_STEP_DEGREES,
+                0.0,
+                0.0,
+                0.0,
+                robotFieldVelocityMetersPerSecond.getX(),
+                robotFieldVelocityMetersPerSecond.getY(),
+                Inches.of(targetDistanceInches).in(Meters),
+                0.0,
+                TARGET_ELEVATION_INCHES,
+                MAX_HEIGHT_INCHES,
+                0.0,
+                MIN_TURRET_ANGLE_DEGREES,
+                MAX_TURRET_ANGLE_DEGREES,
+                currentFlywheelSpeedIps,
+                previousCommandedFlywheelSetpointIps,
+                true,
+                solution,
+                null);
+    }
+
+    private static String describeEmpiricalContinuitySolve(
+            double targetDistanceInches,
+            Translation2d robotFieldVelocityMetersPerSecond,
+            double preferredHoodAngleDegrees,
+            double currentFlywheelSpeedIps,
+            double previousCommandedFlywheelSetpointIps) {
+        BallTrajectoryLookup.MovingShotSolution permissiveSolution = new BallTrajectoryLookup.MovingShotSolution();
+        MovingShotMath.EmpiricalMovingShotDebugInfo permissiveDebugInfo =
+                new MovingShotMath.EmpiricalMovingShotDebugInfo();
+        boolean hasPermissiveSolution = MovingShotMath.solveIdealMovingShotWithUpperHoodFallback(
+                ShooterConstants.COMMANDED_MINIMUM_ALLOWED_HOOD_ANGLE_DEGREES,
+                ShooterConstants.COMMANDED_MAXIMUM_ALLOWED_HOOD_ANGLE_DEGREES,
+                preferredHoodAngleDegrees,
+                ShooterConstants.COMMANDED_MOVING_SHOT_HOOD_SEARCH_STEP_DEGREES,
+                0.0,
+                0.0,
+                0.0,
+                robotFieldVelocityMetersPerSecond.getX(),
+                robotFieldVelocityMetersPerSecond.getY(),
+                Inches.of(targetDistanceInches).in(Meters),
+                0.0,
+                TARGET_ELEVATION_INCHES,
+                MAX_HEIGHT_INCHES,
+                0.0,
+                MIN_TURRET_ANGLE_DEGREES,
+                MAX_TURRET_ANGLE_DEGREES,
+                currentFlywheelSpeedIps,
+                previousCommandedFlywheelSetpointIps,
+                permissiveSolution,
+                permissiveDebugInfo);
+
+        BallTrajectoryLookup.MovingShotSolution strictSolution = new BallTrajectoryLookup.MovingShotSolution();
+        MovingShotMath.EmpiricalMovingShotDebugInfo strictDebugInfo =
+                new MovingShotMath.EmpiricalMovingShotDebugInfo();
+        boolean hasStrictSolution = MovingShotMath.solveIdealMovingShotWithUpperHoodFallback(
+                ShooterConstants.COMMANDED_MINIMUM_ALLOWED_HOOD_ANGLE_DEGREES,
+                ShooterConstants.COMMANDED_MAXIMUM_ALLOWED_HOOD_ANGLE_DEGREES,
+                preferredHoodAngleDegrees,
+                ShooterConstants.COMMANDED_MOVING_SHOT_HOOD_SEARCH_STEP_DEGREES,
+                0.0,
+                0.0,
+                0.0,
+                robotFieldVelocityMetersPerSecond.getX(),
+                robotFieldVelocityMetersPerSecond.getY(),
+                Inches.of(targetDistanceInches).in(Meters),
+                0.0,
+                TARGET_ELEVATION_INCHES,
+                MAX_HEIGHT_INCHES,
+                0.0,
+                MIN_TURRET_ANGLE_DEGREES,
+                MAX_TURRET_ANGLE_DEGREES,
+                currentFlywheelSpeedIps,
+                previousCommandedFlywheelSetpointIps,
+                true,
+                strictSolution,
+                strictDebugInfo);
+
+        return String.format(
+                "vel=(%.3f, %.3f) m/s prefHood=%.3f permissive=%s lookup=%.3f hood=%.3f modeled=%.3f cmd=%.3f strict=%s strictLookup=%.3f strictHood=%.3f strictModeled=%.3f strictCmd=%.3f",
+                robotFieldVelocityMetersPerSecond.getX(),
+                robotFieldVelocityMetersPerSecond.getY(),
+                preferredHoodAngleDegrees,
+                hasPermissiveSolution,
+                permissiveDebugInfo.getLookupTargetDistanceInches(),
+                permissiveDebugInfo.getSelectedHoodAngleDegrees(),
+                permissiveDebugInfo.getModeledFlywheelCommandIps(),
+                permissiveDebugInfo.getCommandedFlywheelCommandIps(),
+                hasStrictSolution,
+                strictDebugInfo.getLookupTargetDistanceInches(),
+                strictDebugInfo.getSelectedHoodAngleDegrees(),
+                strictDebugInfo.getModeledFlywheelCommandIps(),
+                strictDebugInfo.getCommandedFlywheelCommandIps());
     }
 
     private static void assertEmpiricalShotLandsNearTargetInPhysicsModel(

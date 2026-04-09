@@ -1043,6 +1043,89 @@ final class MovingShotMath {
                 - radialVelocityIps * ShooterConstants.COMMANDED_EMPIRICAL_MOVING_SHOT_RADIAL_DISTANCE_BIAS_SECONDS;
     }
 
+    private static boolean isBetterFiniteTofEmpiricalCandidate(
+            double flywheelErrorIps,
+            double hoodErrorDegrees,
+            double bestFlywheelErrorIps,
+            double bestHoodErrorDegrees) {
+        if (flywheelErrorIps < bestFlywheelErrorIps - 1e-9) {
+            return true;
+        }
+        if (flywheelErrorIps > bestFlywheelErrorIps + 1e-9) {
+            return false;
+        }
+        return hoodErrorDegrees < bestHoodErrorDegrees - 1e-9;
+    }
+
+    private static boolean findNearestFiniteDescendingEmpiricalCandidate(
+            double lookupTargetDistanceInches,
+            double modeledFlywheelCommandIps,
+            double preferredHoodAngleDegrees,
+            double preferredFlywheelCommandIps,
+            ShortRangeHubFlywheelLookup.EmpiricalShotCandidate out) {
+        Objects.requireNonNull(out, "out must not be null");
+        out.invalidate();
+
+        double minimumHoodAngleDegrees =
+                ShortRangeHubFlywheelLookup.getMinimumHoodAngleDegrees(lookupTargetDistanceInches);
+        double maximumHoodAngleDegrees =
+                ShortRangeHubFlywheelLookup.getMaximumHoodAngleDegrees(lookupTargetDistanceInches);
+        if (!Double.isFinite(minimumHoodAngleDegrees)
+                || !Double.isFinite(maximumHoodAngleDegrees)
+                || minimumHoodAngleDegrees > maximumHoodAngleDegrees
+                || !Double.isFinite(modeledFlywheelCommandIps)) {
+            return false;
+        }
+
+        double preferredFiniteHoodAngleDegrees = Double.isFinite(preferredHoodAngleDegrees)
+                ? MathUtil.clamp(preferredHoodAngleDegrees, minimumHoodAngleDegrees, maximumHoodAngleDegrees)
+                : 0.5 * (minimumHoodAngleDegrees + maximumHoodAngleDegrees);
+        double preferredFiniteFlywheelCommandIps = Double.isFinite(preferredFlywheelCommandIps)
+                ? preferredFlywheelCommandIps
+                : modeledFlywheelCommandIps;
+        double hoodStepDegrees = Math.max(
+                0.01,
+                ShooterConstants.COMMANDED_MOVING_SHOT_FIXED_FLYWHEEL_HOOD_SEARCH_STEP_DEGREES);
+        int stepCount = Math.max(
+                1,
+                (int) Math.ceil((maximumHoodAngleDegrees - minimumHoodAngleDegrees) / hoodStepDegrees));
+        double bestFlywheelErrorIps = Double.POSITIVE_INFINITY;
+        double bestHoodErrorDegrees = Double.POSITIVE_INFINITY;
+
+        for (int stepIndex = 0; stepIndex <= stepCount; stepIndex++) {
+            double hoodAngleDegrees = stepIndex == stepCount
+                    ? maximumHoodAngleDegrees
+                    : minimumHoodAngleDegrees + stepIndex * hoodStepDegrees;
+            double flywheelCommandIps =
+                    ShortRangeHubFlywheelLookup.getFlywheelCommandIps(lookupTargetDistanceInches, hoodAngleDegrees);
+            if (!Double.isFinite(flywheelCommandIps)) {
+                continue;
+            }
+
+            double flightTimeSeconds = BallTrajectoryLookup.getEstimatedTimeOfFlightSecondsForCommandedShot(
+                    hoodAngleDegrees,
+                    modeledFlywheelCommandIps,
+                    lookupTargetDistanceInches);
+            if (!Double.isFinite(flightTimeSeconds) || flightTimeSeconds < 0.0) {
+                continue;
+            }
+
+            double flywheelErrorIps = Math.abs(flywheelCommandIps - preferredFiniteFlywheelCommandIps);
+            double hoodErrorDegrees = Math.abs(hoodAngleDegrees - preferredFiniteHoodAngleDegrees);
+            if (isBetterFiniteTofEmpiricalCandidate(
+                    flywheelErrorIps,
+                    hoodErrorDegrees,
+                    bestFlywheelErrorIps,
+                    bestHoodErrorDegrees)) {
+                bestFlywheelErrorIps = flywheelErrorIps;
+                bestHoodErrorDegrees = hoodErrorDegrees;
+                out.set(hoodAngleDegrees, flywheelCommandIps, modeledFlywheelCommandIps);
+            }
+        }
+
+        return out.isValid();
+    }
+
     private static boolean solveEmpiricalMovingShotWithTimeOfFlight(
             double preferredHoodAngleDegrees,
             double currentFlywheelSpeedIps,
@@ -1138,8 +1221,32 @@ final class MovingShotMath {
                     candidate)) {
                 return false;
             }
+            double selectedHoodAngleDegrees = candidate.getHoodAngleDegrees();
+            double selectedFlywheelCommandIps = candidate.getFlywheelCommandIps();
+            double flightTimeSeconds = BallTrajectoryLookup.getEstimatedTimeOfFlightSecondsForCommandedShot(
+                    selectedHoodAngleDegrees,
+                    modeledFlywheelCommandIps,
+                    lookupTargetDistanceInches);
+            if (!Double.isFinite(flightTimeSeconds) || flightTimeSeconds < 0.0) {
+                if (!findNearestFiniteDescendingEmpiricalCandidate(
+                        lookupTargetDistanceInches,
+                        modeledFlywheelCommandIps,
+                        selectedHoodAngleDegrees,
+                        selectedFlywheelCommandIps,
+                        candidate)) {
+                    return false;
+                }
+                selectedHoodAngleDegrees = candidate.getHoodAngleDegrees();
+                flightTimeSeconds = BallTrajectoryLookup.getEstimatedTimeOfFlightSecondsForCommandedShot(
+                        selectedHoodAngleDegrees,
+                        modeledFlywheelCommandIps,
+                        lookupTargetDistanceInches);
+                if (!Double.isFinite(flightTimeSeconds) || flightTimeSeconds < 0.0) {
+                    return false;
+                }
+            }
             candidate.set(
-                    candidate.getHoodAngleDegrees(),
+                    selectedHoodAngleDegrees,
                     commandedFlywheelCommandIps,
                     modeledFlywheelCommandIps);
             if (empiricalDebugInfo != null) {
@@ -1148,14 +1255,6 @@ final class MovingShotMath {
                         candidate.getHoodAngleDegrees(),
                         candidate.getModeledFlywheelCommandIps(),
                         candidate.getFlywheelCommandIps());
-            }
-
-            double flightTimeSeconds = BallTrajectoryLookup.getEstimatedTimeOfFlightSecondsForCommandedShot(
-                    candidate.getHoodAngleDegrees(),
-                    candidate.getModeledFlywheelCommandIps(),
-                    lookupTargetDistanceInches);
-            if (!Double.isFinite(flightTimeSeconds) || flightTimeSeconds < 0.0) {
-                return false;
             }
 
             double nextEquivalentTargetDxInches =
