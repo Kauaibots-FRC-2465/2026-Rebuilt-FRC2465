@@ -111,21 +111,6 @@ final class MovingShotMath {
         return predictFlywheelSpeedIps(currentFlywheelSpeedIps, predictionTargetFlywheelSpeedIps);
     }
 
-    static double getIdealMaximumHoodAngleDegrees(SparkAnglePositionSubsystem verticalAim) {
-        Objects.requireNonNull(verticalAim, "verticalAim must not be null");
-        double minimumHoodAngleDegrees = verticalAim.getMinimumAngle().in(edu.wpi.first.units.Units.Degrees);
-        double maximumHoodAngleDegrees = verticalAim.getMaximumAngle().in(edu.wpi.first.units.Units.Degrees);
-        return getIdealMaximumHoodAngleDegrees(minimumHoodAngleDegrees, maximumHoodAngleDegrees);
-    }
-
-    static double getIdealMaximumHoodAngleDegrees(
-            double minimumHoodAngleDegrees,
-            double maximumHoodAngleDegrees) {
-        return Math.max(
-                minimumHoodAngleDegrees,
-                maximumHoodAngleDegrees - ShooterConstants.COMMANDED_MOVING_SHOT_HOOD_LIMIT_HEADROOM_DEGREES);
-    }
-
     static BallTrajectoryLookup.FixedFlywheelShotStatus solveCommandedMovingShot(
             SparkAnglePositionSubsystem verticalAim,
             double hoodAngleSearchStepDegrees,
@@ -141,7 +126,8 @@ final class MovingShotMath {
             double previousCommandedFlywheelSetpointIps,
             BallTrajectoryLookup.MovingShotSolution idealMovingShotSolution,
             BallTrajectoryLookup.MovingShotSolution movingShotSolution) {
-        return solveCommandedMovingShot(
+        Objects.requireNonNull(verticalAim, "verticalAim must not be null");
+        return solveCommandedMovingShotInternal(
                 verticalAim.getMinimumAngle().in(edu.wpi.first.units.Units.Degrees),
                 verticalAim.getMaximumAngle().in(edu.wpi.first.units.Units.Degrees),
                 verticalAim.getAngle().in(edu.wpi.first.units.Units.Degrees),
@@ -178,7 +164,7 @@ final class MovingShotMath {
             BallTrajectoryLookup.MovingShotSolution movingShotSolution,
             EmpiricalMovingShotDebugInfo empiricalDebugInfo) {
         Objects.requireNonNull(verticalAim, "verticalAim must not be null");
-        return solveCommandedMovingShot(
+        return solveCommandedMovingShotInternal(
                 verticalAim.getMinimumAngle().in(edu.wpi.first.units.Units.Degrees),
                 verticalAim.getMaximumAngle().in(edu.wpi.first.units.Units.Degrees),
                 verticalAim.getAngle().in(edu.wpi.first.units.Units.Degrees),
@@ -198,44 +184,7 @@ final class MovingShotMath {
                 empiricalDebugInfo);
     }
 
-    static BallTrajectoryLookup.FixedFlywheelShotStatus solveCommandedMovingShot(
-            double minimumHoodAngleDegrees,
-            double maximumHoodAngleDegrees,
-            double preferredHoodAngleDegrees,
-            double hoodAngleSearchStepDegrees,
-            double fixedFlywheelHoodSearchStepDegrees,
-            PoseEstimatorSubsystem.PredictedFusedState futureState,
-            Translation2d target,
-            double targetElevationInches,
-            double maximumBallZElevationInches,
-            double preferredRobotHeadingRadians,
-            double minTurretAngleDegrees,
-            double maxTurretAngleDegrees,
-            double currentFlywheelSpeedIps,
-            double previousCommandedFlywheelSetpointIps,
-            BallTrajectoryLookup.MovingShotSolution idealMovingShotSolution,
-            BallTrajectoryLookup.MovingShotSolution movingShotSolution) {
-        return solveCommandedMovingShot(
-                minimumHoodAngleDegrees,
-                maximumHoodAngleDegrees,
-                preferredHoodAngleDegrees,
-                hoodAngleSearchStepDegrees,
-                fixedFlywheelHoodSearchStepDegrees,
-                futureState,
-                target,
-                targetElevationInches,
-                maximumBallZElevationInches,
-                preferredRobotHeadingRadians,
-                minTurretAngleDegrees,
-                maxTurretAngleDegrees,
-                currentFlywheelSpeedIps,
-                previousCommandedFlywheelSetpointIps,
-                idealMovingShotSolution,
-                movingShotSolution,
-                null);
-    }
-
-    static BallTrajectoryLookup.FixedFlywheelShotStatus solveCommandedMovingShot(
+    private static BallTrajectoryLookup.FixedFlywheelShotStatus solveCommandedMovingShotInternal(
             double minimumHoodAngleDegrees,
             double maximumHoodAngleDegrees,
             double preferredHoodAngleDegrees,
@@ -362,88 +311,6 @@ final class MovingShotMath {
     }
 
     static boolean solveIdealMovingShotWithUpperHoodFallback(
-            SparkAnglePositionSubsystem verticalAim,
-            double hoodAngleStepDegrees,
-            double futureRobotXMeters,
-            double futureRobotYMeters,
-            double futureRobotHeadingRadians,
-            double robotFieldVxMetersPerSecond,
-            double robotFieldVyMetersPerSecond,
-            double targetXMeters,
-            double targetYMeters,
-            double targetElevationInches,
-            double maximumBallZElevationInches,
-            double preferredRobotHeadingRadians,
-            double minTurretAngleDegrees,
-            double maxTurretAngleDegrees,
-            double currentFlywheelSpeedIps,
-            double previousCommandedFlywheelSetpointIps,
-            BallTrajectoryLookup.MovingShotSolution out) {
-        return solveIdealMovingShotWithUpperHoodFallback(
-                verticalAim,
-                hoodAngleStepDegrees,
-                futureRobotXMeters,
-                futureRobotYMeters,
-                futureRobotHeadingRadians,
-                robotFieldVxMetersPerSecond,
-                robotFieldVyMetersPerSecond,
-                targetXMeters,
-                targetYMeters,
-                targetElevationInches,
-                maximumBallZElevationInches,
-                preferredRobotHeadingRadians,
-                minTurretAngleDegrees,
-                maxTurretAngleDegrees,
-                currentFlywheelSpeedIps,
-                previousCommandedFlywheelSetpointIps,
-                out,
-                null);
-    }
-
-    static boolean solveIdealMovingShotWithUpperHoodFallback(
-            SparkAnglePositionSubsystem verticalAim,
-            double hoodAngleStepDegrees,
-            double futureRobotXMeters,
-            double futureRobotYMeters,
-            double futureRobotHeadingRadians,
-            double robotFieldVxMetersPerSecond,
-            double robotFieldVyMetersPerSecond,
-            double targetXMeters,
-            double targetYMeters,
-            double targetElevationInches,
-            double maximumBallZElevationInches,
-            double preferredRobotHeadingRadians,
-            double minTurretAngleDegrees,
-            double maxTurretAngleDegrees,
-            double currentFlywheelSpeedIps,
-            double previousCommandedFlywheelSetpointIps,
-            BallTrajectoryLookup.MovingShotSolution out,
-            EmpiricalMovingShotDebugInfo empiricalDebugInfo) {
-        Objects.requireNonNull(verticalAim, "verticalAim must not be null");
-        return solveIdealMovingShotWithUpperHoodFallback(
-                verticalAim.getMinimumAngle().in(edu.wpi.first.units.Units.Degrees),
-                verticalAim.getMaximumAngle().in(edu.wpi.first.units.Units.Degrees),
-                verticalAim.getAngle().in(edu.wpi.first.units.Units.Degrees),
-                hoodAngleStepDegrees,
-                futureRobotXMeters,
-                futureRobotYMeters,
-                futureRobotHeadingRadians,
-                robotFieldVxMetersPerSecond,
-                robotFieldVyMetersPerSecond,
-                targetXMeters,
-                targetYMeters,
-                targetElevationInches,
-                maximumBallZElevationInches,
-                preferredRobotHeadingRadians,
-                minTurretAngleDegrees,
-                maxTurretAngleDegrees,
-                currentFlywheelSpeedIps,
-                previousCommandedFlywheelSetpointIps,
-                out,
-                empiricalDebugInfo);
-    }
-
-    static boolean solveIdealMovingShotWithUpperHoodFallback(
             double minimumHoodAngleDegrees,
             double maximumHoodAngleDegrees,
             double preferredHoodAngleDegrees,
@@ -463,7 +330,7 @@ final class MovingShotMath {
             double currentFlywheelSpeedIps,
             double previousCommandedFlywheelSetpointIps,
             BallTrajectoryLookup.MovingShotSolution out) {
-        return solveIdealMovingShotWithUpperHoodFallback(
+        return solveIdealMovingShotWithUpperHoodFallbackInternal(
                 minimumHoodAngleDegrees,
                 maximumHoodAngleDegrees,
                 preferredHoodAngleDegrees,
@@ -482,6 +349,7 @@ final class MovingShotMath {
                 maxTurretAngleDegrees,
                 currentFlywheelSpeedIps,
                 previousCommandedFlywheelSetpointIps,
+                false,
                 out,
                 null);
     }
@@ -507,7 +375,7 @@ final class MovingShotMath {
             double previousCommandedFlywheelSetpointIps,
             BallTrajectoryLookup.MovingShotSolution out,
             EmpiricalMovingShotDebugInfo empiricalDebugInfo) {
-        return solveIdealMovingShotWithUpperHoodFallback(
+        return solveIdealMovingShotWithUpperHoodFallbackInternal(
                 minimumHoodAngleDegrees,
                 maximumHoodAngleDegrees,
                 preferredHoodAngleDegrees,
@@ -553,9 +421,56 @@ final class MovingShotMath {
             boolean requireEmpiricalLookupInsideManifold,
             BallTrajectoryLookup.MovingShotSolution out,
             EmpiricalMovingShotDebugInfo empiricalDebugInfo) {
+        return solveIdealMovingShotWithUpperHoodFallbackInternal(
+                minimumHoodAngleDegrees,
+                maximumHoodAngleDegrees,
+                preferredHoodAngleDegrees,
+                hoodAngleStepDegrees,
+                futureRobotXMeters,
+                futureRobotYMeters,
+                futureRobotHeadingRadians,
+                robotFieldVxMetersPerSecond,
+                robotFieldVyMetersPerSecond,
+                targetXMeters,
+                targetYMeters,
+                targetElevationInches,
+                maximumBallZElevationInches,
+                preferredRobotHeadingRadians,
+                minTurretAngleDegrees,
+                maxTurretAngleDegrees,
+                currentFlywheelSpeedIps,
+                previousCommandedFlywheelSetpointIps,
+                requireEmpiricalLookupInsideManifold,
+                out,
+                empiricalDebugInfo);
+    }
+
+    private static boolean solveIdealMovingShotWithUpperHoodFallbackInternal(
+            double minimumHoodAngleDegrees,
+            double maximumHoodAngleDegrees,
+            double preferredHoodAngleDegrees,
+            double hoodAngleStepDegrees,
+            double futureRobotXMeters,
+            double futureRobotYMeters,
+            double futureRobotHeadingRadians,
+            double robotFieldVxMetersPerSecond,
+            double robotFieldVyMetersPerSecond,
+            double targetXMeters,
+            double targetYMeters,
+            double targetElevationInches,
+            double maximumBallZElevationInches,
+            double preferredRobotHeadingRadians,
+            double minTurretAngleDegrees,
+            double maxTurretAngleDegrees,
+            double currentFlywheelSpeedIps,
+            double previousCommandedFlywheelSetpointIps,
+            boolean requireEmpiricalLookupInsideManifold,
+            BallTrajectoryLookup.MovingShotSolution out,
+            EmpiricalMovingShotDebugInfo empiricalDebugInfo) {
         Objects.requireNonNull(out, "out must not be null");
-        double idealMaximumHoodAngleDegrees =
-                getIdealMaximumHoodAngleDegrees(minimumHoodAngleDegrees, maximumHoodAngleDegrees);
+        double idealMaximumHoodAngleDegrees = Math.max(
+                minimumHoodAngleDegrees,
+                maximumHoodAngleDegrees - ShooterConstants.COMMANDED_MOVING_SHOT_HOOD_LIMIT_HEADROOM_DEGREES);
         double targetDistanceInches = Inches.convertFrom(
                 Math.hypot(targetXMeters - futureRobotXMeters, targetYMeters - futureRobotYMeters),
                 Meters);

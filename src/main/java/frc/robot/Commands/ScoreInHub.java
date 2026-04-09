@@ -12,11 +12,9 @@ import com.ctre.phoenix6.swerve.SwerveRequest;
 import edu.wpi.first.math.geometry.Pose2d;
 import edu.wpi.first.math.geometry.Rotation2d;
 import edu.wpi.first.math.geometry.Translation2d;
-import edu.wpi.first.networktables.BooleanPublisher;
 import edu.wpi.first.networktables.DoublePublisher;
 import edu.wpi.first.networktables.NetworkTable;
 import edu.wpi.first.networktables.NetworkTableInstance;
-import edu.wpi.first.networktables.StringPublisher;
 import edu.wpi.first.wpilibj.DriverStation;
 import edu.wpi.first.wpilibj.DriverStation.Alliance;
 import edu.wpi.first.wpilibj.Timer;
@@ -39,8 +37,6 @@ public class ScoreInHub extends Command {
     private static final double SLOW_SOLVER_THRESHOLD_MS = 5.0;
     private static final double SLOW_SET_CONTROL_THRESHOLD_MS = 2.0;
     private static final double TRANSIENT_SOLUTION_HOLD_SECONDS = 0.25;
-    private static final boolean ENABLE_SPEED_UP_ACCELERATION_LIMIT = false;
-    private static final double SPEED_UP_ACCELERATION_LIMIT_METERS_PER_SECOND_SQUARED = 0.1524;
     private static final double MAX_ACTIVE_TRANSLATIONAL_SPEED_METERS_PER_SECOND = 0.5;
     private static final double RADIAL_SPEED_LIMIT_VIABLE_MARGIN = 0.90;
     private static final double RADIAL_SPEED_LIMIT_SEARCH_TOLERANCE_METERS_PER_SECOND = 0.02;
@@ -81,15 +77,6 @@ public class ScoreInHub extends Command {
     private final Supplier<SwerveRequest> driveRequestSupplier;
     private final SwerveRequest.FieldCentricFacingAngle facingAngleDrive =
             new SwerveRequest.FieldCentricFacingAngle();
-    private final DoublePublisher targetDistanceInchesPublisher;
-    private final DoublePublisher targetElevationInchesPublisher;
-    private final DoublePublisher hoodAngleDegreesPublisher;
-    private final DoublePublisher shotExitVelocityIpsPublisher;
-    private final DoublePublisher fieldRelativeExitVelocityIpsPublisher;
-    private final DoublePublisher flywheelCommandIpsPublisher;
-    private final DoublePublisher shotAzimuthDegreesPublisher;
-    private final DoublePublisher turretDeltaDegreesPublisher;
-    private final DoublePublisher robotHeadingDegreesPublisher;
     private final DoublePublisher hoodTrackingErrorDegreesPublisher;
     private final DoublePublisher flywheelPredictionErrorIpsPublisher;
     private final DoublePublisher tuningPredictedVelocityXMetersPerSecondPublisher;
@@ -102,10 +89,6 @@ public class ScoreInHub extends Command {
     private final DoublePublisher tuningSelectedHoodAngleDegreesPublisher;
     private final DoublePublisher tuningModeledFlywheelCommandIpsPublisher;
     private final DoublePublisher tuningCommandedFlywheelCommandIpsPublisher;
-    private final edu.wpi.first.networktables.DoubleArrayPublisher futurePosePublisher;
-    private final edu.wpi.first.networktables.DoubleArrayPublisher futureVelocityPublisher;
-    private final BooleanPublisher validSolutionPublisher;
-    private final StringPublisher fieldTypePublisher;
     private final PoseEstimatorSubsystem.PredictedFusedState futureState =
             new PoseEstimatorSubsystem.PredictedFusedState();
     private final BallTrajectoryLookup.MovingShotSolution idealMovingShotSolution =
@@ -116,14 +99,11 @@ public class ScoreInHub extends Command {
             new BallTrajectoryLookup.MovingShotSolution();
     private final MovingShotMath.EmpiricalMovingShotDebugInfo empiricalDebugInfo =
             new MovingShotMath.EmpiricalMovingShotDebugInfo();
-    private final double[] futureFieldPose = new double[3];
-    private final double[] futureFieldVelocity = new double[3];
     private Rotation2d lastValidRobotHeadingTarget = new Rotation2d();
     private double lastValidTurretDeltaDegrees = 0.0;
     private double lastValidFlywheelCommandIps = 0.0;
     private double lastValidSolutionTimestampSeconds = Double.NEGATIVE_INFINITY;
     private boolean hasLatchedValidSolution = false;
-    private double lastVelocityLimitTimestampSeconds = Double.NaN;
     private double latchedMaximumTowardHubTravelSpeedMetersPerSecond = Double.POSITIVE_INFINITY;
     private double lastCommandedFlywheelSetpointIps = 0.0;
     private double previousCycleMeasuredHoodAngleDegrees = Double.NaN;
@@ -148,22 +128,8 @@ public class ScoreInHub extends Command {
         this.driveRequestSupplier =
                 Objects.requireNonNull(driveRequestSupplier, "driveRequestSupplier must not be null");
         NetworkTable scoreTable = NetworkTableInstance.getDefault().getTable("ScoreInHub");
-        targetDistanceInchesPublisher = scoreTable.getDoubleTopic("targetDistanceInches").publish();
-        targetElevationInchesPublisher = scoreTable.getDoubleTopic("targetElevationInches").publish();
-        hoodAngleDegreesPublisher = scoreTable.getDoubleTopic("hoodAngleDegrees").publish();
-        shotExitVelocityIpsPublisher = scoreTable.getDoubleTopic("shotExitVelocityIps").publish();
-        fieldRelativeExitVelocityIpsPublisher =
-                scoreTable.getDoubleTopic("fieldRelativeExitVelocityIps").publish();
-        flywheelCommandIpsPublisher = scoreTable.getDoubleTopic("flywheelCommandIps").publish();
-        shotAzimuthDegreesPublisher = scoreTable.getDoubleTopic("shotAzimuthDegrees").publish();
-        turretDeltaDegreesPublisher = scoreTable.getDoubleTopic("turretDeltaDegrees").publish();
-        robotHeadingDegreesPublisher = scoreTable.getDoubleTopic("robotHeadingDegrees").publish();
         hoodTrackingErrorDegreesPublisher = scoreTable.getDoubleTopic("hoodTrackingErrorDegrees").publish();
         flywheelPredictionErrorIpsPublisher = scoreTable.getDoubleTopic("flywheelPredictionErrorIps").publish();
-        futurePosePublisher = scoreTable.getDoubleArrayTopic("futurePose").publish();
-        futureVelocityPublisher = scoreTable.getDoubleArrayTopic("futureVelocity").publish();
-        validSolutionPublisher = scoreTable.getBooleanTopic("validSolution").publish();
-        fieldTypePublisher = scoreTable.getStringTopic(".type").publish();
         NetworkTable tuningScoreTable =
                 NetworkTableInstance.getDefault().getTable("Tuning").getSubTable("ScoreInHub");
         tuningPredictedVelocityXMetersPerSecondPublisher =
@@ -189,8 +155,6 @@ public class ScoreInHub extends Command {
         publishPredictedVelocityTelemetry(Double.NaN, Double.NaN, Double.NaN);
         publishPinpointVelocityTelemetry(Double.NaN, Double.NaN, Double.NaN);
         publishEmpiricalSolverTelemetry();
-        // Debug dashboard telemetry disabled to reduce NetworkTables traffic.
-        // fieldTypePublisher.set("Field2d");
 
         facingAngleDrive.withHeadingPID(5.0, 0.0, 0.0);
         facingAngleDrive.HeadingController.enableContinuousInput(-Math.PI, Math.PI);
@@ -200,7 +164,6 @@ public class ScoreInHub extends Command {
 
     @Override
     public void initialize() {
-        lastVelocityLimitTimestampSeconds = Double.NaN;
         latchedMaximumTowardHubTravelSpeedMetersPerSecond = Double.POSITIVE_INFINITY;
         lastCommandedFlywheelSetpointIps = shooter.getMainFlywheelSpeedIPS();
         previousCycleMeasuredHoodAngleDegrees = Double.NaN;
@@ -225,7 +188,6 @@ public class ScoreInHub extends Command {
 
         SwerveRequest requestedDrive = driveRequestSupplier.get();
         if (!(requestedDrive instanceof SwerveRequest.FieldCentric fieldCentricRequest)) {
-            clearSolutionTelemetry();
             publishPredictedVelocityTelemetry(Double.NaN, Double.NaN, Double.NaN);
             publishCurrentPinpointVelocityTelemetry();
             empiricalDebugInfo.invalidate();
@@ -244,8 +206,9 @@ public class ScoreInHub extends Command {
         publishTrackingDiagnostics();
         publishCurrentPinpointVelocityTelemetry();
 
-        Translation2d requestedOperatorPerspectiveVelocityMetersPerSecond =
-                limitTranslationalAcceleration(fieldCentricRequest);
+        Translation2d requestedOperatorPerspectiveVelocityMetersPerSecond = new Translation2d(
+                fieldCentricRequest.VelocityX,
+                fieldCentricRequest.VelocityY);
         Translation2d requestedFieldRelativeVelocityMetersPerSecond =
                 operatorPerspectiveToFieldRelativeVelocity(requestedOperatorPerspectiveVelocityMetersPerSecond);
         double limitedVelocityXMetersPerSecond;
@@ -256,7 +219,6 @@ public class ScoreInHub extends Command {
                 ShooterConstants.COMMANDED_SHOOTER_LOOKAHEAD_SECONDS,
                 futureState)) {
             predictionMicros = SlowCallMonitor.nowMicros() - predictionStartMicros;
-            clearSolutionTelemetry();
             publishPredictedVelocityTelemetry(Double.NaN, Double.NaN, Double.NaN);
             empiricalDebugInfo.invalidate();
             publishEmpiricalSolverTelemetry();
@@ -308,13 +270,12 @@ public class ScoreInHub extends Command {
                 futureState.vxMetersPerSecond,
                 futureState.vyMetersPerSecond,
                 futureState.omegaRadiansPerSecond);
-        publishFutureState();
 
         Pose2d futurePose = new Pose2d(
                 futureState.xMeters,
                 futureState.yMeters,
                 Rotation2d.fromRadians(futureState.headingRadians));
-        publishTarget(target);
+        TuningDashboard.publishShootingTarget(target);
 
         Rotation2d preferredRobotHeading = getPreferredRobotHeading(
                 futurePose.getTranslation(),
@@ -397,7 +358,6 @@ public class ScoreInHub extends Command {
 
     @Override
     public void end(boolean interrupted) {
-        lastVelocityLimitTimestampSeconds = Double.NaN;
         latchedMaximumTowardHubTravelSpeedMetersPerSecond = Double.POSITIVE_INFINITY;
         publishPredictedVelocityTelemetry(Double.NaN, Double.NaN, Double.NaN);
         publishPinpointVelocityTelemetry(Double.NaN, Double.NaN, Double.NaN);
@@ -456,11 +416,6 @@ public class ScoreInHub extends Command {
 
         double idealFlywheelCommandIps = idealMovingShotSolution.getFlywheelCommandIps();
         long solverMicros = SlowCallMonitor.nowMicros() - solverStartMicros;
-        // Debug dashboard telemetry disabled to reduce NetworkTables traffic.
-        // targetDistanceInchesPublisher.set(targetDistanceInches);
-        // targetElevationInchesPublisher.set(ShooterConstants.COMMANDED_SCORE_IN_HUB_TARGET_ELEVATION_INCHES);
-        // validSolutionPublisher.set(hasSolution);
-
         double commandedHoodAngleDegrees = MovingShotMath.getCommandedHoodAngleDegrees(
                 fixedFlywheelStatus,
                 minimumHoodAngleDegrees,
@@ -470,13 +425,6 @@ public class ScoreInHub extends Command {
                 movingShotSolution.getTurretDeltaDegrees(),
                 horizontalAim.getMinimumAngle().in(Degrees),
                 horizontalAim.getMaximumAngle().in(Degrees));
-        // hoodAngleDegreesPublisher.set(movingShotSolution.getHoodAngleDegrees());
-        // shotExitVelocityIpsPublisher.set(movingShotSolution.getLauncherRelativeExitVelocityIps());
-        // fieldRelativeExitVelocityIpsPublisher.set(movingShotSolution.getFieldRelativeExitVelocityIps());
-        // flywheelCommandIpsPublisher.set(movingShotSolution.getFlywheelCommandIps());
-        // shotAzimuthDegreesPublisher.set(movingShotSolution.getShotAzimuthDegrees());
-        // turretDeltaDegreesPublisher.set(clampedTurretDeltaDegrees);
-        // robotHeadingDegreesPublisher.set(movingShotSolution.getRobotHeadingDegrees());
         verticalAim.setAngle(Degrees.of(commandedHoodAngleDegrees));
         horizontalAim.setAngle(Degrees.of(clampedTurretDeltaDegrees));
         shooter.setCoupledIPS(idealFlywheelCommandIps);
@@ -513,36 +461,6 @@ public class ScoreInHub extends Command {
                 target.getX() - futureRobotPosition.getX(),
                 target.getY() - futureRobotPosition.getY(),
                 fallbackHeading);
-    }
-
-    private void publishTarget(Translation2d target) {
-        TuningDashboard.publishShootingTarget(target);
-    }
-
-    private void publishFutureState() {
-        futureFieldPose[0] = futureState.xMeters;
-        futureFieldPose[1] = futureState.yMeters;
-        futureFieldPose[2] = Math.toDegrees(futureState.headingRadians);
-        futureFieldVelocity[0] = futureState.vxMetersPerSecond;
-        futureFieldVelocity[1] = futureState.vyMetersPerSecond;
-        futureFieldVelocity[2] = Math.toDegrees(futureState.omegaRadiansPerSecond);
-        // Debug dashboard telemetry disabled to reduce NetworkTables traffic.
-        // futurePosePublisher.set(futureFieldPose);
-        // futureVelocityPublisher.set(futureFieldVelocity);
-    }
-
-    private void clearSolutionTelemetry() {
-        // Debug dashboard telemetry disabled to reduce NetworkTables traffic.
-        // validSolutionPublisher.set(false);
-        // targetDistanceInchesPublisher.set(Double.NaN);
-        // targetElevationInchesPublisher.set(Double.NaN);
-        // hoodAngleDegreesPublisher.set(Double.NaN);
-        // shotExitVelocityIpsPublisher.set(0.0);
-        // fieldRelativeExitVelocityIpsPublisher.set(0.0);
-        // flywheelCommandIpsPublisher.set(0.0);
-        // shotAzimuthDegreesPublisher.set(Double.NaN);
-        // turretDeltaDegreesPublisher.set(Double.NaN);
-        // robotHeadingDegreesPublisher.set(Double.NaN);
     }
 
     private boolean shouldHoldLastSolution() {
@@ -934,45 +852,4 @@ public class ScoreInHub extends Command {
         return requestedRadialSpeedMetersPerSecond < -1e-9;
     }
 
-    private Translation2d limitTranslationalAcceleration(SwerveRequest.FieldCentric fieldCentricRequest) {
-        double requestedVelocityXMetersPerSecond = fieldCentricRequest.VelocityX;
-        double requestedVelocityYMetersPerSecond = fieldCentricRequest.VelocityY;
-        Translation2d requestedVelocity = new Translation2d(
-                requestedVelocityXMetersPerSecond,
-                requestedVelocityYMetersPerSecond);
-        if (!ENABLE_SPEED_UP_ACCELERATION_LIMIT) {
-            lastVelocityLimitTimestampSeconds = Double.NaN;
-            return requestedVelocity;
-        }
-
-        double currentTimestampSeconds = Timer.getFPGATimestamp();
-
-        if (!Double.isFinite(lastVelocityLimitTimestampSeconds)) {
-            lastVelocityLimitTimestampSeconds = currentTimestampSeconds;
-            return requestedVelocity;
-        }
-
-        double dtSeconds = Math.max(0.0, currentTimestampSeconds - lastVelocityLimitTimestampSeconds);
-        Translation2d limitedVelocity = requestedVelocity;
-        double currentRobotSpeedMetersPerSecond = Math.hypot(
-                drivetrain.getState().Speeds.vxMetersPerSecond,
-                drivetrain.getState().Speeds.vyMetersPerSecond);
-
-        double requestedSpeedMetersPerSecond = requestedVelocity.getNorm();
-        if (requestedSpeedMetersPerSecond > currentRobotSpeedMetersPerSecond && dtSeconds > 0.0) {
-            double maximumSpeedIncreaseMetersPerSecond =
-                    SPEED_UP_ACCELERATION_LIMIT_METERS_PER_SECOND_SQUARED * dtSeconds;
-            double limitedSpeedMetersPerSecond = Math.min(
-                    requestedSpeedMetersPerSecond,
-                    currentRobotSpeedMetersPerSecond + maximumSpeedIncreaseMetersPerSecond);
-            if (requestedSpeedMetersPerSecond > 1e-9) {
-                limitedVelocity = new Translation2d(
-                        limitedSpeedMetersPerSecond,
-                        requestedVelocity.getAngle());
-            }
-        }
-
-        lastVelocityLimitTimestampSeconds = currentTimestampSeconds;
-        return limitedVelocity;
-    }
 }
