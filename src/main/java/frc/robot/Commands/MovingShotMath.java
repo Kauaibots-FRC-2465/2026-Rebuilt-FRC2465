@@ -507,6 +507,52 @@ final class MovingShotMath {
             double previousCommandedFlywheelSetpointIps,
             BallTrajectoryLookup.MovingShotSolution out,
             EmpiricalMovingShotDebugInfo empiricalDebugInfo) {
+        return solveIdealMovingShotWithUpperHoodFallback(
+                minimumHoodAngleDegrees,
+                maximumHoodAngleDegrees,
+                preferredHoodAngleDegrees,
+                hoodAngleStepDegrees,
+                futureRobotXMeters,
+                futureRobotYMeters,
+                futureRobotHeadingRadians,
+                robotFieldVxMetersPerSecond,
+                robotFieldVyMetersPerSecond,
+                targetXMeters,
+                targetYMeters,
+                targetElevationInches,
+                maximumBallZElevationInches,
+                preferredRobotHeadingRadians,
+                minTurretAngleDegrees,
+                maxTurretAngleDegrees,
+                currentFlywheelSpeedIps,
+                previousCommandedFlywheelSetpointIps,
+                false,
+                out,
+                empiricalDebugInfo);
+    }
+
+    static boolean solveIdealMovingShotWithUpperHoodFallback(
+            double minimumHoodAngleDegrees,
+            double maximumHoodAngleDegrees,
+            double preferredHoodAngleDegrees,
+            double hoodAngleStepDegrees,
+            double futureRobotXMeters,
+            double futureRobotYMeters,
+            double futureRobotHeadingRadians,
+            double robotFieldVxMetersPerSecond,
+            double robotFieldVyMetersPerSecond,
+            double targetXMeters,
+            double targetYMeters,
+            double targetElevationInches,
+            double maximumBallZElevationInches,
+            double preferredRobotHeadingRadians,
+            double minTurretAngleDegrees,
+            double maxTurretAngleDegrees,
+            double currentFlywheelSpeedIps,
+            double previousCommandedFlywheelSetpointIps,
+            boolean requireEmpiricalLookupInsideManifold,
+            BallTrajectoryLookup.MovingShotSolution out,
+            EmpiricalMovingShotDebugInfo empiricalDebugInfo) {
         Objects.requireNonNull(out, "out must not be null");
         double idealMaximumHoodAngleDegrees =
                 getIdealMaximumHoodAngleDegrees(minimumHoodAngleDegrees, maximumHoodAngleDegrees);
@@ -515,7 +561,7 @@ final class MovingShotMath {
                 Meters);
 
         if (shouldUseEmpiricalHubMovingShotModel(targetDistanceInches, targetElevationInches)) {
-            return solveEmpiricalMovingShotWithTimeOfFlight(
+            boolean hasPreferredSolution = solveEmpiricalMovingShotWithTimeOfFlight(
                     preferredHoodAngleDegrees,
                     currentFlywheelSpeedIps,
                     previousCommandedFlywheelSetpointIps,
@@ -531,6 +577,29 @@ final class MovingShotMath {
                     preferredRobotHeadingRadians,
                     minTurretAngleDegrees,
                     maxTurretAngleDegrees,
+                    requireEmpiricalLookupInsideManifold,
+                    out,
+                    empiricalDebugInfo);
+            if (hasPreferredSolution || requireEmpiricalLookupInsideManifold) {
+                return hasPreferredSolution;
+            }
+            return solveEmpiricalMovingShotWithTimeOfFlight(
+                    maximumHoodAngleDegrees,
+                    currentFlywheelSpeedIps,
+                    previousCommandedFlywheelSetpointIps,
+                    futureRobotXMeters,
+                    futureRobotYMeters,
+                    futureRobotHeadingRadians,
+                    robotFieldVxMetersPerSecond,
+                    robotFieldVyMetersPerSecond,
+                    targetXMeters,
+                    targetYMeters,
+                    targetElevationInches,
+                    maximumBallZElevationInches,
+                    preferredRobotHeadingRadians,
+                    minTurretAngleDegrees,
+                    maxTurretAngleDegrees,
+                    requireEmpiricalLookupInsideManifold,
                     out,
                     empiricalDebugInfo);
         }
@@ -990,6 +1059,7 @@ final class MovingShotMath {
             double preferredRobotHeadingRadians,
             double minTurretAngleDegrees,
             double maxTurretAngleDegrees,
+            boolean requireLookupInsideManifold,
             BallTrajectoryLookup.MovingShotSolution out,
             EmpiricalMovingShotDebugInfo empiricalDebugInfo) {
         Objects.requireNonNull(out, "out must not be null");
@@ -1043,11 +1113,17 @@ final class MovingShotMath {
             if (!Double.isFinite(lookupTargetDistanceInches)) {
                 return false;
             }
-            if (lookupTargetDistanceInches < ShooterConstants.DATA_COLLECTION_SHORT_RANGE_MIN_DISTANCE_INCHES - 1e-9
-                    || lookupTargetDistanceInches
-                            > ShooterConstants.DATA_COLLECTION_SHORT_RANGE_EMPIRICAL_MAX_DISTANCE_INCHES + 1e-9) {
+            if (requireLookupInsideManifold
+                    && (lookupTargetDistanceInches
+                                    < ShooterConstants.DATA_COLLECTION_SHORT_RANGE_MIN_DISTANCE_INCHES - 1e-9
+                            || lookupTargetDistanceInches
+                                    > ShooterConstants.DATA_COLLECTION_SHORT_RANGE_EMPIRICAL_MAX_DISTANCE_INCHES + 1e-9)) {
                 return false;
             }
+            lookupTargetDistanceInches = MathUtil.clamp(
+                    lookupTargetDistanceInches,
+                    ShooterConstants.DATA_COLLECTION_SHORT_RANGE_MIN_DISTANCE_INCHES,
+                    ShooterConstants.DATA_COLLECTION_SHORT_RANGE_EMPIRICAL_MAX_DISTANCE_INCHES);
             double commandedFlywheelCommandIps =
                     ShortRangeHubFlywheelLookup.getFallbackManifoldFlywheelCommandIps(
                             lookupTargetDistanceInches);

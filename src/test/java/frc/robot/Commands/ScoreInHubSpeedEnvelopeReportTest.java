@@ -28,7 +28,7 @@ class ScoreInHubSpeedEnvelopeReportTest {
     private static final double ANGLED_TANGENTIAL_TO_RADIAL_RATIO = 0.2;
     private static final double MIN_TURRET_ANGLE_DEGREES = -180.0;
     private static final double MAX_TURRET_ANGLE_DEGREES = 180.0;
-    private static final int REPORT_POINT_COUNT = 50;
+    private static final int REPORT_POINT_COUNT = 80;
 
     @Test
     void printStraightAndAngledMaximumTravelSpeedEnvelope() {
@@ -43,6 +43,18 @@ class ScoreInHubSpeedEnvelopeReportTest {
     void printSuspiciousStraightPointDetails() {
         printSuspiciousStraightPoint(221.0);
         printSuspiciousStraightPoint(158.0);
+    }
+
+    @Test
+    void straightEnvelopePointsRemainFiniteAndRespectMinimumFloor() {
+        assertEnvelopePointsRemainFiniteAndRespectMinimumFloor(new Translation2d(1.0, 0.0));
+    }
+
+    @Test
+    void angledEnvelopePointsRemainFiniteAndRespectMinimumFloor() {
+        assertEnvelopePointsRemainFiniteAndRespectMinimumFloor(
+                new Translation2d(1.0, ANGLED_TANGENTIAL_TO_RADIAL_RATIO)
+                        .times(1.0 / Math.hypot(1.0, ANGLED_TANGENTIAL_TO_RADIAL_RATIO)));
     }
 
     private static void printEnvelope(String label, Translation2d travelUnitVector) {
@@ -172,7 +184,9 @@ class ScoreInHubSpeedEnvelopeReportTest {
                 highMetersPerSecond = midMetersPerSecond;
             }
         }
-        double limitedMetersPerSecond = VIABLE_SPEED_MARGIN * bestViableMetersPerSecond;
+        double limitedMetersPerSecond = Math.max(
+                MINIMUM_ALLOWED_TRAVEL_SPEED_METERS_PER_SECOND,
+                VIABLE_SPEED_MARGIN * bestViableMetersPerSecond);
         return buildEnvelopePointResult(
                 targetDistanceInches,
                 travelUnitVector.times(limitedMetersPerSecond),
@@ -245,6 +259,40 @@ class ScoreInHubSpeedEnvelopeReportTest {
                 MAX_TURRET_ANGLE_DEGREES,
                 currentFlywheelSpeedIps,
                 currentFlywheelSpeedIps,
-                solution);
+                true,
+                solution,
+                null);
+    }
+
+    private static void assertEnvelopePointsRemainFiniteAndRespectMinimumFloor(
+            Translation2d travelUnitVector) {
+        double maxDistanceInches = ShooterConstants.DATA_COLLECTION_SHORT_RANGE_EMPIRICAL_MAX_DISTANCE_INCHES;
+        double minDistanceInches = ShooterConstants.DATA_COLLECTION_SHORT_RANGE_MIN_DISTANCE_INCHES;
+        double distanceStepInches = (maxDistanceInches - minDistanceInches) / (REPORT_POINT_COUNT - 1);
+
+        for (int i = 0; i < REPORT_POINT_COUNT; i++) {
+            double targetDistanceInches = maxDistanceInches - i * distanceStepInches;
+            EnvelopePointResult pointResult = computeEnvelopePointResult(targetDistanceInches, travelUnitVector);
+            org.junit.jupiter.api.Assertions.assertTrue(
+                    pointResult.maximumTravelSpeedMetersPerSecond
+                            >= MINIMUM_ALLOWED_TRAVEL_SPEED_METERS_PER_SECOND - 1e-9,
+                    () -> String.format(
+                            "Expected envelope speed at %.3f in to respect the %.3f m/s floor, but got %.6f",
+                            targetDistanceInches,
+                            MINIMUM_ALLOWED_TRAVEL_SPEED_METERS_PER_SECOND,
+                            pointResult.maximumTravelSpeedMetersPerSecond));
+            org.junit.jupiter.api.Assertions.assertTrue(
+                    Double.isFinite(pointResult.selectedHoodAngleDegrees),
+                    () -> String.format(
+                            "Expected finite hood at %.3f in, but got %.6f",
+                            targetDistanceInches,
+                            pointResult.selectedHoodAngleDegrees));
+            org.junit.jupiter.api.Assertions.assertTrue(
+                    Double.isFinite(pointResult.commandedFlywheelCommandIps),
+                    () -> String.format(
+                            "Expected finite commanded IPS at %.3f in, but got %.6f",
+                            targetDistanceInches,
+                            pointResult.commandedFlywheelCommandIps));
+        }
     }
 }

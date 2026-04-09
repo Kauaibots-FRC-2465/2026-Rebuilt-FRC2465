@@ -839,23 +839,18 @@ public class ScoreInHub extends Command {
             return true;
         }
 
-        PoseEstimatorSubsystem.PredictedFusedState candidateState = new PoseEstimatorSubsystem.PredictedFusedState();
-        candidateState.set(
+        return MovingShotMath.solveIdealMovingShotWithUpperHoodFallback(
+                verticalAim.getMinimumAngle().in(Degrees),
+                verticalAim.getMaximumAngle().in(Degrees),
+                verticalAim.getAngle().in(Degrees),
+                ShooterConstants.COMMANDED_MOVING_SHOT_HOOD_SEARCH_STEP_DEGREES,
                 futureState.xMeters,
                 futureState.yMeters,
                 futureState.headingRadians,
                 robotFieldVxMetersPerSecond,
                 robotFieldVyMetersPerSecond,
-                futureState.omegaRadiansPerSecond,
-                futureState.timestampMicros);
-        BallTrajectoryLookup.FixedFlywheelShotStatus status = MovingShotMath.solveCommandedMovingShot(
-                verticalAim.getMinimumAngle().in(Degrees),
-                verticalAim.getMaximumAngle().in(Degrees),
-                verticalAim.getAngle().in(Degrees),
-                ShooterConstants.COMMANDED_MOVING_SHOT_HOOD_SEARCH_STEP_DEGREES,
-                ShooterConstants.COMMANDED_MOVING_SHOT_FIXED_FLYWHEEL_HOOD_SEARCH_STEP_DEGREES,
-                candidateState,
-                target,
+                target.getX(),
+                target.getY(),
                 ShooterConstants.COMMANDED_SCORE_IN_HUB_TARGET_ELEVATION_INCHES,
                 ShooterConstants.COMMANDED_MAXIMUM_SHOOTING_HEIGHT_INCHES,
                 preferredRobotHeading.getRadians(),
@@ -863,9 +858,9 @@ public class ScoreInHub extends Command {
                 horizontalAim.getMaximumAngle().in(Degrees),
                 shooter.getMainFlywheelSpeedIPS(),
                 lastCommandedFlywheelSetpointIps,
-                idealMovingShotSolution,
-                radialSpeedLimitSearchSolution);
-        return status != BallTrajectoryLookup.FixedFlywheelShotStatus.NO_SOLUTION;
+                true,
+                radialSpeedLimitSearchSolution,
+                null);
     }
 
     private Translation2d operatorPerspectiveToFieldRelativeVelocity(Translation2d operatorPerspectiveVelocity) {
