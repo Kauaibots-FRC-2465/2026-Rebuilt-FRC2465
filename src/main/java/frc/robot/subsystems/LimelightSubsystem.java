@@ -2,7 +2,9 @@ package frc.robot.subsystems;
 
 import static edu.wpi.first.units.Units.Seconds;
 
+import java.util.Objects;
 import java.util.function.BooleanSupplier;
+import java.util.function.Consumer;
 import java.util.function.DoubleSupplier;
 import java.util.function.Supplier;
 
@@ -19,14 +21,34 @@ public class LimelightSubsystem extends SubsystemBase {
     private static final double SLOW_STDDEVS_THRESHOLD_MS = 2.0;
     private static final double SLOW_ORIENTATION_THRESHOLD_MS = 1.0;
     private static final double SLOW_POSE_FETCH_THRESHOLD_MS = 2.0;
+    private static final int MT1_BOOTSTRAP_REQUIRED_CONSISTENT_FRAMES = 3;
+    private static final double MT1_BOOTSTRAP_MAX_TRANSLATION_DELTA_METERS = 0.35;
+    private static final double MT1_BOOTSTRAP_MAX_HEADING_DELTA_DEGREES = 10.0;
+    private static final double MT1_BOOTSTRAP_MAX_SINGLE_TAG_AMBIGUITY = 0.1;
 
-    DoubleSupplier externalHeadingDegreesSupplier;
+    private final DoubleSupplier externalHeadingDegreesSupplier;
+    private final BooleanSupplier externalHeadingReliableSupplier;
+    private final Consumer<Pose2d> mt1SeedPoseConsumer;
     PoseEstimate currentPoseEstimate;
     private double lastHeartbeat = Double.NaN;
     private double lastProcessedPoseTimestampSeconds = Double.NaN;
+    private boolean hasReceivedValidMt2Pose = false;
+    private boolean hasSeededHeadingFromMt1 = false;
+    private PoseEstimate lastMt1BootstrapCandidate = null;
+    private int consecutiveConsistentMt1BootstrapFrames = 0;
     
-    public LimelightSubsystem(DoubleSupplier externalHeadingDegreesSupplier, boolean useMT2, int[] validIDs) {
-        this.externalHeadingDegreesSupplier=externalHeadingDegreesSupplier;
+    public LimelightSubsystem(
+            DoubleSupplier externalHeadingDegreesSupplier,
+            BooleanSupplier externalHeadingReliableSupplier,
+            Consumer<Pose2d> mt1SeedPoseConsumer,
+            boolean useMT2,
+            int[] validIDs) {
+        this.externalHeadingDegreesSupplier =
+                Objects.requireNonNull(externalHeadingDegreesSupplier, "externalHeadingDegreesSupplier");
+        this.externalHeadingReliableSupplier =
+                Objects.requireNonNull(externalHeadingReliableSupplier, "externalHeadingReliableSupplier");
+        this.mt1SeedPoseConsumer =
+                Objects.requireNonNull(mt1SeedPoseConsumer, "mt1SeedPoseConsumer");
         LimelightHelpers.setFiducialIDFiltersOverride(LIMELIGHT_NAME, validIDs);
         LimelightHelpers.SetIMUMode(LIMELIGHT_NAME, 0);
         this.useMT2 = useMT2;
@@ -47,14 +69,7 @@ public class LimelightSubsystem extends SubsystemBase {
     }
     
     public BooleanSupplier getIsValidSupplier() {
-        return ()-> {
-            if(currentPoseEstimate == null) return false;
-            if(currentPoseEstimate.tagCount==0) return false;
-            if(currentPoseEstimate.tagCount>1) return true;
-            if (currentPoseEstimate.rawFiducials == null || currentPoseEstimate.rawFiducials.length == 0) return false;
-            if(currentPoseEstimate.rawFiducials[0].ambiguity<0.2) return true;
-            return false;
-        }; 
+        return () -> isPoseEstimateValid(currentPoseEstimate);
     }
 
     public DoubleSupplier getXDeviationSupplier() {
@@ -96,9 +111,10 @@ public class LimelightSubsystem extends SubsystemBase {
 
             if (useMT2) {
                 long orientationStartMicros = SlowCallMonitor.nowMicros();
+                double headingDegrees = externalHeadingDegreesSupplier.getAsDouble();
                 LimelightHelpers.setRobotOrientation(
                         LIMELIGHT_NAME,
-                        externalHeadingDegreesSupplier.getAsDouble(),
+                        headingDegrees,
                         0,
                         0,
                         0,
@@ -108,9 +124,29 @@ public class LimelightSubsystem extends SubsystemBase {
             }
 
             long poseFetchStartMicros = SlowCallMonitor.nowMicros();
-            currentPoseEstimate = useMT2
-                    ? LimelightHelpers.getBotPoseEstimate_wpiBlue_MegaTag2(LIMELIGHT_NAME)
-                    : LimelightHelpers.getBotPoseEstimate_wpiBlue(LIMELIGHT_NAME);
+            PoseEstimate fetchedPoseEstimate;
+            boolean mt1SeededThisFrame = false;
+            if (useMT2) {
+                PoseEstimate mt2PoseEstimate = LimelightHelpers.getBotPoseEstimate_wpiBlue_MegaTag2(LIMELIGHT_NAME);
+                if (!hasReliableHeading()) {
+                    PoseEstimate mt1PoseEstimate = LimelightHelpers.getBotPoseEstimate_wpiBlue(LIMELIGHT_NAME);
+                    mt1SeededThisFrame = considerMt1Bootstrap(mt1PoseEstimate);
+                    fetchedPoseEstimate = null;
+                } else {
+                    clearMt1BootstrapTracking();
+                    fetchedPoseEstimate = mt2PoseEstimate;
+                }
+                if (!mt1SeededThisFrame && hasReliableHeading() && isPoseEstimateValid(mt2PoseEstimate)) {
+                    hasReceivedValidMt2Pose = true;
+                    fetchedPoseEstimate = mt2PoseEstimate;
+                } else if (!hasReliableHeading()) {
+                    fetchedPoseEstimate = null;
+                }
+            } else {
+                clearMt1BootstrapTracking();
+                fetchedPoseEstimate = LimelightHelpers.getBotPoseEstimate_wpiBlue(LIMELIGHT_NAME);
+            }
+            currentPoseEstimate = fetchedPoseEstimate;
             poseFetchMicros = SlowCallMonitor.nowMicros() - poseFetchStartMicros;
 
             if (currentPoseEstimate != null
@@ -153,5 +189,69 @@ public class LimelightSubsystem extends SubsystemBase {
                             Boolean.toString(poseChanged),
                             Boolean.toString(currentPoseEstimate == null)));
         }
+    }
+
+    private boolean hasReliableHeading() {
+        return externalHeadingReliableSupplier.getAsBoolean()
+                || hasReceivedValidMt2Pose
+                || hasSeededHeadingFromMt1;
+    }
+
+    private static boolean isPoseEstimateValid(PoseEstimate poseEstimate) {
+        return isPoseEstimateValid(poseEstimate, 0.2);
+    }
+
+    private static boolean isPoseEstimateValid(PoseEstimate poseEstimate, double singleTagAmbiguityThreshold) {
+        if (poseEstimate == null || poseEstimate.tagCount == 0) {
+            return false;
+        }
+        if (poseEstimate.tagCount > 1) {
+            return true;
+        }
+        if (poseEstimate.rawFiducials == null || poseEstimate.rawFiducials.length == 0) {
+            return false;
+        }
+        return poseEstimate.rawFiducials[0].ambiguity < singleTagAmbiguityThreshold;
+    }
+
+    private boolean considerMt1Bootstrap(PoseEstimate mt1PoseEstimate) {
+        if (!isPoseEstimateValid(mt1PoseEstimate, MT1_BOOTSTRAP_MAX_SINGLE_TAG_AMBIGUITY)) {
+            clearMt1BootstrapTracking();
+            return false;
+        }
+
+        if (lastMt1BootstrapCandidate == null
+                || !arePoseEstimatesConsistent(lastMt1BootstrapCandidate, mt1PoseEstimate)) {
+            consecutiveConsistentMt1BootstrapFrames = 1;
+        } else {
+            consecutiveConsistentMt1BootstrapFrames++;
+        }
+        lastMt1BootstrapCandidate = mt1PoseEstimate;
+
+        if (consecutiveConsistentMt1BootstrapFrames < MT1_BOOTSTRAP_REQUIRED_CONSISTENT_FRAMES) {
+            return false;
+        }
+
+        mt1SeedPoseConsumer.accept(mt1PoseEstimate.pose);
+        hasSeededHeadingFromMt1 = true;
+        clearMt1BootstrapTracking();
+        return true;
+    }
+
+    private void clearMt1BootstrapTracking() {
+        lastMt1BootstrapCandidate = null;
+        consecutiveConsistentMt1BootstrapFrames = 0;
+    }
+
+    private static boolean arePoseEstimatesConsistent(PoseEstimate prior, PoseEstimate current) {
+        if (prior == null || current == null) {
+            return false;
+        }
+        double translationDeltaMeters =
+                prior.pose.getTranslation().getDistance(current.pose.getTranslation());
+        double headingDeltaDegrees =
+                Math.abs(prior.pose.getRotation().minus(current.pose.getRotation()).getDegrees());
+        return translationDeltaMeters <= MT1_BOOTSTRAP_MAX_TRANSLATION_DELTA_METERS
+                && headingDeltaDegrees <= MT1_BOOTSTRAP_MAX_HEADING_DELTA_DEGREES;
     }
 }

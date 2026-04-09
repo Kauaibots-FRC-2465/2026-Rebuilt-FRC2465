@@ -3,15 +3,18 @@ package frc.robot.Commands;
 import static edu.wpi.first.units.Units.Degrees;
 import static edu.wpi.first.units.Units.Inches;
 import static edu.wpi.first.units.Units.Meters;
+import static edu.wpi.first.units.Units.MetersPerSecond;
 
 import java.util.Objects;
 import java.util.function.Supplier;
 
+import com.ctre.phoenix6.SignalLogger;
 import com.ctre.phoenix6.swerve.SwerveRequest;
 
 import edu.wpi.first.math.geometry.Pose2d;
 import edu.wpi.first.math.geometry.Rotation2d;
 import edu.wpi.first.math.geometry.Translation2d;
+import edu.wpi.first.networktables.BooleanPublisher;
 import edu.wpi.first.networktables.DoublePublisher;
 import edu.wpi.first.networktables.NetworkTable;
 import edu.wpi.first.networktables.NetworkTableInstance;
@@ -20,6 +23,7 @@ import edu.wpi.first.wpilibj.DriverStation.Alliance;
 import edu.wpi.first.wpilibj.Timer;
 import edu.wpi.first.wpilibj2.command.Command;
 import frc.robot.fieldmath.FieldMath;
+import frc.robot.generated.TunerConstants;
 import frc.robot.subsystems.CommandSwerveDrivetrain;
 import frc.robot.subsystems.PinpointSubsystem;
 import frc.robot.subsystems.PoseEstimatorSubsystem;
@@ -38,6 +42,8 @@ public class ScoreInHub extends Command {
     private static final double SLOW_SET_CONTROL_THRESHOLD_MS = 2.0;
     private static final double TRANSIENT_SOLUTION_HOLD_SECONDS = 0.25;
     private static final double MAX_ACTIVE_TRANSLATIONAL_SPEED_METERS_PER_SECOND = 0.5;
+    private static final double MAX_TELEMETRY_TRAVEL_SPEED_SEARCH_METERS_PER_SECOND =
+            TunerConstants.kSpeedAt12Volts.in(MetersPerSecond);
     private static final double RADIAL_SPEED_LIMIT_VIABLE_MARGIN = 0.90;
     private static final double RADIAL_SPEED_LIMIT_SEARCH_TOLERANCE_METERS_PER_SECOND = 0.02;
     private static final int RADIAL_SPEED_LIMIT_SEARCH_MAX_ITERATIONS = 10;
@@ -89,6 +95,16 @@ public class ScoreInHub extends Command {
     private final DoublePublisher tuningSelectedHoodAngleDegreesPublisher;
     private final DoublePublisher tuningModeledFlywheelCommandIpsPublisher;
     private final DoublePublisher tuningCommandedFlywheelCommandIpsPublisher;
+    private final DoublePublisher tuningMaximumTowardHubTravelSpeedMetersPerSecondPublisher;
+    private final DoublePublisher tuningRequestedTravelSpeedMetersPerSecondPublisher;
+    private final DoublePublisher tuningLimitedTravelSpeedMetersPerSecondPublisher;
+    private final DoublePublisher tuningRequestedTowardHubTravelSpeedMetersPerSecondPublisher;
+    private final DoublePublisher tuningLimitedTowardHubTravelSpeedMetersPerSecondPublisher;
+    private final DoublePublisher tuningRequestedFieldVelocityXMetersPerSecondPublisher;
+    private final DoublePublisher tuningRequestedFieldVelocityYMetersPerSecondPublisher;
+    private final DoublePublisher tuningLimitedFieldVelocityXMetersPerSecondPublisher;
+    private final DoublePublisher tuningLimitedFieldVelocityYMetersPerSecondPublisher;
+    private final BooleanPublisher tuningTravelSpeedLimiterEngagedPublisher;
     private final PoseEstimatorSubsystem.PredictedFusedState futureState =
             new PoseEstimatorSubsystem.PredictedFusedState();
     private final BallTrajectoryLookup.MovingShotSolution idealMovingShotSolution =
@@ -152,9 +168,31 @@ public class ScoreInHub extends Command {
                 tuningScoreTable.getDoubleTopic("modeledFlywheelCommandIps").publish();
         tuningCommandedFlywheelCommandIpsPublisher =
                 tuningScoreTable.getDoubleTopic("commandedFlywheelCommandIps").publish();
+        tuningMaximumTowardHubTravelSpeedMetersPerSecondPublisher =
+                tuningScoreTable.getDoubleTopic("maximumTowardHubTravelSpeedMetersPerSecond").publish();
+        tuningRequestedTravelSpeedMetersPerSecondPublisher =
+                tuningScoreTable.getDoubleTopic("requestedTravelSpeedMetersPerSecond").publish();
+        tuningLimitedTravelSpeedMetersPerSecondPublisher =
+                tuningScoreTable.getDoubleTopic("limitedTravelSpeedMetersPerSecond").publish();
+        tuningRequestedTowardHubTravelSpeedMetersPerSecondPublisher =
+                tuningScoreTable.getDoubleTopic("requestedTowardHubTravelSpeedMetersPerSecond").publish();
+        tuningLimitedTowardHubTravelSpeedMetersPerSecondPublisher =
+                tuningScoreTable.getDoubleTopic("limitedTowardHubTravelSpeedMetersPerSecond").publish();
+        tuningRequestedFieldVelocityXMetersPerSecondPublisher =
+                tuningScoreTable.getDoubleTopic("requestedFieldVelocityXMetersPerSecond").publish();
+        tuningRequestedFieldVelocityYMetersPerSecondPublisher =
+                tuningScoreTable.getDoubleTopic("requestedFieldVelocityYMetersPerSecond").publish();
+        tuningLimitedFieldVelocityXMetersPerSecondPublisher =
+                tuningScoreTable.getDoubleTopic("limitedFieldVelocityXMetersPerSecond").publish();
+        tuningLimitedFieldVelocityYMetersPerSecondPublisher =
+                tuningScoreTable.getDoubleTopic("limitedFieldVelocityYMetersPerSecond").publish();
+        tuningTravelSpeedLimiterEngagedPublisher =
+                tuningScoreTable.getBooleanTopic("travelSpeedLimiterEngaged").publish();
         publishPredictedVelocityTelemetry(Double.NaN, Double.NaN, Double.NaN);
         publishPinpointVelocityTelemetry(Double.NaN, Double.NaN, Double.NaN);
         publishEmpiricalSolverTelemetry();
+        publishMaximumTowardHubTravelSpeedTelemetry(Double.NaN);
+        publishTravelSpeedLimiterTelemetry(null, null, null, null);
 
         facingAngleDrive.withHeadingPID(5.0, 0.0, 0.0);
         facingAngleDrive.HeadingController.enableContinuousInput(-Math.PI, Math.PI);
@@ -176,6 +214,8 @@ public class ScoreInHub extends Command {
         publishPinpointVelocityTelemetry(Double.NaN, Double.NaN, Double.NaN);
         empiricalDebugInfo.invalidate();
         publishEmpiricalSolverTelemetry();
+        publishMaximumTowardHubTravelSpeedTelemetry(Double.NaN);
+        publishTravelSpeedLimiterTelemetry(null, null, null, null);
     }
 
     @Override
@@ -192,6 +232,8 @@ public class ScoreInHub extends Command {
             publishCurrentPinpointVelocityTelemetry();
             empiricalDebugInfo.invalidate();
             publishEmpiricalSolverTelemetry();
+            publishMaximumTowardHubTravelSpeedTelemetry(Double.NaN);
+            publishTravelSpeedLimiterTelemetry(null, null, null, null);
             drivetrain.setControl(requestedDrive);
             long totalMicros = SlowCallMonitor.nowMicros() - executeStartMicros;
             if (SlowCallMonitor.isSlow(totalMicros, SLOW_EXECUTE_THRESHOLD_MS)) {
@@ -229,11 +271,23 @@ public class ScoreInHub extends Command {
                     target)) {
                 latchedMaximumTowardHubTravelSpeedMetersPerSecond = Double.POSITIVE_INFINITY;
             }
+            publishMaximumTowardHubTravelSpeedTelemetry(
+                    hasTowardHubTravelComponent(
+                            requestedFieldRelativeVelocityMetersPerSecond,
+                            currentRobotPosition,
+                            target)
+                                    ? MAX_ACTIVE_TRANSLATIONAL_SPEED_METERS_PER_SECOND
+                                    : Double.NaN);
             Translation2d fallbackFieldVelocityMetersPerSecond = clampTowardHubTravelSpeed(
                     requestedFieldRelativeVelocityMetersPerSecond,
                     currentRobotPosition,
                     target,
                     MAX_ACTIVE_TRANSLATIONAL_SPEED_METERS_PER_SECOND);
+            publishTravelSpeedLimiterTelemetry(
+                    requestedFieldRelativeVelocityMetersPerSecond,
+                    fallbackFieldVelocityMetersPerSecond,
+                    currentRobotPosition,
+                    target);
             Translation2d fallbackOperatorPerspectiveVelocityMetersPerSecond =
                     fieldRelativeToOperatorPerspectiveVelocity(fallbackFieldVelocityMetersPerSecond);
             limitedVelocityXMetersPerSecond = fallbackOperatorPerspectiveVelocityMetersPerSecond.getX();
@@ -286,6 +340,17 @@ public class ScoreInHub extends Command {
                 futurePose.getTranslation(),
                 target,
                 preferredRobotHeading);
+        publishMaximumTowardHubTravelSpeedTelemetry(
+                getPublishedMaximumTowardHubTravelSpeedMetersPerSecond(
+                        requestedFieldRelativeVelocityMetersPerSecond,
+                        futurePose.getTranslation(),
+                        target,
+                        preferredRobotHeading));
+        publishTravelSpeedLimiterTelemetry(
+                requestedFieldRelativeVelocityMetersPerSecond,
+                limitedFieldRelativeVelocityMetersPerSecond,
+                futurePose.getTranslation(),
+                target);
         Translation2d limitedOperatorPerspectiveVelocityMetersPerSecond =
                 fieldRelativeToOperatorPerspectiveVelocity(limitedFieldRelativeVelocityMetersPerSecond);
         limitedVelocityXMetersPerSecond = limitedOperatorPerspectiveVelocityMetersPerSecond.getX();
@@ -363,6 +428,8 @@ public class ScoreInHub extends Command {
         publishPinpointVelocityTelemetry(Double.NaN, Double.NaN, Double.NaN);
         empiricalDebugInfo.invalidate();
         publishEmpiricalSolverTelemetry();
+        publishMaximumTowardHubTravelSpeedTelemetry(Double.NaN);
+        publishTravelSpeedLimiterTelemetry(null, null, null, null);
     }
 
     private Translation2d getTarget() {
@@ -605,6 +672,129 @@ public class ScoreInHub extends Command {
         tuningCommandedFlywheelCommandIpsPublisher.set(empiricalDebugInfo.getCommandedFlywheelCommandIps());
     }
 
+    private void publishMaximumTowardHubTravelSpeedTelemetry(
+            double maximumTowardHubTravelSpeedMetersPerSecond) {
+        double publishedMaximumTowardHubTravelSpeedMetersPerSecond =
+                Double.isFinite(maximumTowardHubTravelSpeedMetersPerSecond)
+                        ? maximumTowardHubTravelSpeedMetersPerSecond
+                        : Double.NaN;
+        tuningMaximumTowardHubTravelSpeedMetersPerSecondPublisher.set(
+                publishedMaximumTowardHubTravelSpeedMetersPerSecond);
+        SignalLogger.writeDouble(
+                "ScoreInHub/maximumTowardHubTravelSpeedMetersPerSecond",
+                publishedMaximumTowardHubTravelSpeedMetersPerSecond,
+                "m/s");
+    }
+
+    private void publishTravelSpeedLimiterTelemetry(
+            Translation2d requestedFieldVelocityMetersPerSecond,
+            Translation2d limitedFieldVelocityMetersPerSecond,
+            Translation2d robotPosition,
+            Translation2d target) {
+        double requestedTravelSpeedMetersPerSecond =
+                requestedFieldVelocityMetersPerSecond != null
+                        ? requestedFieldVelocityMetersPerSecond.getNorm()
+                        : Double.NaN;
+        double limitedTravelSpeedMetersPerSecond =
+                limitedFieldVelocityMetersPerSecond != null
+                        ? limitedFieldVelocityMetersPerSecond.getNorm()
+                        : Double.NaN;
+        double requestedTowardHubTravelSpeedMetersPerSecond =
+                computeRadialSpeedMetersPerSecond(requestedFieldVelocityMetersPerSecond, robotPosition, target);
+        double limitedTowardHubTravelSpeedMetersPerSecond =
+                computeRadialSpeedMetersPerSecond(limitedFieldVelocityMetersPerSecond, robotPosition, target);
+
+        tuningRequestedTravelSpeedMetersPerSecondPublisher.set(requestedTravelSpeedMetersPerSecond);
+        tuningLimitedTravelSpeedMetersPerSecondPublisher.set(limitedTravelSpeedMetersPerSecond);
+        tuningRequestedTowardHubTravelSpeedMetersPerSecondPublisher.set(requestedTowardHubTravelSpeedMetersPerSecond);
+        tuningLimitedTowardHubTravelSpeedMetersPerSecondPublisher.set(limitedTowardHubTravelSpeedMetersPerSecond);
+        tuningRequestedFieldVelocityXMetersPerSecondPublisher.set(
+                requestedFieldVelocityMetersPerSecond != null
+                        ? requestedFieldVelocityMetersPerSecond.getX()
+                        : Double.NaN);
+        tuningRequestedFieldVelocityYMetersPerSecondPublisher.set(
+                requestedFieldVelocityMetersPerSecond != null
+                        ? requestedFieldVelocityMetersPerSecond.getY()
+                        : Double.NaN);
+        tuningLimitedFieldVelocityXMetersPerSecondPublisher.set(
+                limitedFieldVelocityMetersPerSecond != null
+                        ? limitedFieldVelocityMetersPerSecond.getX()
+                        : Double.NaN);
+        tuningLimitedFieldVelocityYMetersPerSecondPublisher.set(
+                limitedFieldVelocityMetersPerSecond != null
+                        ? limitedFieldVelocityMetersPerSecond.getY()
+                        : Double.NaN);
+        tuningTravelSpeedLimiterEngagedPublisher.set(
+                Double.isFinite(requestedTravelSpeedMetersPerSecond)
+                        && Double.isFinite(limitedTravelSpeedMetersPerSecond)
+                        && limitedTravelSpeedMetersPerSecond + 1e-9 < requestedTravelSpeedMetersPerSecond);
+
+        double hubDistanceMeters = computeHubDistanceMeters(robotPosition, target);
+        double hubDistanceInches = Double.isFinite(hubDistanceMeters)
+                ? Inches.convertFrom(hubDistanceMeters, Meters)
+                : Double.NaN;
+        boolean travelSpeedLimiterEngaged =
+                Double.isFinite(requestedTravelSpeedMetersPerSecond)
+                        && Double.isFinite(limitedTravelSpeedMetersPerSecond)
+                        && limitedTravelSpeedMetersPerSecond + 1e-9 < requestedTravelSpeedMetersPerSecond;
+
+        SignalLogger.writeDouble(
+                "ScoreInHub/requestedTravelSpeedMetersPerSecond",
+                requestedTravelSpeedMetersPerSecond,
+                "m/s");
+        SignalLogger.writeDouble(
+                "ScoreInHub/limitedTravelSpeedMetersPerSecond",
+                limitedTravelSpeedMetersPerSecond,
+                "m/s");
+        SignalLogger.writeDouble(
+                "ScoreInHub/requestedTowardHubTravelSpeedMetersPerSecond",
+                requestedTowardHubTravelSpeedMetersPerSecond,
+                "m/s");
+        SignalLogger.writeDouble(
+                "ScoreInHub/limitedTowardHubTravelSpeedMetersPerSecond",
+                limitedTowardHubTravelSpeedMetersPerSecond,
+                "m/s");
+        SignalLogger.writeDouble(
+                "ScoreInHub/requestedFieldVelocityXMetersPerSecond",
+                requestedFieldVelocityMetersPerSecond != null
+                        ? requestedFieldVelocityMetersPerSecond.getX()
+                        : Double.NaN,
+                "m/s");
+        SignalLogger.writeDouble(
+                "ScoreInHub/requestedFieldVelocityYMetersPerSecond",
+                requestedFieldVelocityMetersPerSecond != null
+                        ? requestedFieldVelocityMetersPerSecond.getY()
+                        : Double.NaN,
+                "m/s");
+        SignalLogger.writeDouble(
+                "ScoreInHub/limitedFieldVelocityXMetersPerSecond",
+                limitedFieldVelocityMetersPerSecond != null
+                        ? limitedFieldVelocityMetersPerSecond.getX()
+                        : Double.NaN,
+                "m/s");
+        SignalLogger.writeDouble(
+                "ScoreInHub/limitedFieldVelocityYMetersPerSecond",
+                limitedFieldVelocityMetersPerSecond != null
+                        ? limitedFieldVelocityMetersPerSecond.getY()
+                        : Double.NaN,
+                "m/s");
+        SignalLogger.writeDouble(
+                "ScoreInHub/travelSpeedLimiterEngaged",
+                travelSpeedLimiterEngaged ? 1.0 : 0.0,
+                "bool");
+        SignalLogger.writeDouble("ScoreInHub/hubDistanceMeters", hubDistanceMeters, "m");
+        SignalLogger.writeDouble("ScoreInHub/hubDistanceInches", hubDistanceInches, "in");
+    }
+
+    private static double computeHubDistanceMeters(
+            Translation2d robotPosition,
+            Translation2d target) {
+        if (robotPosition == null || target == null) {
+            return Double.NaN;
+        }
+        return robotPosition.getDistance(target);
+    }
+
     private Translation2d limitTowardHubTravelVelocityForViableShot(
             Translation2d requestedVelocityMetersPerSecond,
             Translation2d futureRobotPosition,
@@ -624,6 +814,55 @@ public class ScoreInHub extends Command {
         latchedMaximumTowardHubTravelSpeedMetersPerSecond =
                 limitResult.getUpdatedMaximumTowardHubTravelSpeedMetersPerSecond();
         return limitResult.getLimitedVelocityMetersPerSecond();
+    }
+
+    private double getPublishedMaximumTowardHubTravelSpeedMetersPerSecond(
+            Translation2d requestedVelocityMetersPerSecond,
+            Translation2d futureRobotPosition,
+            Translation2d target,
+            Rotation2d preferredRobotHeading) {
+        if (Double.isFinite(latchedMaximumTowardHubTravelSpeedMetersPerSecond)) {
+            return latchedMaximumTowardHubTravelSpeedMetersPerSecond;
+        }
+        Translation2d telemetryVelocityMetersPerSecond = getTelemetryTowardHubVelocityDirection(
+                requestedVelocityMetersPerSecond,
+                futureRobotPosition,
+                target);
+        if (telemetryVelocityMetersPerSecond == null) {
+            return Double.NaN;
+        }
+        return findMaximumTowardHubTravelSpeedMetersPerSecond(
+                telemetryVelocityMetersPerSecond,
+                futureRobotPosition,
+                target,
+                MAX_ACTIVE_TRANSLATIONAL_SPEED_METERS_PER_SECOND,
+                MAX_TELEMETRY_TRAVEL_SPEED_SEARCH_METERS_PER_SECOND,
+                (robotFieldVxMetersPerSecond, robotFieldVyMetersPerSecond) -> hasViableHubShotForVelocity(
+                        robotFieldVxMetersPerSecond,
+                        robotFieldVyMetersPerSecond,
+                        target,
+                        preferredRobotHeading));
+    }
+
+    private static Translation2d getTelemetryTowardHubVelocityDirection(
+            Translation2d requestedVelocityMetersPerSecond,
+            Translation2d futureRobotPosition,
+            Translation2d target) {
+        if (futureRobotPosition == null || target == null) {
+            return null;
+        }
+        if (requestedVelocityMetersPerSecond != null
+                && requestedVelocityMetersPerSecond.getNorm() > 1e-9
+                && hasTowardHubTravelComponent(requestedVelocityMetersPerSecond, futureRobotPosition, target)) {
+            return requestedVelocityMetersPerSecond;
+        }
+
+        Translation2d targetDeltaMeters = target.minus(futureRobotPosition);
+        double targetDistanceMeters = targetDeltaMeters.getNorm();
+        if (!(targetDistanceMeters > 1e-9)) {
+            return null;
+        }
+        return targetDeltaMeters.div(targetDistanceMeters);
     }
 
     static TravelVelocityLimitResult limitTowardHubTravelVelocityForViableShot(
@@ -743,6 +982,97 @@ public class ScoreInHub extends Command {
                 updatedMaximumTowardHubTravelSpeedMetersPerSecond);
     }
 
+    static double findMaximumTowardHubTravelSpeedMetersPerSecond(
+            Translation2d requestedVelocityMetersPerSecond,
+            Translation2d futureRobotPosition,
+            Translation2d target,
+            double minimumAllowedTravelSpeedMetersPerSecond,
+            double maximumSearchTravelSpeedMetersPerSecond,
+            HubShotViabilityEvaluator shotViabilityEvaluator) {
+        if (requestedVelocityMetersPerSecond == null
+                || futureRobotPosition == null
+                || target == null
+                || shotViabilityEvaluator == null
+                || !Double.isFinite(minimumAllowedTravelSpeedMetersPerSecond)
+                || minimumAllowedTravelSpeedMetersPerSecond < 0.0
+                || !Double.isFinite(maximumSearchTravelSpeedMetersPerSecond)
+                || maximumSearchTravelSpeedMetersPerSecond < minimumAllowedTravelSpeedMetersPerSecond) {
+            return Double.NaN;
+        }
+
+        double targetDxMeters = target.getX() - futureRobotPosition.getX();
+        double targetDyMeters = target.getY() - futureRobotPosition.getY();
+        double targetDistanceMeters = Math.hypot(targetDxMeters, targetDyMeters);
+        if (!(targetDistanceMeters > 1e-9)) {
+            return Double.NaN;
+        }
+
+        double requestedTravelSpeedMetersPerSecond = requestedVelocityMetersPerSecond.getNorm();
+        if (!(requestedTravelSpeedMetersPerSecond > 1e-9)) {
+            return Double.NaN;
+        }
+
+        double requestedRadialSpeedMetersPerSecond =
+                (requestedVelocityMetersPerSecond.getX() * targetDxMeters
+                        + requestedVelocityMetersPerSecond.getY() * targetDyMeters)
+                        / targetDistanceMeters;
+        if (!(requestedRadialSpeedMetersPerSecond > 1e-9)) {
+            return Double.NaN;
+        }
+
+        Translation2d travelUnitVector =
+                requestedVelocityMetersPerSecond.div(requestedTravelSpeedMetersPerSecond);
+        if (!shotViabilityEvaluator.hasViableShot(
+                travelUnitVector.getX() * minimumAllowedTravelSpeedMetersPerSecond,
+                travelUnitVector.getY() * minimumAllowedTravelSpeedMetersPerSecond)) {
+            return minimumAllowedTravelSpeedMetersPerSecond;
+        }
+
+        double lowTravelSpeedMetersPerSecond = minimumAllowedTravelSpeedMetersPerSecond;
+        double highTravelSpeedMetersPerSecond = Math.max(
+                minimumAllowedTravelSpeedMetersPerSecond,
+                requestedTravelSpeedMetersPerSecond);
+        while (highTravelSpeedMetersPerSecond < maximumSearchTravelSpeedMetersPerSecond
+                && shotViabilityEvaluator.hasViableShot(
+                        travelUnitVector.getX() * highTravelSpeedMetersPerSecond,
+                        travelUnitVector.getY() * highTravelSpeedMetersPerSecond)) {
+            lowTravelSpeedMetersPerSecond = highTravelSpeedMetersPerSecond;
+            highTravelSpeedMetersPerSecond = Math.min(
+                    maximumSearchTravelSpeedMetersPerSecond,
+                    2.0 * highTravelSpeedMetersPerSecond);
+        }
+
+        if (shotViabilityEvaluator.hasViableShot(
+                travelUnitVector.getX() * highTravelSpeedMetersPerSecond,
+                travelUnitVector.getY() * highTravelSpeedMetersPerSecond)) {
+            return maximumSearchTravelSpeedMetersPerSecond;
+        }
+
+        double bestViableTravelSpeedMetersPerSecond = lowTravelSpeedMetersPerSecond;
+        for (int iteration = 0; iteration < RADIAL_SPEED_LIMIT_SEARCH_MAX_ITERATIONS; iteration++) {
+            if (highTravelSpeedMetersPerSecond - lowTravelSpeedMetersPerSecond
+                    <= RADIAL_SPEED_LIMIT_SEARCH_TOLERANCE_METERS_PER_SECOND) {
+                break;
+            }
+
+            double midTravelSpeedMetersPerSecond =
+                    0.5 * (lowTravelSpeedMetersPerSecond + highTravelSpeedMetersPerSecond);
+            boolean hasViableShot = shotViabilityEvaluator.hasViableShot(
+                    travelUnitVector.getX() * midTravelSpeedMetersPerSecond,
+                    travelUnitVector.getY() * midTravelSpeedMetersPerSecond);
+            if (hasViableShot) {
+                bestViableTravelSpeedMetersPerSecond = midTravelSpeedMetersPerSecond;
+                lowTravelSpeedMetersPerSecond = midTravelSpeedMetersPerSecond;
+            } else {
+                highTravelSpeedMetersPerSecond = midTravelSpeedMetersPerSecond;
+            }
+        }
+
+        return Math.max(
+                minimumAllowedTravelSpeedMetersPerSecond,
+                RADIAL_SPEED_LIMIT_VIABLE_MARGIN * bestViableTravelSpeedMetersPerSecond);
+    }
+
     private boolean hasViableHubShotForVelocity(
             double robotFieldVxMetersPerSecond,
             double robotFieldVyMetersPerSecond,
@@ -831,25 +1161,37 @@ public class ScoreInHub extends Command {
                 maximumTowardHubTravelSpeedMetersPerSecond / requestedTravelSpeedMetersPerSecond);
     }
 
+    private static boolean hasTowardHubTravelComponent(
+            Translation2d requestedVelocity,
+            Translation2d robotPosition,
+            Translation2d target) {
+        return computeRadialSpeedMetersPerSecond(requestedVelocity, robotPosition, target) > 1e-9;
+    }
+
     private static boolean isDrivingAwayFromHub(
             Translation2d requestedVelocity,
             Translation2d robotPosition,
             Translation2d target) {
-        if (requestedVelocity == null || robotPosition == null || target == null) {
-            return false;
+        return computeRadialSpeedMetersPerSecond(requestedVelocity, robotPosition, target) < -1e-9;
+    }
+
+    private static double computeRadialSpeedMetersPerSecond(
+            Translation2d velocity,
+            Translation2d robotPosition,
+            Translation2d target) {
+        if (velocity == null || robotPosition == null || target == null) {
+            return Double.NaN;
         }
 
         double targetDxMeters = target.getX() - robotPosition.getX();
         double targetDyMeters = target.getY() - robotPosition.getY();
         double targetDistanceMeters = Math.hypot(targetDxMeters, targetDyMeters);
         if (!(targetDistanceMeters > 1e-9)) {
-            return false;
+            return Double.NaN;
         }
 
-        double requestedRadialSpeedMetersPerSecond =
-                (requestedVelocity.getX() * targetDxMeters + requestedVelocity.getY() * targetDyMeters)
-                        / targetDistanceMeters;
-        return requestedRadialSpeedMetersPerSecond < -1e-9;
+        return (velocity.getX() * targetDxMeters + velocity.getY() * targetDyMeters)
+                / targetDistanceMeters;
     }
 
 }

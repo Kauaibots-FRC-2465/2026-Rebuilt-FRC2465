@@ -14,6 +14,9 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.BooleanSupplier;
+import java.util.function.Consumer;
+import java.util.function.DoubleSupplier;
 
 import com.ctre.phoenix6.swerve.SwerveModule.DriveRequestType;
 import com.revrobotics.spark.SparkLowLevel.MotorType;
@@ -215,6 +218,7 @@ private Command showAllianceMarquee() {
     public final PoseEstimatorSubsystem poseEstimatorSubsystem;
     public final PoseEstimatorSubsystem.Configuration poseEstimatorConfiguration = new PoseEstimatorSubsystem.Configuration();
     private final PinpointSubsystem pinpointSubsystem;
+    private boolean hasReliableFieldHeading = false;
 
     public final SwerveDrivetrainSubsystem encapsulatedDrivetrain;
 
@@ -286,7 +290,21 @@ private Command showAllianceMarquee() {
         poseEstimatorConfiguration.odometryTimestamp = pinpointSubsystem.getTimestampSupplier();
         poseEstimatorConfiguration.odometryValid = pinpointSubsystem.getIsValidSupplier();
         
-        LimelightSubsystem limelightSubsystem = new LimelightSubsystem(pinpointSubsystem.getHeadingSupplier(Degree), false, new int[] 
+        DoubleSupplier limelightHeadingDegreesSupplier = () -> {
+            Pose2d odometryPose = this.pinpointSubsystem.getPose2dSupplier().get();
+            if (odometryPose != null) {
+                return odometryPose.getRotation().getDegrees();
+            }
+            return this.pinpointSubsystem.getHeadingSupplier(Degree).getAsDouble();
+        };
+        BooleanSupplier limelightHeadingReliableSupplier = () -> hasReliableFieldHeading;
+        Consumer<Pose2d> limelightMt1SeedConsumer = this::seedPoseFromMt1;
+        LimelightSubsystem limelightSubsystem = new LimelightSubsystem(
+            limelightHeadingDegreesSupplier,
+            limelightHeadingReliableSupplier,
+            limelightMt1SeedConsumer,
+            true,
+            new int[] 
             {     1,  2,  3,  4,  5,  6,  7,  8,  9,
              10, 11, 12, 13, 14, 15, 16, 17, 18, 19,
              20, 21, 22, 23, 24, 25, 26, 27, 28, 29,
@@ -587,9 +605,10 @@ private Command showAllianceMarquee() {
                 intakePosition,
                 intakedrive)
         );
-        //engineersController.leftBumper().onTrue(
-        //    new HoodTimingCharacterization(verticalAim)
-        //);
+        engineersController.leftBumper().onTrue(
+            Commands.runOnce(this::resetFieldOrientedHeadingToAllianceForward)
+                    .ignoringDisable(true)
+        );
         testController2.y().onTrue(new HoodRestPositionCharacterization(verticalAim));
         // Idle while the robot is disabled. This ensures the configured
         // neutral mode is applied to the drive motors while disabled.
@@ -742,9 +761,36 @@ private Command showAllianceMarquee() {
     }
 
     private void resetAutonomousPose(Pose2d pose) {
+        applyPoseReset(pose, true);
+    }
+
+    private void resetFieldOrientedHeadingToAllianceForward() {
+        Pose2d currentPose = poseEstimatorSubsystem.getFusedPoseSupplier().get();
+        if (currentPose == null) {
+            currentPose = pinpointSubsystem.getPose2dSupplier().get();
+        }
+        if (currentPose == null) {
+            return;
+        }
+
+        Rotation2d allianceForward = DriverStation.getAlliance()
+                .map(allianceColor -> allianceColor == DriverStation.Alliance.Red
+                        ? Rotation2d.k180deg
+                        : Rotation2d.kZero)
+                .orElse(Rotation2d.kZero);
+        Pose2d resetPose = new Pose2d(currentPose.getTranslation(), allianceForward);
+        applyPoseReset(resetPose, true);
+    }
+
+    private void seedPoseFromMt1(Pose2d pose) {
+        applyPoseReset(pose, true);
+    }
+
+    private void applyPoseReset(Pose2d pose, boolean headingReliable) {
         pinpointSubsystem.setPosition(pose);
         poseEstimatorSubsystem.resetPose(pose);
         drivetrain.resetPose(pose);
+        hasReliableFieldHeading = headingReliable;
     }
 
     private void applyPathPlannerDrive(ChassisSpeeds chassisSpeeds, DriveFeedforwards feedforwards) {
