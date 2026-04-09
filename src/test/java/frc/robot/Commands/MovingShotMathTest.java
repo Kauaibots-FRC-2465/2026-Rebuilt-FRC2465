@@ -44,6 +44,10 @@ class MovingShotMathTest {
     private static final double LOCAL_CONTINUITY_MAX_SPEED_LIMIT_STEP_METERS_PER_SECOND = 0.60;
     private static final double MINIMUM_ALLOWED_TRAVEL_SPEED_METERS_PER_SECOND = 0.5;
     private static final double VIABLE_SPEED_MARGIN = 0.90;
+    private static final double LEFT_RIGHT_SYMMETRY_MAX_AZIMUTH_MIRROR_ERROR_DEGREES = 1.0;
+    private static final double LEFT_RIGHT_SYMMETRY_MAX_HOOD_DELTA_DEGREES = 0.5;
+    private static final double LEFT_RIGHT_SYMMETRY_MAX_FLYWHEEL_DELTA_IPS = 3.0;
+    private static final double LEFT_RIGHT_SYMMETRY_MAX_HORIZONTAL_EXIT_DELTA_IPS = 3.0;
     private static final double GLOBAL_MIN_EMPIRICAL_FLYWHEEL_IPS =
             computeGlobalEmpiricalFlywheelBound(true);
     private static final double GLOBAL_MAX_EMPIRICAL_FLYWHEEL_IPS =
@@ -623,6 +627,133 @@ class MovingShotMathTest {
                             targetDistanceInches,
                             inwardOnlyLauncherHorizontalExitVelocityIps,
                             rightLauncherHorizontalExitVelocityIps));
+        }
+    }
+
+    @Test
+    void empiricalMovingShotIsApproximatelySymmetricForLeftAndRightTangentialMotion() {
+        int[] distanceRowIndexes = {2, 4, 5, 6, 7};
+        double[] inwardApproachSpeedsMetersPerSecond = {0.25, 0.5, 1.0};
+
+        for (int distanceRowIndex : distanceRowIndexes) {
+            double targetDistanceInches =
+                    ShooterConstants.DATA_COLLECTION_SHORT_RANGE_DISTANCES_INCHES[distanceRowIndex];
+            double preferredHoodAngleDegrees =
+                    ShortRangeHubFlywheelLookup.getIdealHoodAngleDegrees(targetDistanceInches);
+            double currentFlywheelSpeedIps =
+                    ShortRangeHubFlywheelLookup.getFallbackManifoldFlywheelCommandIps(targetDistanceInches);
+
+            for (double inwardApproachSpeedMetersPerSecond : inwardApproachSpeedsMetersPerSecond) {
+                double tangentialSpeedMetersPerSecond =
+                        ANGLED_PHYSICS_TANGENTIAL_TO_RADIAL_RATIO * inwardApproachSpeedMetersPerSecond;
+                BallTrajectoryLookup.MovingShotSolution inwardOnlySolution = solveEmpiricalMovingShotForVelocity(
+                        targetDistanceInches,
+                        preferredHoodAngleDegrees,
+                        currentFlywheelSpeedIps,
+                        inwardApproachSpeedMetersPerSecond,
+                        0.0);
+                BallTrajectoryLookup.MovingShotSolution leftSolution = solveEmpiricalMovingShotForVelocity(
+                        targetDistanceInches,
+                        preferredHoodAngleDegrees,
+                        currentFlywheelSpeedIps,
+                        inwardApproachSpeedMetersPerSecond,
+                        tangentialSpeedMetersPerSecond);
+                BallTrajectoryLookup.MovingShotSolution rightSolution = solveEmpiricalMovingShotForVelocity(
+                        targetDistanceInches,
+                        preferredHoodAngleDegrees,
+                        currentFlywheelSpeedIps,
+                        inwardApproachSpeedMetersPerSecond,
+                        -tangentialSpeedMetersPerSecond);
+
+                assertTrue(
+                        inwardOnlySolution.isValid(),
+                        () -> String.format(
+                                "Expected a valid inward-only empirical shot at %.1f in and %.2f m/s",
+                                targetDistanceInches,
+                                inwardApproachSpeedMetersPerSecond));
+                assertTrue(
+                        leftSolution.isValid(),
+                        () -> String.format(
+                                "Expected a valid inward-left empirical shot at %.1f in and %.2f/%.2f m/s",
+                                targetDistanceInches,
+                                inwardApproachSpeedMetersPerSecond,
+                                tangentialSpeedMetersPerSecond));
+                assertTrue(
+                        rightSolution.isValid(),
+                        () -> String.format(
+                                "Expected a valid inward-right empirical shot at %.1f in and %.2f/%.2f m/s",
+                                targetDistanceInches,
+                                inwardApproachSpeedMetersPerSecond,
+                                tangentialSpeedMetersPerSecond));
+
+                double leftAzimuthDeltaDegrees = MathUtil.inputModulus(
+                        leftSolution.getShotAzimuthDegrees() - inwardOnlySolution.getShotAzimuthDegrees(),
+                        -180.0,
+                        180.0);
+                double rightAzimuthDeltaDegrees = MathUtil.inputModulus(
+                        rightSolution.getShotAzimuthDegrees() - inwardOnlySolution.getShotAzimuthDegrees(),
+                        -180.0,
+                        180.0);
+                assertTrue(
+                        leftAzimuthDeltaDegrees < -1e-9,
+                        () -> String.format(
+                                "Expected inward-left azimuth lead to move right at %.1f in and %.2f/%.2f m/s, but delta was %.3f deg",
+                                targetDistanceInches,
+                                inwardApproachSpeedMetersPerSecond,
+                                tangentialSpeedMetersPerSecond,
+                                leftAzimuthDeltaDegrees));
+                assertTrue(
+                        rightAzimuthDeltaDegrees > 1e-9,
+                        () -> String.format(
+                                "Expected inward-right azimuth lead to move left at %.1f in and %.2f/%.2f m/s, but delta was %.3f deg",
+                                targetDistanceInches,
+                                inwardApproachSpeedMetersPerSecond,
+                                tangentialSpeedMetersPerSecond,
+                                rightAzimuthDeltaDegrees));
+                assertTrue(
+                        Math.abs(leftAzimuthDeltaDegrees + rightAzimuthDeltaDegrees)
+                                <= LEFT_RIGHT_SYMMETRY_MAX_AZIMUTH_MIRROR_ERROR_DEGREES,
+                        () -> String.format(
+                                "Expected mirrored left/right azimuth leads at %.1f in and %.2f/%.2f m/s, but deltas were %.3f and %.3f deg",
+                                targetDistanceInches,
+                                inwardApproachSpeedMetersPerSecond,
+                                tangentialSpeedMetersPerSecond,
+                                leftAzimuthDeltaDegrees,
+                                rightAzimuthDeltaDegrees));
+                assertTrue(
+                        Math.abs(leftSolution.getHoodAngleDegrees() - rightSolution.getHoodAngleDegrees())
+                                <= LEFT_RIGHT_SYMMETRY_MAX_HOOD_DELTA_DEGREES,
+                        () -> String.format(
+                                "Expected mirrored left/right hood angles at %.1f in and %.2f/%.2f m/s, but they were %.3f and %.3f deg",
+                                targetDistanceInches,
+                                inwardApproachSpeedMetersPerSecond,
+                                tangentialSpeedMetersPerSecond,
+                                leftSolution.getHoodAngleDegrees(),
+                                rightSolution.getHoodAngleDegrees()));
+                assertTrue(
+                        Math.abs(leftSolution.getFlywheelCommandIps() - rightSolution.getFlywheelCommandIps())
+                                <= LEFT_RIGHT_SYMMETRY_MAX_FLYWHEEL_DELTA_IPS,
+                        () -> String.format(
+                                "Expected mirrored left/right flywheel commands at %.1f in and %.2f/%.2f m/s, but they were %.3f and %.3f ips",
+                                targetDistanceInches,
+                                inwardApproachSpeedMetersPerSecond,
+                                tangentialSpeedMetersPerSecond,
+                                leftSolution.getFlywheelCommandIps(),
+                                rightSolution.getFlywheelCommandIps()));
+
+                double leftHorizontalExitVelocityIps = getLauncherRelativeHorizontalExitVelocityIps(leftSolution);
+                double rightHorizontalExitVelocityIps = getLauncherRelativeHorizontalExitVelocityIps(rightSolution);
+                assertTrue(
+                        Math.abs(leftHorizontalExitVelocityIps - rightHorizontalExitVelocityIps)
+                                <= LEFT_RIGHT_SYMMETRY_MAX_HORIZONTAL_EXIT_DELTA_IPS,
+                        () -> String.format(
+                                "Expected mirrored left/right launcher-relative horizontal exit speeds at %.1f in and %.2f/%.2f m/s, but they were %.3f and %.3f ips",
+                                targetDistanceInches,
+                                inwardApproachSpeedMetersPerSecond,
+                                tangentialSpeedMetersPerSecond,
+                                leftHorizontalExitVelocityIps,
+                                rightHorizontalExitVelocityIps));
+            }
         }
     }
 
