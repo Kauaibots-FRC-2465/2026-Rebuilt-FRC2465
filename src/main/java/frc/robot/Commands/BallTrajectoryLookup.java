@@ -634,6 +634,12 @@ public final class BallTrajectoryLookup {
                 fieldHorizontalExitVelocityIps * Math.sin(targetAzimuthRadians) - robotFieldVyIps;
         double launcherRelativeHorizontalExitVelocityIps =
                 Math.hypot(launcherRelativeFieldVxIps, launcherRelativeFieldVyIps);
+        double launcherRelativeForwardVelocityIps =
+                launcherRelativeFieldVxIps * Math.cos(targetAzimuthRadians)
+                        + launcherRelativeFieldVyIps * Math.sin(targetAzimuthRadians);
+        if (!(launcherRelativeForwardVelocityIps > 1e-9)) {
+            return false;
+        }
         double launcherRelativeExitVelocityIps = Math.hypot(
                 launcherRelativeHorizontalExitVelocityIps,
                 fieldRelativeExitVelocityIps * Math.sin(hoodAngleRadians));

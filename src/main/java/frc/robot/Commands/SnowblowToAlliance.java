@@ -149,7 +149,10 @@ public class SnowblowToAlliance extends Command {
         Translation2d target = getTarget(futurePose);
         publishTarget(target);
 
-        Rotation2d preferredRobotHeading = getPreferredRobotHeading(futurePose.getRotation());
+        Rotation2d preferredRobotHeading = getPreferredRobotHeading(
+                futurePose.getTranslation(),
+                target,
+                futurePose.getRotation());
         Rotation2d robotHeadingTarget = preferredRobotHeading;
         if (updateShooterSolution(target, preferredRobotHeading)) {
             robotHeadingTarget = Rotation2d.fromDegrees(movingShotSolution.getRobotHeadingDegrees());
@@ -252,11 +255,15 @@ public class SnowblowToAlliance extends Command {
         lastFieldRelativeDriveDirection = preferredHeadingTracker.update(currentPose.getTranslation());
     }
 
-    private Rotation2d getPreferredRobotHeading(Rotation2d fallbackHeading) {
-        if (lastFieldRelativeDriveDirection.getNorm() > 1e-9) {
-            return lastFieldRelativeDriveDirection.getAngle();
-        }
-        return fallbackHeading;
+    private Rotation2d getPreferredRobotHeading(
+            Translation2d robotPosition,
+            Translation2d target,
+            Rotation2d fallbackHeading) {
+        return MovingShotMath.getPreferredHeadingForTravelDirection(
+                lastFieldRelativeDriveDirection,
+                robotPosition,
+                target,
+                fallbackHeading);
     }
 
     private void publishTarget(Translation2d target) {

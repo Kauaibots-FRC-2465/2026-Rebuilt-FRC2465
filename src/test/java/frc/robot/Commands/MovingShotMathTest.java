@@ -155,11 +155,45 @@ class MovingShotMathTest {
     }
 
     @Test
+    void empiricalMovingShotRejectsNearHubBackwardLauncherSolutions() {
+        double targetDistanceInches = 60.0;
+        double preferredHoodAngleDegrees = ShortRangeHubFlywheelLookup.getIdealHoodAngleDegrees(targetDistanceInches);
+        double fallbackFlywheelCommandIps =
+                ShortRangeHubFlywheelLookup.getFallbackManifoldFlywheelCommandIps(targetDistanceInches);
+        BallTrajectoryLookup.MovingShotSolution solution = new BallTrajectoryLookup.MovingShotSolution();
+
+        boolean solved = MovingShotMath.solveIdealMovingShotWithUpperHoodFallback(
+                ShooterConstants.COMMANDED_MINIMUM_ALLOWED_HOOD_ANGLE_DEGREES,
+                ShooterConstants.COMMANDED_MAXIMUM_ALLOWED_HOOD_ANGLE_DEGREES,
+                preferredHoodAngleDegrees,
+                ShooterConstants.COMMANDED_MOVING_SHOT_HOOD_SEARCH_STEP_DEGREES,
+                0.0,
+                0.0,
+                0.0,
+                8.0,
+                0.0,
+                Inches.of(targetDistanceInches).in(Meters),
+                0.0,
+                TARGET_ELEVATION_INCHES,
+                MAX_HEIGHT_INCHES,
+                0.0,
+                MIN_TURRET_ANGLE_DEGREES,
+                MAX_TURRET_ANGLE_DEGREES,
+                fallbackFlywheelCommandIps,
+                fallbackFlywheelCommandIps,
+                solution);
+
+        assertTrue(
+                !solved,
+                "Empirical moving-shot solve should reject near-hub inward-speed cases that only work by launching backward");
+    }
+
+    @Test
     void empiricalLookupDistanceBiasesDistanceShorterByRadialClosure() {
         Translation2d effectiveVelocityIps = new Translation2d(20.0, 0.0);
 
         assertEquals(
-                110.0,
+                ShooterConstants.DATA_COLLECTION_SHORT_RANGE_MIN_DISTANCE_INCHES,
                 MovingShotMath.getEmpiricalMovingShotLookupDistanceInches(
                         120.0,
                         100.0,
@@ -195,6 +229,23 @@ class MovingShotMathTest {
                 fallbackHeading.getDegrees(),
                 MovingShotMath.getHeadingTowardTarget(0.0, 0.0, fallbackHeading).getDegrees(),
                 1e-9);
+    }
+
+    @Test
+    void preferredTravelHeadingReflectsBackingAwayFromTarget() {
+        Rotation2d reflectedHeading = MovingShotMath.getPreferredHeadingForTravelDirection(
+                new Translation2d(-1.0, 0.0),
+                new Translation2d(0.0, 0.0),
+                new Translation2d(10.0, 0.0),
+                Rotation2d.fromDegrees(37.0));
+        Rotation2d forwardHeading = MovingShotMath.getPreferredHeadingForTravelDirection(
+                new Translation2d(1.0, 0.0),
+                new Translation2d(0.0, 0.0),
+                new Translation2d(10.0, 0.0),
+                Rotation2d.fromDegrees(37.0));
+
+        assertEquals(0.0, reflectedHeading.getDegrees(), 1e-9);
+        assertEquals(0.0, forwardHeading.getDegrees(), 1e-9);
     }
 
     @Test

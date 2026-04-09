@@ -302,7 +302,10 @@ public class SnowblowToAllianceWithOperatorAim extends Command {
                 Meters));
         tuningTargetElevationInchesPublisher.set(ShooterConstants.COMMANDED_SNOWBLOW_TARGET_ELEVATION_INCHES);
 
-        Rotation2d preferredRobotHeading = getPreferredRobotHeading(futurePose.getRotation());
+        Rotation2d preferredRobotHeading = getPreferredRobotHeading(
+                futurePose.getTranslation(),
+                target,
+                futurePose.getRotation());
         Rotation2d robotHeadingTarget = preferredRobotHeading;
         BallTrajectoryLookup.FixedFlywheelShotStatus fixedFlywheelStatus =
                 updateShooterSolution(target, preferredRobotHeading);
@@ -434,11 +437,15 @@ public class SnowblowToAllianceWithOperatorAim extends Command {
         lastFieldRelativeDriveDirection = preferredHeadingTracker.update(currentPose.getTranslation());
     }
 
-    private Rotation2d getPreferredRobotHeading(Rotation2d fallbackHeading) {
-        if (lastFieldRelativeDriveDirection.getNorm() > 1e-9) {
-            return lastFieldRelativeDriveDirection.getAngle();
-        }
-        return fallbackHeading;
+    private Rotation2d getPreferredRobotHeading(
+            Translation2d robotPosition,
+            Translation2d target,
+            Rotation2d fallbackHeading) {
+        return MovingShotMath.getPreferredHeadingForTravelDirection(
+                lastFieldRelativeDriveDirection,
+                robotPosition,
+                target,
+                fallbackHeading);
     }
 
     private void publishTarget(Translation2d target) {

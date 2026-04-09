@@ -218,7 +218,10 @@ public class ScoreInHub extends Command {
         publishTrackingDiagnostics();
         publishCurrentPinpointVelocityTelemetry();
 
-        Translation2d requestedVelocityMetersPerSecond = limitTranslationalAcceleration(fieldCentricRequest);
+        Translation2d requestedOperatorPerspectiveVelocityMetersPerSecond =
+                limitTranslationalAcceleration(fieldCentricRequest);
+        Translation2d requestedFieldRelativeVelocityMetersPerSecond =
+                operatorPerspectiveToFieldRelativeVelocity(requestedOperatorPerspectiveVelocityMetersPerSecond);
         double limitedVelocityXMetersPerSecond;
         double limitedVelocityYMetersPerSecond;
 
@@ -231,13 +234,15 @@ public class ScoreInHub extends Command {
             publishPredictedVelocityTelemetry(Double.NaN, Double.NaN, Double.NaN);
             empiricalDebugInfo.invalidate();
             publishEmpiricalSolverTelemetry();
-            Translation2d fallbackVelocityMetersPerSecond = clampTowardHubRadialSpeed(
-                    requestedVelocityMetersPerSecond,
+            Translation2d fallbackFieldVelocityMetersPerSecond = clampTowardHubRadialSpeed(
+                    requestedFieldRelativeVelocityMetersPerSecond,
                     getCurrentRobotPosition(),
                     target,
                     MAX_ACTIVE_TRANSLATIONAL_SPEED_METERS_PER_SECOND);
-            limitedVelocityXMetersPerSecond = fallbackVelocityMetersPerSecond.getX();
-            limitedVelocityYMetersPerSecond = fallbackVelocityMetersPerSecond.getY();
+            Translation2d fallbackOperatorPerspectiveVelocityMetersPerSecond =
+                    fieldRelativeToOperatorPerspectiveVelocity(fallbackFieldVelocityMetersPerSecond);
+            limitedVelocityXMetersPerSecond = fallbackOperatorPerspectiveVelocityMetersPerSecond.getX();
+            limitedVelocityYMetersPerSecond = fallbackOperatorPerspectiveVelocityMetersPerSecond.getY();
             boolean holdingLastSolution = shouldHoldLastSolution();
             if (holdingLastSolution) {
                 applyHeldShotCommand(
@@ -282,13 +287,15 @@ public class ScoreInHub extends Command {
                 futurePose.getTranslation(),
                 target,
                 futurePose.getRotation());
-        Translation2d limitedVelocityMetersPerSecond = limitTowardHubRadialVelocityForViableShot(
-                requestedVelocityMetersPerSecond,
+        Translation2d limitedFieldRelativeVelocityMetersPerSecond = limitTowardHubRadialVelocityForViableShot(
+                requestedFieldRelativeVelocityMetersPerSecond,
                 futurePose.getTranslation(),
                 target,
                 preferredRobotHeading);
-        limitedVelocityXMetersPerSecond = limitedVelocityMetersPerSecond.getX();
-        limitedVelocityYMetersPerSecond = limitedVelocityMetersPerSecond.getY();
+        Translation2d limitedOperatorPerspectiveVelocityMetersPerSecond =
+                fieldRelativeToOperatorPerspectiveVelocity(limitedFieldRelativeVelocityMetersPerSecond);
+        limitedVelocityXMetersPerSecond = limitedOperatorPerspectiveVelocityMetersPerSecond.getX();
+        limitedVelocityYMetersPerSecond = limitedOperatorPerspectiveVelocityMetersPerSecond.getY();
         Rotation2d robotHeadingTarget = preferredRobotHeading;
         long solutionStartMicros = SlowCallMonitor.nowMicros();
         if (updateShooterSolution(target, preferredRobotHeading)) {
@@ -757,16 +764,32 @@ public class ScoreInHub extends Command {
             double robotFieldVyMetersPerSecond,
             Translation2d target,
             Rotation2d preferredRobotHeading) {
-        return MovingShotMath.solveIdealMovingShotWithUpperHoodFallback(
-                verticalAim,
-                ShooterConstants.COMMANDED_MOVING_SHOT_HOOD_SEARCH_STEP_DEGREES,
+        double targetDistanceInches = Inches.convertFrom(
+                target.getDistance(new Translation2d(futureState.xMeters, futureState.yMeters)),
+                Meters);
+        if (!MovingShotMath.shouldUseEmpiricalHubMovingShotModel(
+                targetDistanceInches,
+                ShooterConstants.COMMANDED_SCORE_IN_HUB_TARGET_ELEVATION_INCHES)) {
+            return true;
+        }
+
+        PoseEstimatorSubsystem.PredictedFusedState candidateState = new PoseEstimatorSubsystem.PredictedFusedState();
+        candidateState.set(
                 futureState.xMeters,
                 futureState.yMeters,
                 futureState.headingRadians,
                 robotFieldVxMetersPerSecond,
                 robotFieldVyMetersPerSecond,
-                target.getX(),
-                target.getY(),
+                futureState.omegaRadiansPerSecond,
+                futureState.timestampMicros);
+        BallTrajectoryLookup.FixedFlywheelShotStatus status = MovingShotMath.solveCommandedMovingShot(
+                verticalAim.getMinimumAngle().in(Degrees),
+                verticalAim.getMaximumAngle().in(Degrees),
+                verticalAim.getAngle().in(Degrees),
+                ShooterConstants.COMMANDED_MOVING_SHOT_HOOD_SEARCH_STEP_DEGREES,
+                ShooterConstants.COMMANDED_MOVING_SHOT_FIXED_FLYWHEEL_HOOD_SEARCH_STEP_DEGREES,
+                candidateState,
+                target,
                 ShooterConstants.COMMANDED_SCORE_IN_HUB_TARGET_ELEVATION_INCHES,
                 ShooterConstants.COMMANDED_MAXIMUM_SHOOTING_HEIGHT_INCHES,
                 preferredRobotHeading.getRadians(),
@@ -774,7 +797,23 @@ public class ScoreInHub extends Command {
                 horizontalAim.getMaximumAngle().in(Degrees),
                 shooter.getMainFlywheelSpeedIPS(),
                 lastCommandedFlywheelSetpointIps,
+                idealMovingShotSolution,
                 radialSpeedLimitSearchSolution);
+        return status != BallTrajectoryLookup.FixedFlywheelShotStatus.NO_SOLUTION;
+    }
+
+    private Translation2d operatorPerspectiveToFieldRelativeVelocity(Translation2d operatorPerspectiveVelocity) {
+        if (operatorPerspectiveVelocity == null) {
+            return null;
+        }
+        return operatorPerspectiveVelocity.rotateBy(drivetrain.getDriverPerspectiveForward());
+    }
+
+    private Translation2d fieldRelativeToOperatorPerspectiveVelocity(Translation2d fieldRelativeVelocity) {
+        if (fieldRelativeVelocity == null) {
+            return null;
+        }
+        return fieldRelativeVelocity.rotateBy(drivetrain.getDriverPerspectiveForward().unaryMinus());
     }
 
     private static Translation2d clampTowardHubRadialSpeed(

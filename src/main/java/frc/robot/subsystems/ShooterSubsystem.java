@@ -16,6 +16,7 @@ import frc.robot.OverrideCommand;
 public class ShooterSubsystem extends SubsystemBase {
     private static final double KICKER_IDLE_REVERSE_MAGNITUDE_IPS = 200.0;
     private static final double KICKER_FORWARD_ENABLE_MAIN_FLYWHEEL_IPS = 200.0;
+    private static final double KICKER_COMMAND_SCALE = 0.7;
     private static final double COMMAND_EPSILON_IPS = 1e-9;
 
     /**
@@ -131,13 +132,14 @@ public class ShooterSubsystem extends SubsystemBase {
     public void setIPS(double mainFlywheelIps, double kickerIps, double backspinIps) {
         mainFlywheel.setIPS(mainFlywheelIps);
         mirroredMainFlywheel.setIPS(mainFlywheelIps);
-        kicker.setIPS(kickerIps * 0.7);
+        kicker.setIPS(kickerIps * KICKER_COMMAND_SCALE);
         backspinFlywheel.setIPS(backspinIps);
     }
 
     /**
-     * Sets a symmetric shooter speed where the kicker matches the main flywheel
-     * sign after spin-up, and otherwise runs opposite for idle/pre-spinup purge.
+     * Sets a symmetric shooter speed where the kicker follows the main flywheel's
+     * API-layer sign after spin-up, and otherwise runs opposite for idle and
+     * pre-spinup purge.
      */
     public void setCoupledIPS(double ips) {
         setIPS(ips, getCoupledKickerCommandIps(ips), ips);
@@ -209,12 +211,10 @@ public class ShooterSubsystem extends SubsystemBase {
         if (Math.abs(mainFlywheelCommandIps) <= COMMAND_EPSILON_IPS) {
             return -KICKER_IDLE_REVERSE_MAGNITUDE_IPS;
         }
-
-        double normalKickerCommandIps = mainFlywheelCommandIps;
-        if (Math.abs(mainFlywheel.getSpeedIPS()) >= KICKER_FORWARD_ENABLE_MAIN_FLYWHEEL_IPS) {
-            return normalKickerCommandIps;
+        if (Math.abs(mainFlywheel.getSpeedIPS()) < KICKER_FORWARD_ENABLE_MAIN_FLYWHEEL_IPS) {
+            return -Math.copySign(KICKER_IDLE_REVERSE_MAGNITUDE_IPS, mainFlywheelCommandIps);
         }
-        return -Math.copySign(KICKER_IDLE_REVERSE_MAGNITUDE_IPS, mainFlywheelCommandIps);
+        return mainFlywheelCommandIps;
     }
 
     public void recoverIfResetOccurred() {

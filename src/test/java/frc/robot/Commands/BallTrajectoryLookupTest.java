@@ -10,6 +10,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Comparator;
 import java.util.List;
+import java.nio.file.Path;
 
 import org.junit.jupiter.api.Test;
 
@@ -30,6 +31,10 @@ class BallTrajectoryLookupTest {
     private static final double LANDING_DISTANCE_TOLERANCE_INCHES = 0.01;
     private static final int SHORT_RANGE_THRESHOLD_INCHES = 150;
     private static final int MAX_REPORTED_ERRORS = 10;
+
+    static {
+        preloadLookupTablesForTests();
+    }
 
     private record SampleError(
             double angleDegrees,
@@ -71,6 +76,15 @@ class BallTrajectoryLookupTest {
                             commandSpeedsIps[i]));
         }
         return tableBallExitIps;
+    }
+
+    private static void preloadLookupTablesForTests() {
+        System.setProperty(
+                "frc.ballTrajectoryLutPath",
+                Path.of("src", "main", "deploy", ShooterConstants.FITTED_BALL_TRAJECTORY_LUT_FILENAME)
+                        .toAbsolutePath()
+                        .toString());
+        BallTrajectoryLookup.preloadLookupTables();
     }
 
     @Test
@@ -153,6 +167,34 @@ class BallTrajectoryLookupTest {
                 "Expected short-range worst error to stay within the current ~8 in bound");
         assertTrue(Math.abs(worstOverall.errorInches()) < 80.0,
                 "Expected old long-range empirical samples to stay within the current ~80 in bound");
+    }
+
+    @Test
+    void movingShotRejectsBackwardLauncherSolutionsNearHub() {
+        BallTrajectoryLookup.MovingShotSolution solution = new BallTrajectoryLookup.MovingShotSolution();
+
+        boolean solved = BallTrajectoryLookup.solveMovingShot(
+                ShooterConstants.COMMANDED_MINIMUM_ALLOWED_HOOD_ANGLE_DEGREES,
+                ShooterConstants.COMMANDED_MAXIMUM_ALLOWED_HOOD_ANGLE_DEGREES,
+                ShooterConstants.COMMANDED_MOVING_SHOT_HOOD_SEARCH_STEP_DEGREES,
+                true,
+                0.0,
+                0.0,
+                0.0,
+                4.0,
+                0.0,
+                Inches.of(60.0).in(Meters),
+                0.0,
+                ShooterConstants.COMMANDED_SCORE_IN_HUB_TARGET_ELEVATION_INCHES,
+                ShooterConstants.COMMANDED_MAXIMUM_SHOOTING_HEIGHT_INCHES,
+                0.0,
+                -18.0,
+                18.0,
+                solution);
+
+        assertTrue(
+                !solved,
+                "Moving-shot solve should reject near-hub inward-speed cases that only work by launching backward");
     }
 
     @Test
