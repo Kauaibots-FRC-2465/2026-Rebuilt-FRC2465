@@ -5,6 +5,7 @@ import static edu.wpi.first.units.Units.Inches;
 import static edu.wpi.first.units.Units.Meters;
 
 import edu.wpi.first.math.geometry.Pose2d;
+import edu.wpi.first.math.geometry.Rotation2d;
 import edu.wpi.first.math.geometry.Translation2d;
 import edu.wpi.first.math.kinematics.ChassisSpeeds;
 import edu.wpi.first.wpilibj.DriverStation.Alliance;
@@ -34,6 +35,7 @@ public final class FieldMath {
                     / Math.hypot(
                             ENGINEER_TARGET_LATERAL_HALF_RANGE_METERS,
                             ENGINEER_TARGET_FORWARD_HALF_RANGE_METERS);
+    private static final double HUB_TARGET_ENGINEER_ADJUSTMENT_LIMIT_METERS = Meters.convertFrom(3.0, Feet);
     private static final double DIRECTION_SPEED_THRESHOLD_METERS_PER_SECOND = 0.05;
     private static final double DIRECTION_DISTANCE_THRESHOLD_METERS = 0.001;
     private static final double EPSILON = 1e-9;
@@ -197,6 +199,35 @@ public final class FieldMath {
     }
 
     /**
+     * Returns a hub target adjusted by the engineer stick.
+     *
+     * <p>Stick forward/back moves the target farther/shorter along the robot-to-hub line,
+     * and stick right/left moves it perpendicular to that line. The total adjustment is
+     * limited to 3 feet.
+     */
+    public static Translation2d getAdjustedHubTarget(
+            Alliance alliance,
+            Translation2d robotPosition,
+            double operatorLeftX,
+            double operatorLeftY) {
+        Translation2d hubTarget = getHubTarget(alliance);
+        Translation2d stickOffset = clampVectorToUnitCircle(new Translation2d(
+                operatorLeftX,
+                -operatorLeftY));
+        if (stickOffset.getNorm() <= EPSILON) {
+            return hubTarget;
+        }
+
+        Translation2d shotDirection = robotPosition != null
+                ? normalizeOrFallback(hubTarget.minus(robotPosition), getAllianceForwardDirection(alliance))
+                : getAllianceForwardDirection(alliance);
+        Translation2d shotRightDirection = shotDirection.rotateBy(Rotation2d.fromDegrees(-90.0));
+        return hubTarget
+                .plus(shotDirection.times(stickOffset.getY() * HUB_TARGET_ENGINEER_ADJUSTMENT_LIMIT_METERS))
+                .plus(shotRightDirection.times(stickOffset.getX() * HUB_TARGET_ENGINEER_ADJUSTMENT_LIMIT_METERS));
+    }
+
+    /**
      * Converts alliance-relative wall distances into the WPILib blue-origin field coordinate system.
      */
     public static Translation2d getAllianceRelativeFieldPoint(
@@ -239,10 +270,24 @@ public final class FieldMath {
                 : new Translation2d(-1.0, 0.0);
     }
 
+    private static Translation2d getAllianceForwardDirection(Alliance alliance) {
+        return alliance == Alliance.Red
+                ? new Translation2d(-1.0, 0.0)
+                : new Translation2d(1.0, 0.0);
+    }
+
     private static Translation2d normalizeOrFallback(Translation2d vector, Translation2d fallback) {
         double norm = vector.getNorm();
         if (norm <= EPSILON) {
             return fallback;
+        }
+        return vector.div(norm);
+    }
+
+    private static Translation2d clampVectorToUnitCircle(Translation2d vector) {
+        double norm = vector.getNorm();
+        if (norm <= 1.0) {
+            return vector;
         }
         return vector.div(norm);
     }

@@ -38,6 +38,7 @@ public class ScoreInHub extends Command {
     private static final double SLOW_SOLVER_THRESHOLD_MS = 5.0;
     private static final double SLOW_SET_CONTROL_THRESHOLD_MS = 2.0;
     private static final double TRANSIENT_SOLUTION_HOLD_SECONDS = 0.25;
+    private static final double MAX_TRANSLATIONAL_SPEED_METERS_PER_SECOND = 0.75;
     private static final boolean ENABLE_SPEED_UP_ACCELERATION_LIMIT = false;
     private static final double SPEED_UP_ACCELERATION_LIMIT_METERS_PER_SECOND_SQUARED = 0.1524;
 
@@ -47,6 +48,7 @@ public class ScoreInHub extends Command {
     private final SparkAnglePositionSubsystem verticalAim;
     private final ShooterSubsystem shooter;
     private final Supplier<SwerveRequest> driveRequestSupplier;
+    private final Supplier<Translation2d> targetSupplier;
     private final SwerveRequest.FieldCentricFacingAngle facingAngleDrive =
             new SwerveRequest.FieldCentricFacingAngle();
     private final DoublePublisher targetDistanceInchesPublisher;
@@ -89,7 +91,8 @@ public class ScoreInHub extends Command {
             SparkAnglePositionSubsystem horizontalAim,
             SparkAnglePositionSubsystem verticalAim,
             ShooterSubsystem shooter,
-            Supplier<SwerveRequest> driveRequestSupplier) {
+            Supplier<SwerveRequest> driveRequestSupplier,
+            Supplier<Translation2d> targetSupplier) {
         this.drivetrain = Objects.requireNonNull(drivetrain, "drivetrain must not be null");
         this.poseEstimator = Objects.requireNonNull(poseEstimator, "poseEstimator must not be null");
         this.horizontalAim = Objects.requireNonNull(horizontalAim, "horizontalAim must not be null");
@@ -97,6 +100,7 @@ public class ScoreInHub extends Command {
         this.shooter = Objects.requireNonNull(shooter, "shooter must not be null");
         this.driveRequestSupplier =
                 Objects.requireNonNull(driveRequestSupplier, "driveRequestSupplier must not be null");
+        this.targetSupplier = Objects.requireNonNull(targetSupplier, "targetSupplier must not be null");
         NetworkTable scoreTable = NetworkTableInstance.getDefault().getTable("ScoreInHub");
         targetDistanceInchesPublisher = scoreTable.getDoubleTopic("targetDistanceInches").publish();
         targetElevationInchesPublisher = scoreTable.getDoubleTopic("targetElevationInches").publish();
@@ -180,7 +184,9 @@ public class ScoreInHub extends Command {
                         limitedVelocityYMetersPerSecond);
             } else {
                 applyNoSolutionShotCommand(getCurrentRobotPosition(), target);
-                drivetrain.setControl(requestedDrive);
+                drivetrain.setControl(fieldCentricRequest
+                        .withVelocityX(limitedVelocityXMetersPerSecond)
+                        .withVelocityY(limitedVelocityYMetersPerSecond));
             }
             long totalMicros = SlowCallMonitor.nowMicros() - executeStartMicros;
             if (SlowCallMonitor.isSlow(totalMicros, SLOW_EXECUTE_THRESHOLD_MS)
@@ -281,6 +287,10 @@ public class ScoreInHub extends Command {
     }
 
     private Translation2d getTarget() {
+        Translation2d suppliedTarget = targetSupplier.get();
+        if (suppliedTarget != null) {
+            return suppliedTarget;
+        }
         Alliance alliance = DriverStation.getAlliance().orElse(Alliance.Blue);
         return FieldMath.getHubTarget(alliance);
     }
@@ -521,9 +531,10 @@ public class ScoreInHub extends Command {
     private Translation2d limitTranslationalAcceleration(SwerveRequest.FieldCentric fieldCentricRequest) {
         double requestedVelocityXMetersPerSecond = fieldCentricRequest.VelocityX;
         double requestedVelocityYMetersPerSecond = fieldCentricRequest.VelocityY;
-        Translation2d requestedVelocity = new Translation2d(
+        Translation2d requestedVelocity = clampVelocityMagnitude(new Translation2d(
                 requestedVelocityXMetersPerSecond,
-                requestedVelocityYMetersPerSecond);
+                requestedVelocityYMetersPerSecond),
+                MAX_TRANSLATIONAL_SPEED_METERS_PER_SECOND);
         if (!ENABLE_SPEED_UP_ACCELERATION_LIMIT) {
             lastVelocityLimitTimestampSeconds = Double.NaN;
             return requestedVelocity;
@@ -558,5 +569,13 @@ public class ScoreInHub extends Command {
 
         lastVelocityLimitTimestampSeconds = currentTimestampSeconds;
         return limitedVelocity;
+    }
+
+    private static Translation2d clampVelocityMagnitude(Translation2d velocity, double maximumSpeedMetersPerSecond) {
+        double speedMetersPerSecond = velocity.getNorm();
+        if (speedMetersPerSecond <= maximumSpeedMetersPerSecond || speedMetersPerSecond <= 1e-9) {
+            return velocity;
+        }
+        return velocity.times(maximumSpeedMetersPerSecond / speedMetersPerSecond);
     }
 }
