@@ -322,17 +322,18 @@ class ScoreInHubTest {
     }
 
     @Test
-    void travelSpeedLimiterResetsLatchWhenDrivingAwayFromHub() {
+    void travelSpeedLimiterPreservesLatchWhenDrivingAwayFromHub() {
         Translation2d futureRobotPosition = new Translation2d();
         Translation2d target = new Translation2d(1.0, 0.0);
         Translation2d requestedAwayVelocityMetersPerSecond = new Translation2d(-1.0, 0.25);
+        double latchedMaximumTravelSpeedMetersPerSecond = 0.6;
 
         ScoreInHub.TravelVelocityLimitResult limitResult = ScoreInHub.limitTowardHubTravelVelocityForViableShot(
                 requestedAwayVelocityMetersPerSecond,
                 futureRobotPosition,
                 target,
                 MINIMUM_ALLOWED_RADIAL_SPEED_METERS_PER_SECOND,
-                0.6,
+                latchedMaximumTravelSpeedMetersPerSecond,
                 (robotFieldVxMetersPerSecond, robotFieldVyMetersPerSecond) -> false);
 
         assertEquals(
@@ -343,19 +344,21 @@ class ScoreInHubTest {
                 requestedAwayVelocityMetersPerSecond.getY(),
                 limitResult.getLimitedVelocityFldMetersPerSecond().getY(),
                 1e-9);
-        assertTrue(
-                Double.isInfinite(limitResult.getUpdatedMaximumTowardHubTravelSpeedMetersPerSecond()),
-                "Expected an away-from-hub command to reset the latched travel-speed limit");
+        assertEquals(
+                latchedMaximumTravelSpeedMetersPerSecond,
+                limitResult.getUpdatedMaximumTowardHubTravelSpeedMetersPerSecond(),
+                1e-9,
+                "Expected an away-from-hub command to preserve the current latched travel-speed limit");
     }
 
     @Test
-    void travelSpeedLatchDropsAcrossDistancesResetsAndRepeatsForPureRadialApproach() {
-        assertLatchSequenceRepeatsAfterAwayReset(new Translation2d(1.0, 0.0));
+    void travelSpeedLatchDropsAcrossDistancesForPureRadialApproach() {
+        assertLatchSequenceDropsAcrossDistances(new Translation2d(1.0, 0.0));
     }
 
     @Test
-    void travelSpeedLatchDropsAcrossDistancesResetsAndRepeatsForAngledApproach() {
-        assertLatchSequenceRepeatsAfterAwayReset(new Translation2d(1.0, 1.0).times(1.0 / Math.sqrt(2.0)));
+    void travelSpeedLatchDropsAcrossDistancesForAngledApproach() {
+        assertLatchSequenceDropsAcrossDistances(new Translation2d(1.0, 1.0).times(1.0 / Math.sqrt(2.0)));
     }
 
     @Test
@@ -425,59 +428,19 @@ class ScoreInHubTest {
         throw new AssertionError("Expected to find an angled travel speed that exceeds the empirical envelope");
     }
 
-    private static void assertLatchSequenceRepeatsAfterAwayReset(Translation2d travelUnitVector) {
+    private static void assertLatchSequenceDropsAcrossDistances(Translation2d travelUnitVector) {
         LatchSequenceScenario scenario = findLatchSequenceScenario(travelUnitVector);
         double requestedTravelSpeedMetersPerSecond = scenario.getRequestedTravelSpeedMetersPerSecond();
-        LatchSequenceResult firstForwardSequence = runLatchSequence(
+        LatchSequenceResult sequence = runLatchSequence(
                 scenario.getDistanceRowIndexes(),
                 travelUnitVector,
                 requestedTravelSpeedMetersPerSecond,
                 Double.POSITIVE_INFINITY);
 
-        assertAllLatchStepsViable(firstForwardSequence);
+        assertAllLatchStepsViable(sequence);
         assertLatchStrictlyDrops(
-                firstForwardSequence.getUpdatedMaximumTravelSpeedsMetersPerSecond(),
+                sequence.getUpdatedMaximumTravelSpeedsMetersPerSecond(),
                 requestedTravelSpeedMetersPerSecond);
-
-        double closestTargetDistanceInches =
-                ShooterConstants.DATA_COLLECTION_SHORT_RANGE_DISTANCES_INCHES[
-                        scenario.getDistanceRowIndexes()[scenario.getDistanceRowIndexes().length - 1]];
-        Translation2d requestedAwayVelocityMetersPerSecond = travelUnitVector.times(-requestedTravelSpeedMetersPerSecond);
-        ScoreInHub.TravelVelocityLimitResult awayResetResult = ScoreInHub.limitTowardHubTravelVelocityForViableShot(
-                requestedAwayVelocityMetersPerSecond,
-                new Translation2d(),
-                new Translation2d(Inches.of(closestTargetDistanceInches).in(Meters), 0.0),
-                MINIMUM_ALLOWED_RADIAL_SPEED_METERS_PER_SECOND,
-                firstForwardSequence.getUpdatedMaximumTravelSpeedsMetersPerSecond()
-                        [firstForwardSequence.getUpdatedMaximumTravelSpeedsMetersPerSecond().length - 1],
-                (robotFieldVxMetersPerSecond, robotFieldVyMetersPerSecond) -> false);
-
-        assertEquals(
-                requestedAwayVelocityMetersPerSecond.getX(),
-                awayResetResult.getLimitedVelocityFldMetersPerSecond().getX(),
-                1e-9);
-        assertEquals(
-                requestedAwayVelocityMetersPerSecond.getY(),
-                awayResetResult.getLimitedVelocityFldMetersPerSecond().getY(),
-                1e-9);
-        assertTrue(
-                Double.isInfinite(awayResetResult.getUpdatedMaximumTowardHubTravelSpeedMetersPerSecond()),
-                "Expected reversing away from the hub to reset the latched travel-speed limit");
-
-        LatchSequenceResult secondForwardSequence = runLatchSequence(
-                scenario.getDistanceRowIndexes(),
-                travelUnitVector,
-                requestedTravelSpeedMetersPerSecond,
-                awayResetResult.getUpdatedMaximumTowardHubTravelSpeedMetersPerSecond());
-
-        assertAllLatchStepsViable(secondForwardSequence);
-        for (int i = 0; i < firstForwardSequence.getUpdatedMaximumTravelSpeedsMetersPerSecond().length; i++) {
-            assertEquals(
-                    firstForwardSequence.getUpdatedMaximumTravelSpeedsMetersPerSecond()[i],
-                    secondForwardSequence.getUpdatedMaximumTravelSpeedsMetersPerSecond()[i],
-                    1e-9,
-                    "Expected the same latched-speed pattern after resetting by backing away");
-        }
     }
 
     private static LatchSequenceScenario findLatchSequenceScenario(

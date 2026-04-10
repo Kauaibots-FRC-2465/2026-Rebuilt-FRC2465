@@ -472,7 +472,6 @@ private Command showAllianceMarquee() {
             this::getDriverDriveRequest);
         scoreInHubCommand = new ScoreInHub(
             drivetrain,
-            pinpointSubsystem,
             poseEstimatorSubsystem,
             horizontalAim,
             verticalAim,

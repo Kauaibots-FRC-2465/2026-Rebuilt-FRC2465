@@ -14,6 +14,7 @@ import frc.robot.OverrideCommand;
  * so they can be scheduled as a single unit.
  */
 public class ShooterSubsystem extends SubsystemBase {
+    private static final double SHOOTER_IDLE_REVERSE_MAGNITUDE_IPS = 200.0;
     private static final double KICKER_IDLE_REVERSE_MAGNITUDE_IPS = 200.0;
     private static final double KICKER_FORWARD_ENABLE_MAIN_FLYWHEEL_IPS = 200.0;
     private static final double KICKER_COMMAND_SCALE = 0.7;
@@ -142,7 +143,8 @@ public class ShooterSubsystem extends SubsystemBase {
      * pre-spinup purge.
      */
     public void setCoupledIPS(double ips) {
-        setIPS(ips, getCoupledKickerCommandIps(ips), ips);
+        double shooterCommandIps = getCoupledShooterCommandIps(ips);
+        setIPS(shooterCommandIps, getCoupledKickerCommandIps(ips), shooterCommandIps);
     }
 
     /**
@@ -213,6 +215,13 @@ public class ShooterSubsystem extends SubsystemBase {
         }
         if (Math.abs(mainFlywheel.getSpeedIPS()) < KICKER_FORWARD_ENABLE_MAIN_FLYWHEEL_IPS) {
             return -Math.copySign(KICKER_IDLE_REVERSE_MAGNITUDE_IPS, mainFlywheelCommandIps);
+        }
+        return mainFlywheelCommandIps;
+    }
+
+    private double getCoupledShooterCommandIps(double mainFlywheelCommandIps) {
+        if (Math.abs(mainFlywheelCommandIps) <= COMMAND_EPSILON_IPS) {
+            return -SHOOTER_IDLE_REVERSE_MAGNITUDE_IPS;
         }
         return mainFlywheelCommandIps;
     }
