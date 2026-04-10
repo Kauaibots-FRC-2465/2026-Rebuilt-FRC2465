@@ -14,7 +14,7 @@ import frc.robot.OverrideCommand;
  * so they can be scheduled as a single unit.
  */
 public class ShooterSubsystem extends SubsystemBase {
-    public static final double KICKER_IDLE_REVERSE_MAGNITUDE_IPS = 200.0;
+    private static final double KICKER_IDLE_REVERSE_MAGNITUDE_IPS = 200.0;
     private static final double KICKER_FORWARD_ENABLE_MAIN_FLYWHEEL_IPS = 200.0;
     private static final double KICKER_COMMAND_SCALE = 0.7;
     private static final double COMMAND_EPSILON_IPS = 1e-9;
