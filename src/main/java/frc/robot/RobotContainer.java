@@ -457,6 +457,7 @@ private Command showAllianceMarquee() {
             horizontalAim,
             verticalAim,
             shooter,
+            intakedrive,
             preCheckController);
         scoreInHubCommand = new ScoreInHub(
             drivetrain,
@@ -640,9 +641,7 @@ private Command showAllianceMarquee() {
         driversController.leftTrigger().whileTrue(
             scoreInHubCommand
         );
-        preCheckController.rightBumper().whileTrue(
-            preCheckCommand
-        );
+        preCheckController.rightBumper().toggleOnTrue(preCheckCommand);
 
         driveTuningController.a().whileTrue(createDriveTuningCommand(
                 DRIVE_TUNING_LOW_SPEED_METERS_PER_SECOND,
