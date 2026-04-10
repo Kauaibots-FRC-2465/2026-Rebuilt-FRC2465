@@ -153,8 +153,8 @@ class ScoreInHubReplaySimulationTest {
                             preferredRobotHeading));
             latchedMaximumTowardHubTravelSpeedMetersPerSecond =
                     limitResult.getUpdatedMaximumTowardHubTravelSpeedMetersPerSecond();
-            Translation2d limitedVelocityMetersPerSecond = limitResult.getLimitedVelocityMetersPerSecond();
-            double limitedTravelSpeedMetersPerSecond = limitedVelocityMetersPerSecond.getNorm();
+            Translation2d limitedVelocityFldMetersPerSecond = limitResult.getLimitedVelocityFldMetersPerSecond();
+            double limitedTravelSpeedMetersPerSecond = limitedVelocityFldMetersPerSecond.getNorm();
 
             BallTrajectoryLookup.MovingShotSolution commandedShotSolution =
                     new BallTrajectoryLookup.MovingShotSolution();
@@ -166,8 +166,8 @@ class ScoreInHubReplaySimulationTest {
                     futureRobotPosition.getX(),
                     futureRobotPosition.getY(),
                     0.0,
-                    limitedVelocityMetersPerSecond.getX(),
-                    limitedVelocityMetersPerSecond.getY(),
+                    limitedVelocityFldMetersPerSecond.getX(),
+                    limitedVelocityFldMetersPerSecond.getY(),
                     target.getX(),
                     target.getY(),
                     ShooterConstants.COMMANDED_SCORE_IN_HUB_TARGET_ELEVATION_INCHES,

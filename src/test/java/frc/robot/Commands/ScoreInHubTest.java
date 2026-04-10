@@ -20,6 +20,59 @@ class ScoreInHubTest {
     private static final int LATCH_SHOT_COLUMN_INDEX = 2;
     private static final double STRICT_LATCH_DROP_TOLERANCE_METERS_PER_SECOND = 0.01;
 
+    @Test
+    void driverVelocityToFieldVelocityIsIdentityForBluePerspective() {
+        Translation2d velocityDrvMetersPerSecond = new Translation2d(1.25, -0.75);
+        Translation2d velocityFldMetersPerSecond = ScoreInHub.driverVelocityToFieldVelocity(
+                velocityDrvMetersPerSecond,
+                Rotation2d.kZero);
+
+        assertEquals(velocityDrvMetersPerSecond.getX(), velocityFldMetersPerSecond.getX(), 1e-9);
+        assertEquals(velocityDrvMetersPerSecond.getY(), velocityFldMetersPerSecond.getY(), 1e-9);
+    }
+
+    @Test
+    void driverVelocityToFieldVelocityRotatesRedPerspectiveByOneEightyDegrees() {
+        Translation2d velocityDrvMetersPerSecond = new Translation2d(1.0, 0.25);
+        Translation2d velocityFldMetersPerSecond = ScoreInHub.driverVelocityToFieldVelocity(
+                velocityDrvMetersPerSecond,
+                Rotation2d.k180deg);
+
+        assertEquals(-1.0, velocityFldMetersPerSecond.getX(), 1e-9);
+        assertEquals(-0.25, velocityFldMetersPerSecond.getY(), 1e-9);
+    }
+
+    @Test
+    void fieldAndDriverVelocityConversionsRoundTripForArbitraryPerspective() {
+        Rotation2d driverPerspectiveForward = Rotation2d.fromDegrees(37.0);
+        Translation2d originalVelocityDrvMetersPerSecond = new Translation2d(0.9, -1.7);
+        Translation2d velocityFldMetersPerSecond = ScoreInHub.driverVelocityToFieldVelocity(
+                originalVelocityDrvMetersPerSecond,
+                driverPerspectiveForward);
+        Translation2d roundTrippedVelocityDrvMetersPerSecond = ScoreInHub.fieldVelocityToDriverVelocity(
+                velocityFldMetersPerSecond,
+                driverPerspectiveForward);
+
+        assertEquals(
+                originalVelocityDrvMetersPerSecond.getX(),
+                roundTrippedVelocityDrvMetersPerSecond.getX(),
+                1e-9);
+        assertEquals(
+                originalVelocityDrvMetersPerSecond.getY(),
+                roundTrippedVelocityDrvMetersPerSecond.getY(),
+                1e-9);
+    }
+
+    @Test
+    void fieldHeadingToDriverHeadingSubtractsDriverPerspectiveForward() {
+        Rotation2d fieldHeadingFldRadians = Rotation2d.fromDegrees(180.0);
+        Rotation2d driverHeadingDrvRadians = ScoreInHub.fieldHeadingToDriverHeading(
+                fieldHeadingFldRadians,
+                Rotation2d.k180deg);
+
+        assertEquals(0.0, driverHeadingDrvRadians.getRadians(), 1e-9);
+    }
+
     private static final class LatchSequenceResult {
         private final int[] distanceRowIndexes;
         private final double[] updatedMaximumTravelSpeedsMetersPerSecond;
@@ -137,17 +190,17 @@ class ScoreInHubTest {
                         >= MINIMUM_ALLOWED_RADIAL_SPEED_METERS_PER_SECOND - 1e-9,
                 "Expected the latched maximum toward-hub travel speed to stay above the minimum allowed speed");
         assertTrue(
-                limitResult.getLimitedVelocityMetersPerSecond().getNorm() < requestedTravelSpeedMetersPerSecond,
+                limitResult.getLimitedVelocityFldMetersPerSecond().getNorm() < requestedTravelSpeedMetersPerSecond,
                 "Expected the limiter to reduce the requested angled travel speed");
         assertEquals(
                 requestedVelocityMetersPerSecond.getAngle().getRadians(),
-                limitResult.getLimitedVelocityMetersPerSecond().getAngle().getRadians(),
+                limitResult.getLimitedVelocityFldMetersPerSecond().getAngle().getRadians(),
                 1e-9,
                 "Expected the limiter to preserve travel direction while reducing speed");
         assertTrue(
                 empiricalViabilityEvaluator.hasViableShot(
-                        limitResult.getLimitedVelocityMetersPerSecond().getX(),
-                        limitResult.getLimitedVelocityMetersPerSecond().getY()),
+                        limitResult.getLimitedVelocityFldMetersPerSecond().getX(),
+                        limitResult.getLimitedVelocityFldMetersPerSecond().getY()),
                 "Expected the limited angled travel speed to be empirically viable");
     }
 
@@ -167,11 +220,11 @@ class ScoreInHubTest {
 
         assertEquals(
                 requestedAwayVelocityMetersPerSecond.getX(),
-                limitResult.getLimitedVelocityMetersPerSecond().getX(),
+                limitResult.getLimitedVelocityFldMetersPerSecond().getX(),
                 1e-9);
         assertEquals(
                 requestedAwayVelocityMetersPerSecond.getY(),
-                limitResult.getLimitedVelocityMetersPerSecond().getY(),
+                limitResult.getLimitedVelocityFldMetersPerSecond().getY(),
                 1e-9);
         assertTrue(
                 Double.isInfinite(limitResult.getUpdatedMaximumTowardHubTravelSpeedMetersPerSecond()),
@@ -284,11 +337,11 @@ class ScoreInHubTest {
 
         assertEquals(
                 requestedAwayVelocityMetersPerSecond.getX(),
-                awayResetResult.getLimitedVelocityMetersPerSecond().getX(),
+                awayResetResult.getLimitedVelocityFldMetersPerSecond().getX(),
                 1e-9);
         assertEquals(
                 requestedAwayVelocityMetersPerSecond.getY(),
-                awayResetResult.getLimitedVelocityMetersPerSecond().getY(),
+                awayResetResult.getLimitedVelocityFldMetersPerSecond().getY(),
                 1e-9);
         assertTrue(
                 Double.isInfinite(awayResetResult.getUpdatedMaximumTowardHubTravelSpeedMetersPerSecond()),
@@ -365,17 +418,17 @@ class ScoreInHubTest {
             currentMaximumTravelSpeedMetersPerSecond =
                     limitResult.getUpdatedMaximumTowardHubTravelSpeedMetersPerSecond();
             viableShots[i] = empiricalViabilityEvaluator.hasViableShot(
-                    limitResult.getLimitedVelocityMetersPerSecond().getX(),
-                    limitResult.getLimitedVelocityMetersPerSecond().getY());
+                    limitResult.getLimitedVelocityFldMetersPerSecond().getX(),
+                    limitResult.getLimitedVelocityFldMetersPerSecond().getY());
 
             assertTrue(
-                    limitResult.getLimitedVelocityMetersPerSecond().getNorm()
+                    limitResult.getLimitedVelocityFldMetersPerSecond().getNorm()
                             <= requestedTravelSpeedMetersPerSecond + 1e-9,
                     "Expected the limited speed to stay at or below the requested travel speed");
-            if (limitResult.getLimitedVelocityMetersPerSecond().getNorm() > 1e-9) {
+            if (limitResult.getLimitedVelocityFldMetersPerSecond().getNorm() > 1e-9) {
                 assertEquals(
                         requestedVelocityMetersPerSecond.getAngle().getRadians(),
-                        limitResult.getLimitedVelocityMetersPerSecond().getAngle().getRadians(),
+                        limitResult.getLimitedVelocityFldMetersPerSecond().getAngle().getRadians(),
                         1e-9,
                         "Expected the limiter to preserve travel direction across the latched sequence");
             }

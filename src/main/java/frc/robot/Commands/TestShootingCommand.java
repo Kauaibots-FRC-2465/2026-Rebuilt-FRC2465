@@ -30,6 +30,15 @@ import frc.robot.utility.TuningDashboard;
 /**
  * Toggleable hub-aiming test mode that follows the same solve path as
  * ScoreInHub for aiming, while allowing manual hood selection.
+ *
+ * <p>Frame suffixes used in this command:
+ * Fld = absolute WPILib field frame and the default for internal geometry/solver math.
+ * Drv = driver-perspective field-centric request frame at the Phoenix request boundary.
+ * Rbt = robot/body frame.
+ *
+ * <p>Unit conventions:
+ * Translation2d and Pose2d values use WPILib meters/radians defaults.
+ * Primitive suffixes spell units explicitly: Degrees, Radians, Inches, Meters, Ips.
  */
 public class TestShootingCommand extends Command {
     private static final double HOOD_TRIM_STEP_DEGREES = 1.0;
@@ -45,7 +54,7 @@ public class TestShootingCommand extends Command {
     private final Supplier<SwerveRequest> driveRequestSupplier;
     private final SwerveRequest.FieldCentricFacingAngle facingAngleDrive =
             new SwerveRequest.FieldCentricFacingAngle();
-    private final PoseEstimatorSubsystem.PredictedFusedState predictedState =
+    private final PoseEstimatorSubsystem.PredictedFusedState predictedStateFldMetersRadians =
             new PoseEstimatorSubsystem.PredictedFusedState();
     private final BallTrajectoryLookup.MovingShotSolution fixedAngleSolution =
             new BallTrajectoryLookup.MovingShotSolution();
@@ -55,13 +64,13 @@ public class TestShootingCommand extends Command {
     private final DoublePublisher launcherRelativeExitVelocityIpsPublisher;
 
     private double requestedHoodAngleDegrees;
-    private Translation2d lastFieldRelativeDriveDirection = new Translation2d();
+    private Translation2d lastTravelVectorFldMeters = new Translation2d();
     private boolean hasLatchedState;
-    private double latchedXMeters;
-    private double latchedYMeters;
-    private double latchedHeadingRadians;
-    private double latchedVxMetersPerSecond;
-    private double latchedVyMetersPerSecond;
+    private double latchedRobotXFldMeters;
+    private double latchedRobotYFldMeters;
+    private double latchedRobotHeadingFldRadians;
+    private double latchedRobotVxFldMetersPerSecond;
+    private double latchedRobotVyFldMetersPerSecond;
 
     public TestShootingCommand(
             CommandSwerveDrivetrain drivetrain,
@@ -103,7 +112,7 @@ public class TestShootingCommand extends Command {
     @Override
     public void initialize() {
         requestedHoodAngleDegrees = Double.NaN;
-        lastFieldRelativeDriveDirection = new Translation2d();
+        lastTravelVectorFldMeters = new Translation2d();
         hasLatchedState = false;
         targetDistanceInchesPublisher.set(Double.NaN);
         hoodAngleDegreesPublisher.set(verticalAim.getAngle().in(Degrees));
@@ -124,14 +133,16 @@ public class TestShootingCommand extends Command {
             return;
         }
 
-        Translation2d target = getTarget();
-        TuningDashboard.publishShootingTarget(target);
+        Translation2d hubTargetTranslationFldMeters = getHubTargetTranslationFldMeters();
+        TuningDashboard.publishShootingTarget(hubTargetTranslationFldMeters);
         double targetDistanceInches = Inches.convertFrom(
-                target.getDistance(new Translation2d(latchedXMeters, latchedYMeters)),
+                hubTargetTranslationFldMeters.getDistance(
+                        new Translation2d(latchedRobotXFldMeters, latchedRobotYFldMeters)),
                 Meters);
         targetDistanceInchesPublisher.set(targetDistanceInches);
-        updateLastDriveDirection(requestedDrive);
-        Rotation2d preferredRobotHeading = getPreferredRobotHeading(Rotation2d.fromRadians(latchedHeadingRadians));
+        updateLastTravelVectorFldMeters(requestedDrive);
+        Rotation2d preferredRobotHeadingFldRadians =
+                getPreferredRobotHeadingFldRadians(Rotation2d.fromRadians(latchedRobotHeadingFldRadians));
 
         boolean useEmpiricalMovingShotModel = MovingShotMath.shouldUseEmpiricalHubMovingShotModel(
                 targetDistanceInches,
@@ -151,16 +162,16 @@ public class TestShootingCommand extends Command {
                 verticalAim.getMinimumAngle().in(Degrees),
                 verticalAim.getMaximumAngle().in(Degrees),
                 ShooterConstants.COMMANDED_MOVING_SHOT_FIXED_FLYWHEEL_HOOD_SEARCH_STEP_DEGREES,
-                latchedXMeters,
-                latchedYMeters,
-                latchedHeadingRadians,
-                latchedVxMetersPerSecond,
-                latchedVyMetersPerSecond,
-                target.getX(),
-                target.getY(),
+                latchedRobotXFldMeters,
+                latchedRobotYFldMeters,
+                latchedRobotHeadingFldRadians,
+                latchedRobotVxFldMetersPerSecond,
+                latchedRobotVyFldMetersPerSecond,
+                hubTargetTranslationFldMeters.getX(),
+                hubTargetTranslationFldMeters.getY(),
                 ShooterConstants.COMMANDED_SCORE_IN_HUB_TARGET_ELEVATION_INCHES,
                 ShooterConstants.COMMANDED_TEST_SHOOTING_MAXIMUM_HEIGHT_INCHES,
-                preferredRobotHeading.getRadians(),
+                preferredRobotHeadingFldRadians.getRadians(),
                 horizontalAim.getMinimumAngle().in(Degrees),
                 horizontalAim.getMaximumAngle().in(Degrees),
                 fixedAngleSolution);
@@ -184,12 +195,12 @@ public class TestShootingCommand extends Command {
 
         double turretDeltaDegrees = fixedAngleSolution.getTurretDeltaDegrees();
         double launcherRelativeExitVelocityIps = fixedAngleSolution.getLauncherRelativeExitVelocityIps();
-        double robotHeadingDegrees = fixedAngleSolution.getRobotHeadingDegrees();
+        double robotHeadingFldDegrees = fixedAngleSolution.getRobotHeadingDegrees();
         horizontalAim.setAngle(Degrees.of(clampTurretDeltaDegrees(turretDeltaDegrees)));
         shooter.setCoupledIPS(commandedFlywheelIps);
         flywheelCommandIpsPublisher.set(commandedFlywheelIps);
         launcherRelativeExitVelocityIpsPublisher.set(launcherRelativeExitVelocityIps);
-        applyDriveHeadingTarget(requestedDrive, robotHeadingDegrees);
+        applyDriveHeadingTarget(requestedDrive, robotHeadingFldDegrees);
     }
 
     @Override
@@ -217,7 +228,7 @@ public class TestShootingCommand extends Command {
         requestedHoodAngleDegrees -= HOOD_TRIM_STEP_DEGREES;
     }
 
-    private Translation2d getTarget() {
+    private Translation2d getHubTargetTranslationFldMeters() {
         Alliance alliance = DriverStation.getAlliance().orElse(Alliance.Blue);
         return FieldMath.getHubTarget(alliance);
     }
@@ -249,29 +260,29 @@ public class TestShootingCommand extends Command {
                 Math.min(horizontalAim.getMaximumAngle().in(Degrees), turretDeltaDegrees));
     }
 
-    private void updateLastDriveDirection(SwerveRequest requestedDrive) {
-        if (!(requestedDrive instanceof SwerveRequest.FieldCentric fieldCentricRequest)) {
+    private void updateLastTravelVectorFldMeters(SwerveRequest requestedDrive) {
+        if (!(requestedDrive instanceof SwerveRequest.FieldCentric fieldCentricRequestDrv)) {
             return;
         }
 
-        Translation2d fieldRelativeVelocity = new Translation2d(
-                fieldCentricRequest.VelocityX,
-                fieldCentricRequest.VelocityY).rotateBy(drivetrain.getDriverPerspectiveForward());
-        lastFieldRelativeDriveDirection = FieldMath.updateLastDriveDirection(
-                fieldRelativeVelocity,
-                lastFieldRelativeDriveDirection);
+        Translation2d velocityFldMetersPerSecond = new Translation2d(
+                fieldCentricRequestDrv.VelocityX,
+                fieldCentricRequestDrv.VelocityY).rotateBy(drivetrain.getDriverPerspectiveForward());
+        lastTravelVectorFldMeters = FieldMath.updateLastDriveDirection(
+                velocityFldMetersPerSecond,
+                lastTravelVectorFldMeters);
     }
 
-    private Rotation2d getPreferredRobotHeading(Rotation2d fallbackHeading) {
-        if (lastFieldRelativeDriveDirection.getNorm() > 1e-9) {
-            return lastFieldRelativeDriveDirection.getAngle();
+    private Rotation2d getPreferredRobotHeadingFldRadians(Rotation2d fallbackHeadingFldRadians) {
+        if (lastTravelVectorFldMeters.getNorm() > 1e-9) {
+            return lastTravelVectorFldMeters.getAngle();
         }
-        return fallbackHeading;
+        return fallbackHeadingFldRadians;
     }
 
     private boolean refreshLatchedState() {
-        if (poseEstimator.getPredictedFusedState(0.0, predictedState)) {
-            latchPredictedState();
+        if (poseEstimator.getPredictedFusedState(0.0, predictedStateFldMetersRadians)) {
+            latchPredictedStateFld();
             return true;
         }
 
@@ -279,26 +290,26 @@ public class TestShootingCommand extends Command {
             return true;
         }
 
-        Pose2d fusedPose = poseEstimator.getFusedPoseSupplier().get();
-        if (fusedPose == null) {
+        Pose2d fusedRobotPoseFldMetersRadians = poseEstimator.getFusedPoseSupplier().get();
+        if (fusedRobotPoseFldMetersRadians == null) {
             return false;
         }
 
-        latchedXMeters = fusedPose.getX();
-        latchedYMeters = fusedPose.getY();
-        latchedHeadingRadians = fusedPose.getRotation().getRadians();
-        latchedVxMetersPerSecond = 0.0;
-        latchedVyMetersPerSecond = 0.0;
+        latchedRobotXFldMeters = fusedRobotPoseFldMetersRadians.getX();
+        latchedRobotYFldMeters = fusedRobotPoseFldMetersRadians.getY();
+        latchedRobotHeadingFldRadians = fusedRobotPoseFldMetersRadians.getRotation().getRadians();
+        latchedRobotVxFldMetersPerSecond = 0.0;
+        latchedRobotVyFldMetersPerSecond = 0.0;
         hasLatchedState = true;
         return true;
     }
 
-    private void latchPredictedState() {
-        latchedXMeters = predictedState.xMeters;
-        latchedYMeters = predictedState.yMeters;
-        latchedHeadingRadians = predictedState.headingRadians;
-        latchedVxMetersPerSecond = predictedState.vxMetersPerSecond;
-        latchedVyMetersPerSecond = predictedState.vyMetersPerSecond;
+    private void latchPredictedStateFld() {
+        latchedRobotXFldMeters = predictedStateFldMetersRadians.xMeters;
+        latchedRobotYFldMeters = predictedStateFldMetersRadians.yMeters;
+        latchedRobotHeadingFldRadians = predictedStateFldMetersRadians.headingRadians;
+        latchedRobotVxFldMetersPerSecond = predictedStateFldMetersRadians.vxMetersPerSecond;
+        latchedRobotVyFldMetersPerSecond = predictedStateFldMetersRadians.vyMetersPerSecond;
         hasLatchedState = true;
     }
 
@@ -322,25 +333,25 @@ public class TestShootingCommand extends Command {
         launcherRelativeExitVelocityIpsPublisher.set(0.0);
     }
 
-    private void applyDriveHeadingTarget(SwerveRequest requestedDrive, double robotHeadingDegrees) {
-        if (!(requestedDrive instanceof SwerveRequest.FieldCentric fieldCentricRequest)) {
+    private void applyDriveHeadingTarget(SwerveRequest requestedDrive, double robotHeadingFldDegrees) {
+        if (!(requestedDrive instanceof SwerveRequest.FieldCentric fieldCentricRequestDrv)) {
             drivetrain.setControl(requestedDrive);
             return;
         }
 
-        Rotation2d operatorPerspectiveHeadingTarget =
-                Rotation2d.fromDegrees(robotHeadingDegrees).minus(drivetrain.getDriverPerspectiveForward());
+        Rotation2d robotHeadingTargetDrvRadians =
+                Rotation2d.fromDegrees(robotHeadingFldDegrees).minus(drivetrain.getDriverPerspectiveForward());
         drivetrain.setControl(
                 facingAngleDrive
-                        .withVelocityX(fieldCentricRequest.VelocityX)
-                        .withVelocityY(fieldCentricRequest.VelocityY)
-                        .withTargetDirection(operatorPerspectiveHeadingTarget)
-                        .withDeadband(fieldCentricRequest.Deadband)
-                        .withRotationalDeadband(fieldCentricRequest.RotationalDeadband)
-                        .withCenterOfRotation(fieldCentricRequest.CenterOfRotation)
-                        .withDriveRequestType(fieldCentricRequest.DriveRequestType)
-                        .withSteerRequestType(fieldCentricRequest.SteerRequestType)
-                        .withDesaturateWheelSpeeds(fieldCentricRequest.DesaturateWheelSpeeds)
-                        .withForwardPerspective(fieldCentricRequest.ForwardPerspective));
+                        .withVelocityX(fieldCentricRequestDrv.VelocityX)
+                        .withVelocityY(fieldCentricRequestDrv.VelocityY)
+                        .withTargetDirection(robotHeadingTargetDrvRadians)
+                        .withDeadband(fieldCentricRequestDrv.Deadband)
+                        .withRotationalDeadband(fieldCentricRequestDrv.RotationalDeadband)
+                        .withCenterOfRotation(fieldCentricRequestDrv.CenterOfRotation)
+                        .withDriveRequestType(fieldCentricRequestDrv.DriveRequestType)
+                        .withSteerRequestType(fieldCentricRequestDrv.SteerRequestType)
+                        .withDesaturateWheelSpeeds(fieldCentricRequestDrv.DesaturateWheelSpeeds)
+                        .withForwardPerspective(fieldCentricRequestDrv.ForwardPerspective));
     }
 }
