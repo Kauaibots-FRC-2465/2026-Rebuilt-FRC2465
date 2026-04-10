@@ -62,6 +62,7 @@ import frc.robot.Commands.DataCollectionCommand;
 import frc.robot.Commands.HoodRestPositionCharacterization;
 import frc.robot.Commands.HoodTimingCharacterization;
 import frc.robot.Commands.PathPlannerAutoAssist;
+import frc.robot.Commands.PreCheck;
 import frc.robot.Commands.ShooterConstants;
 import frc.robot.Commands.TestShootingCommand;
 import frc.robot.fieldmath.FieldMath;
@@ -159,6 +160,7 @@ public class RobotContainer implements Subsystem {
     private final CommandXboxController testController = new CommandXboxController(2);
     private final CommandXboxController testController2 = new CommandXboxController(3);
     private final CommandXboxController driveTuningController = new CommandXboxController(4);
+    private final CommandXboxController preCheckController = new CommandXboxController(5);
 
     public final CommandSwerveDrivetrain drivetrain = TunerConstants.createDrivetrain();
     
@@ -226,6 +228,7 @@ private Command showAllianceMarquee() {
     public final KrakenFlywheelSubsystem intakedrive;
     private final DataCollectionCommand dataCollectionCommand;
     private final TestShootingCommand testShootingCommand;
+    private final PreCheck preCheckCommand;
     private final ScoreInHub scoreInHubCommand;
     private final SnowblowToAllianceWithOperatorAim snowblowToAllianceWithOperatorAimCommand;
     private final PathPlannerAutoAssist pathPlannerAutoAssist;
@@ -450,6 +453,11 @@ private Command showAllianceMarquee() {
             shooter,
             intakedrive,
             this::getDriverDriveRequest);
+        preCheckCommand = new PreCheck(
+            horizontalAim,
+            verticalAim,
+            shooter,
+            preCheckController);
         scoreInHubCommand = new ScoreInHub(
             drivetrain,
             poseEstimatorSubsystem,
@@ -631,6 +639,9 @@ private Command showAllianceMarquee() {
         );
         driversController.leftTrigger().whileTrue(
             scoreInHubCommand
+        );
+        preCheckController.rightBumper().whileTrue(
+            preCheckCommand
         );
 
         driveTuningController.a().whileTrue(createDriveTuningCommand(
