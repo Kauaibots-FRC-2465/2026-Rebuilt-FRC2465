@@ -125,11 +125,12 @@ public class ScoreInHub extends Command {
             new BallTrajectoryLookup.MovingShotSolution();
     private final MovingShotMath.EmpiricalMovingShotDebugInfo empiricalDebugInfo =
             new MovingShotMath.EmpiricalMovingShotDebugInfo();
-    private Rotation2d lastValidRobotHeadingTargetFldRadians = new Rotation2d();
-    private double lastValidTurretDeltaDegrees = 0.0;
-    private double lastValidFlywheelCommandIps = 0.0;
-    private double lastValidSolutionTimestampSeconds = Double.NEGATIVE_INFINITY;
-    private boolean hasLatchedValidSolution = false;
+    private Rotation2d lastResolvedRobotHeadingTargetFldRadians = new Rotation2d();
+    private double lastResolvedHoodAngleDegrees = 0.0;
+    private double lastResolvedTurretDeltaDegrees = 0.0;
+    private double lastResolvedFlywheelCommandIps = 0.0;
+    private double lastResolvedSolutionTimestampSeconds = Double.NEGATIVE_INFINITY;
+    private boolean hasLatchedResolvedSolution = false;
     private double latchedMaximumTowardHubTravelSpeedMetersPerSecond = Double.POSITIVE_INFINITY;
     private double lastCommandedFlywheelSetpointIps = 0.0;
     private double previousCycleMeasuredHoodAngleDegrees = Double.NaN;
@@ -213,6 +214,8 @@ public class ScoreInHub extends Command {
     @Override
     public void initialize() {
         latchedMaximumTowardHubTravelSpeedMetersPerSecond = Double.POSITIVE_INFINITY;
+        hasLatchedResolvedSolution = false;
+        lastResolvedSolutionTimestampSeconds = Double.NEGATIVE_INFINITY;
         lastCommandedFlywheelSetpointIps = shooter.getMainFlywheelSpeedIPS();
         previousCycleMeasuredHoodAngleDegrees = Double.NaN;
         previousCycleCommandedHoodAngleDegrees = Double.NaN;
@@ -302,7 +305,7 @@ public class ScoreInHub extends Command {
                     fieldVelocityToDriverVelocity(fallbackVelocityFldMetersPerSecond);
             limitedVelocityXDrvMetersPerSecond = fallbackVelocityDrvMetersPerSecond.getX();
             limitedVelocityYDrvMetersPerSecond = fallbackVelocityDrvMetersPerSecond.getY();
-            boolean holdingLastSolution = shouldHoldLastSolution();
+            boolean holdingLastSolution = shouldHoldLastResolvedAim();
             if (holdingLastSolution) {
                 applyHeldShotCommand(
                         fieldCentricRequestDrv,
@@ -326,7 +329,7 @@ public class ScoreInHub extends Command {
                         String.format(
                                 "futureState=false holding=%s holdAge=%.3f s predict=%.3f ms",
                                 Boolean.toString(holdingLastSolution),
-                                getLatchedSolutionAgeSeconds(),
+                                getLatchedResolvedSolutionAgeSeconds(),
                                 SlowCallMonitor.toMillis(predictionMicros)));
             }
             return;
@@ -371,7 +374,7 @@ public class ScoreInHub extends Command {
         long solutionStartMicros = SlowCallMonitor.nowMicros();
         if (updateShooterSolution(targetTranslationFldMeters, preferredRobotHeadingFldRadians)) {
             robotHeadingTargetFldRadians = Rotation2d.fromDegrees(movingShotSolution.getRobotHeadingDegrees());
-        } else if (shouldHoldLastSolution()) {
+        } else if (shouldHoldLastResolvedAim()) {
             applyHeldShotCommand(
                     fieldCentricRequestDrv,
                     limitedVelocityXDrvMetersPerSecond,
@@ -385,7 +388,7 @@ public class ScoreInHub extends Command {
                         totalMicros,
                         String.format(
                                 "holdingLastSolution=true holdAge=%.3f s predict=%.3f ms solve=%.3f ms setControl=0.000 ms",
-                                getLatchedSolutionAgeSeconds(),
+                                getLatchedResolvedSolutionAgeSeconds(),
                                 SlowCallMonitor.toMillis(predictionMicros),
                                 SlowCallMonitor.toMillis(solutionMicros)));
             }
@@ -514,15 +517,12 @@ public class ScoreInHub extends Command {
         horizontalAim.setAngle(Degrees.of(clampedTurretDeltaDegrees));
         shooter.setCoupledIPS(idealFlywheelCommandIps);
         recordPreviousCycleTargets(commandedHoodAngleDegrees, idealFlywheelCommandIps);
-        if (fixedFlywheelStatus == BallTrajectoryLookup.FixedFlywheelShotStatus.VALID) {
-            lastValidRobotHeadingTargetFldRadians =
-                    Rotation2d.fromDegrees(movingShotSolution.getRobotHeadingDegrees());
-            lastValidTurretDeltaDegrees = clampedTurretDeltaDegrees;
-            lastValidFlywheelCommandIps = idealFlywheelCommandIps;
-            lastValidSolutionTimestampSeconds = Timer.getFPGATimestamp();
-            hasLatchedValidSolution = true;
-        } else {
-            hasLatchedValidSolution = false;
+        if (hasResolvedAim(fixedFlywheelStatus)) {
+            latchResolvedAim(
+                    Rotation2d.fromDegrees(movingShotSolution.getRobotHeadingDegrees()),
+                    commandedHoodAngleDegrees,
+                    clampedTurretDeltaDegrees,
+                    idealFlywheelCommandIps);
         }
         long totalMicros = SlowCallMonitor.nowMicros() - functionStartMicros;
         if (SlowCallMonitor.isSlow(totalMicros, SLOW_SOLVER_THRESHOLD_MS)
@@ -549,16 +549,29 @@ public class ScoreInHub extends Command {
                 fallbackHeadingFldRadians);
     }
 
-    private boolean shouldHoldLastSolution() {
-        return hasLatchedValidSolution
-                && getLatchedSolutionAgeSeconds() <= TRANSIENT_SOLUTION_HOLD_SECONDS;
+    private boolean shouldHoldLastResolvedAim() {
+        return hasLatchedResolvedSolution
+                && getLatchedResolvedSolutionAgeSeconds() <= TRANSIENT_SOLUTION_HOLD_SECONDS;
     }
 
-    private double getLatchedSolutionAgeSeconds() {
-        if (!hasLatchedValidSolution) {
+    private double getLatchedResolvedSolutionAgeSeconds() {
+        if (!hasLatchedResolvedSolution) {
             return Double.POSITIVE_INFINITY;
         }
-        return Timer.getFPGATimestamp() - lastValidSolutionTimestampSeconds;
+        return Timer.getFPGATimestamp() - lastResolvedSolutionTimestampSeconds;
+    }
+
+    private void latchResolvedAim(
+            Rotation2d robotHeadingTargetFldRadians,
+            double hoodAngleDegrees,
+            double turretDeltaDegrees,
+            double flywheelCommandIps) {
+        lastResolvedRobotHeadingTargetFldRadians = robotHeadingTargetFldRadians;
+        lastResolvedHoodAngleDegrees = hoodAngleDegrees;
+        lastResolvedTurretDeltaDegrees = turretDeltaDegrees;
+        lastResolvedFlywheelCommandIps = flywheelCommandIps;
+        lastResolvedSolutionTimestampSeconds = Timer.getFPGATimestamp();
+        hasLatchedResolvedSolution = true;
     }
 
     private Translation2d getCurrentRobotTranslationFldMeters() {
@@ -577,7 +590,7 @@ public class ScoreInHub extends Command {
         shooter.setCoupledIPS(fallbackFlywheelCommandIps);
         recordPreviousCycleTargets(verticalAim.getAngle().in(Degrees), fallbackFlywheelCommandIps);
         horizontalAim.setAngle(Degrees.of(0.0));
-        hasLatchedValidSolution = false;
+        hasLatchedResolvedSolution = false;
     }
 
     private double getNoSolutionHubFlywheelCommandIps(
@@ -608,18 +621,19 @@ public class ScoreInHub extends Command {
         shooter.setCoupledIPS(0.0);
         recordPreviousCycleTargets(verticalAim.getAngle().in(Degrees), 0.0);
         horizontalAim.setAngle(Degrees.of(0.0));
-        hasLatchedValidSolution = false;
+        hasLatchedResolvedSolution = false;
     }
 
     private void applyHeldShotCommand(
             SwerveRequest.FieldCentric fieldCentricRequestDrv,
             double velocityXDrvMetersPerSecond,
             double velocityYDrvMetersPerSecond) {
-        horizontalAim.setAngle(Degrees.of(lastValidTurretDeltaDegrees));
-        shooter.setCoupledIPS(lastValidFlywheelCommandIps);
-        recordPreviousCycleTargets(verticalAim.getAngle().in(Degrees), lastValidFlywheelCommandIps);
+        verticalAim.setAngle(Degrees.of(lastResolvedHoodAngleDegrees));
+        horizontalAim.setAngle(Degrees.of(lastResolvedTurretDeltaDegrees));
+        shooter.setCoupledIPS(lastResolvedFlywheelCommandIps);
+        recordPreviousCycleTargets(lastResolvedHoodAngleDegrees, lastResolvedFlywheelCommandIps);
         Rotation2d robotHeadingTargetDrvRadians = fieldHeadingToDriverHeading(
-                lastValidRobotHeadingTargetFldRadians,
+                lastResolvedRobotHeadingTargetFldRadians,
                 drivetrain.getDriverPerspectiveForward());
         drivetrain.setControl(
                 facingAngleDrive
@@ -1193,6 +1207,10 @@ public class ScoreInHub extends Command {
             return null;
         }
         return headingFldRadians.minus(driverPerspectiveForward);
+    }
+
+    static boolean hasResolvedAim(BallTrajectoryLookup.FixedFlywheelShotStatus fixedFlywheelStatus) {
+        return fixedFlywheelStatus != BallTrajectoryLookup.FixedFlywheelShotStatus.NO_SOLUTION;
     }
 
     private static Translation2d clampTowardHubTravelSpeed(

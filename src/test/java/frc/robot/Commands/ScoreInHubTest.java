@@ -73,6 +73,14 @@ class ScoreInHubTest {
         assertEquals(0.0, driverHeadingDrvRadians.getRadians(), 1e-9);
     }
 
+    @Test
+    void hasResolvedAimTreatsOnlyNoSolutionAsUnresolved() {
+        assertTrue(ScoreInHub.hasResolvedAim(BallTrajectoryLookup.FixedFlywheelShotStatus.VALID));
+        assertTrue(ScoreInHub.hasResolvedAim(BallTrajectoryLookup.FixedFlywheelShotStatus.TOO_SLOW));
+        assertTrue(ScoreInHub.hasResolvedAim(BallTrajectoryLookup.FixedFlywheelShotStatus.TOO_FAST));
+        assertTrue(!ScoreInHub.hasResolvedAim(BallTrajectoryLookup.FixedFlywheelShotStatus.NO_SOLUTION));
+    }
+
     private static final class LatchSequenceResult {
         private final int[] distanceRowIndexes;
         private final double[] updatedMaximumTravelSpeedsMetersPerSecond;
