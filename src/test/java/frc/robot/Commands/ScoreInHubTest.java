@@ -82,10 +82,10 @@ class ScoreInHubTest {
     }
 
     @Test
-    void scoreInHubLookupDistanceShorteningOnlyAppliesWhenRequested() {
+    void empiricalLookupDistanceShorteningDoesNotExpandDefaultApplicability() {
         double rawTargetDistanceInches =
                 ShooterConstants.DATA_COLLECTION_SHORT_RANGE_EMPIRICAL_MAX_DISTANCE_INCHES
-                        + ShooterConstants.COMMANDED_SCORE_IN_HUB_EMPIRICAL_LOOKUP_DISTANCE_SHORTENING_INCHES
+                        + ShooterConstants.COMMANDED_EMPIRICAL_MOVING_SHOT_LOOKUP_DISTANCE_SHORTENING_INCHES
                         - 1.0;
 
         assertTrue(
@@ -93,14 +93,19 @@ class ScoreInHubTest {
                         rawTargetDistanceInches,
                         ShooterConstants.COMMANDED_SCORE_IN_HUB_TARGET_ELEVATION_INCHES));
         assertTrue(
+                !MovingShotMath.shouldUseEmpiricalHubMovingShotModel(
+                        rawTargetDistanceInches,
+                        ShooterConstants.COMMANDED_SCORE_IN_HUB_TARGET_ELEVATION_INCHES,
+                        0.0));
+        assertTrue(
                 MovingShotMath.shouldUseEmpiricalHubMovingShotModel(
                         rawTargetDistanceInches,
                         ShooterConstants.COMMANDED_SCORE_IN_HUB_TARGET_ELEVATION_INCHES,
-                        ShooterConstants.COMMANDED_SCORE_IN_HUB_EMPIRICAL_LOOKUP_DISTANCE_SHORTENING_INCHES));
+                        ShooterConstants.COMMANDED_EMPIRICAL_MOVING_SHOT_LOOKUP_DISTANCE_SHORTENING_INCHES));
     }
 
     @Test
-    void scoreInHubLookupDistanceShorteningDoesNotMoveStationaryAimOffTarget() {
+    void empiricalLookupDistanceShorteningDoesNotMoveStationaryAimOffTarget() {
         int distanceRowIndex = 5;
         int shotColumnIndex = 2;
         double rawTargetDistanceInches = ShooterConstants.DATA_COLLECTION_SHORT_RANGE_DISTANCES_INCHES[distanceRowIndex];
@@ -112,16 +117,16 @@ class ScoreInHubTest {
         double targetAzimuthRadians = Math.toRadians(targetAzimuthDegrees);
         double targetXMeters = Inches.of(rawTargetDistanceInches * Math.cos(targetAzimuthRadians)).in(Meters);
         double targetYMeters = Inches.of(rawTargetDistanceInches * Math.sin(targetAzimuthRadians)).in(Meters);
-        MovingShotMath.EmpiricalMovingShotDebugInfo uncompensatedDebugInfo =
+        MovingShotMath.EmpiricalMovingShotDebugInfo defaultDebugInfo =
                 new MovingShotMath.EmpiricalMovingShotDebugInfo();
-        MovingShotMath.EmpiricalMovingShotDebugInfo compensatedDebugInfo =
+        MovingShotMath.EmpiricalMovingShotDebugInfo legacyDebugInfo =
                 new MovingShotMath.EmpiricalMovingShotDebugInfo();
-        BallTrajectoryLookup.MovingShotSolution uncompensatedSolution =
+        BallTrajectoryLookup.MovingShotSolution defaultSolution =
                 new BallTrajectoryLookup.MovingShotSolution();
-        BallTrajectoryLookup.MovingShotSolution compensatedSolution =
+        BallTrajectoryLookup.MovingShotSolution legacySolution =
                 new BallTrajectoryLookup.MovingShotSolution();
 
-        boolean uncompensatedSolved = MovingShotMath.solveIdealMovingShotWithUpperHoodFallback(
+        boolean defaultSolved = MovingShotMath.solveIdealMovingShotWithUpperHoodFallback(
                 ShooterConstants.COMMANDED_MINIMUM_ALLOWED_HOOD_ANGLE_DEGREES,
                 ShooterConstants.COMMANDED_MAXIMUM_ALLOWED_HOOD_ANGLE_DEGREES,
                 preferredHoodAngleDegrees,
@@ -140,9 +145,9 @@ class ScoreInHubTest {
                 MAX_TURRET_ANGLE_DEGREES,
                 flywheelCommandIps,
                 flywheelCommandIps,
-                uncompensatedSolution,
-                uncompensatedDebugInfo);
-        boolean compensatedSolved = MovingShotMath.solveIdealMovingShotWithUpperHoodFallback(
+                defaultSolution,
+                defaultDebugInfo);
+        boolean legacySolved = MovingShotMath.solveIdealMovingShotWithUpperHoodFallback(
                 ShooterConstants.COMMANDED_MINIMUM_ALLOWED_HOOD_ANGLE_DEGREES,
                 ShooterConstants.COMMANDED_MAXIMUM_ALLOWED_HOOD_ANGLE_DEGREES,
                 preferredHoodAngleDegrees,
@@ -161,27 +166,27 @@ class ScoreInHubTest {
                 MAX_TURRET_ANGLE_DEGREES,
                 flywheelCommandIps,
                 flywheelCommandIps,
-                compensatedSolution,
-                compensatedDebugInfo,
-                ShooterConstants.COMMANDED_SCORE_IN_HUB_EMPIRICAL_LOOKUP_DISTANCE_SHORTENING_INCHES);
+                legacySolution,
+                legacyDebugInfo,
+                0.0);
 
-        assertTrue(uncompensatedSolved);
-        assertTrue(compensatedSolved);
-        assertEquals(rawTargetDistanceInches, uncompensatedDebugInfo.getLookupTargetDistanceInches(), 1e-9);
+        assertTrue(defaultSolved);
+        assertTrue(legacySolved);
         assertEquals(
                 rawTargetDistanceInches
-                        - ShooterConstants.COMMANDED_SCORE_IN_HUB_EMPIRICAL_LOOKUP_DISTANCE_SHORTENING_INCHES,
-                compensatedDebugInfo.getLookupTargetDistanceInches(),
+                        - ShooterConstants.COMMANDED_EMPIRICAL_MOVING_SHOT_LOOKUP_DISTANCE_SHORTENING_INCHES,
+                defaultDebugInfo.getLookupTargetDistanceInches(),
                 1e-9);
-        assertEquals(rawTargetDistanceInches, uncompensatedSolution.getTargetRadialDistanceInches(), 1e-9);
-        assertEquals(rawTargetDistanceInches, compensatedSolution.getTargetRadialDistanceInches(), 1e-9);
+        assertEquals(rawTargetDistanceInches, legacyDebugInfo.getLookupTargetDistanceInches(), 1e-9);
+        assertEquals(rawTargetDistanceInches, defaultSolution.getTargetRadialDistanceInches(), 1e-9);
+        assertEquals(rawTargetDistanceInches, legacySolution.getTargetRadialDistanceInches(), 1e-9);
         assertEquals(
-                uncompensatedSolution.getTurretDeltaDegrees(),
-                compensatedSolution.getTurretDeltaDegrees(),
+                defaultSolution.getTurretDeltaDegrees(),
+                legacySolution.getTurretDeltaDegrees(),
                 1e-9);
         assertEquals(
-                uncompensatedSolution.getShotAzimuthDegrees(),
-                compensatedSolution.getShotAzimuthDegrees(),
+                defaultSolution.getShotAzimuthDegrees(),
+                legacySolution.getShotAzimuthDegrees(),
                 1e-9);
     }
 

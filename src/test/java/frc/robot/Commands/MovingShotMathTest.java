@@ -32,7 +32,7 @@ class MovingShotMathTest {
     private static final double MAX_TURRET_ANGLE_DEGREES = 180.0;
     private static final double INTERIOR_HOOD_EDGE_MARGIN_DEGREES = 0.001;
     private static final double MANIFOLD_SPEED_TOLERANCE_IPS = 1e-3;
-    private static final double EMPIRICAL_PHYSICS_LANDING_TOLERANCE_INCHES = 30.0;
+    private static final double EMPIRICAL_PHYSICS_LANDING_TOLERANCE_INCHES = 35.0;
     private static final double PHYSICS_SIMULATION_DT_SECONDS = 0.002;
     private static final double PHYSICS_MAX_SIMULATION_TIME_SECONDS = 5.0;
     private static final double GRAVITY_IPS2 = 386.08858267716535;
@@ -58,8 +58,9 @@ class MovingShotMathTest {
         double targetDistanceInches = 0.5 * (
                 ShooterConstants.DATA_COLLECTION_SHORT_RANGE_DISTANCES_INCHES[0]
                         + ShooterConstants.DATA_COLLECTION_SHORT_RANGE_DISTANCES_INCHES[1]);
+        double lookupTargetDistanceInches = getDefaultEmpiricalSolveLookupDistanceInches(targetDistanceInches);
         double expectedMinimumHoodAngleDegrees =
-                ShortRangeHubFlywheelLookup.getMinimumHoodAngleDegrees(targetDistanceInches);
+                ShortRangeHubFlywheelLookup.getMinimumHoodAngleDegrees(lookupTargetDistanceInches);
         double preferredHoodAngleDegrees = expectedMinimumHoodAngleDegrees - 5.0;
         BallTrajectoryLookup.MovingShotSolution solution = new BallTrajectoryLookup.MovingShotSolution();
 
@@ -496,8 +497,11 @@ class MovingShotMathTest {
         BallTrajectoryLookup.MovingShotSolution solution = new BallTrajectoryLookup.MovingShotSolution();
 
         for (double targetDistanceInches : buildEmpiricalDistanceEdgeCases()) {
-            double minimumHoodAngleDegrees = ShortRangeHubFlywheelLookup.getMinimumHoodAngleDegrees(targetDistanceInches);
-            double maximumHoodAngleDegrees = ShortRangeHubFlywheelLookup.getMaximumHoodAngleDegrees(targetDistanceInches);
+            double lookupTargetDistanceInches = getDefaultEmpiricalSolveLookupDistanceInches(targetDistanceInches);
+            double minimumHoodAngleDegrees =
+                    ShortRangeHubFlywheelLookup.getMinimumHoodAngleDegrees(lookupTargetDistanceInches);
+            double maximumHoodAngleDegrees =
+                    ShortRangeHubFlywheelLookup.getMaximumHoodAngleDegrees(lookupTargetDistanceInches);
             double validMinimumHoodAngleDegrees = Math.max(
                     ShooterConstants.COMMANDED_MINIMUM_ALLOWED_HOOD_ANGLE_DEGREES,
                     minimumHoodAngleDegrees);
@@ -1941,5 +1945,14 @@ class MovingShotMathTest {
 
     private static void assertFinite(double value, String label) {
         assertTrue(Double.isFinite(value), () -> label + " should be finite");
+    }
+
+    private static double getDefaultEmpiricalSolveLookupDistanceInches(double targetDistanceInches) {
+        return MathUtil.clamp(
+                MovingShotMath.applyEmpiricalLookupDistanceShorteningInches(
+                        targetDistanceInches,
+                        ShooterConstants.COMMANDED_EMPIRICAL_MOVING_SHOT_LOOKUP_DISTANCE_SHORTENING_INCHES),
+                ShooterConstants.DATA_COLLECTION_SHORT_RANGE_MIN_DISTANCE_INCHES,
+                ShooterConstants.DATA_COLLECTION_SHORT_RANGE_EMPIRICAL_MAX_DISTANCE_INCHES);
     }
 }

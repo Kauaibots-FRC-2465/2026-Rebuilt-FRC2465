@@ -145,7 +145,7 @@ final class MovingShotMath {
                 idealMovingShotSolution,
                 movingShotSolution,
                 null,
-                0.0);
+                ShooterConstants.COMMANDED_EMPIRICAL_MOVING_SHOT_LOOKUP_DISTANCE_SHORTENING_INCHES);
     }
 
     static BallTrajectoryLookup.FixedFlywheelShotStatus solveCommandedMovingShot(
@@ -183,7 +183,7 @@ final class MovingShotMath {
                 idealMovingShotSolution,
                 movingShotSolution,
                 empiricalDebugInfo,
-                0.0);
+                ShooterConstants.COMMANDED_EMPIRICAL_MOVING_SHOT_LOOKUP_DISTANCE_SHORTENING_INCHES);
     }
 
     static BallTrajectoryLookup.FixedFlywheelShotStatus solveCommandedMovingShot(
@@ -282,10 +282,7 @@ final class MovingShotMath {
         double targetDistanceInches = Inches.convertFrom(
                 target.getDistance(new Translation2d(futureState.xMeters, futureState.yMeters)),
                 Meters);
-        if (shouldUseEmpiricalHubMovingShotModel(
-                targetDistanceInches,
-                targetElevationInches,
-                empiricalLookupDistanceShorteningInches)) {
+        if (shouldUseEmpiricalHubMovingShotModel(targetDistanceInches, targetElevationInches)) {
             movingShotSolution.copyFrom(idealMovingShotSolution);
             return BallTrajectoryLookup.FixedFlywheelShotStatus.VALID;
         }
@@ -398,7 +395,7 @@ final class MovingShotMath {
                 false,
                 out,
                 null,
-                0.0);
+                ShooterConstants.COMMANDED_EMPIRICAL_MOVING_SHOT_LOOKUP_DISTANCE_SHORTENING_INCHES);
     }
 
     static boolean solveIdealMovingShotWithUpperHoodFallback(
@@ -444,7 +441,7 @@ final class MovingShotMath {
                 false,
                 out,
                 empiricalDebugInfo,
-                0.0);
+                ShooterConstants.COMMANDED_EMPIRICAL_MOVING_SHOT_LOOKUP_DISTANCE_SHORTENING_INCHES);
     }
 
     static boolean solveIdealMovingShotWithUpperHoodFallback(
@@ -538,7 +535,7 @@ final class MovingShotMath {
                 requireEmpiricalLookupInsideManifold,
                 out,
                 empiricalDebugInfo,
-                0.0);
+                ShooterConstants.COMMANDED_EMPIRICAL_MOVING_SHOT_LOOKUP_DISTANCE_SHORTENING_INCHES);
     }
 
     static boolean solveIdealMovingShotWithUpperHoodFallback(
@@ -620,10 +617,7 @@ final class MovingShotMath {
                 Math.hypot(targetXMeters - futureRobotXMeters, targetYMeters - futureRobotYMeters),
                 Meters);
 
-        if (shouldUseEmpiricalHubMovingShotModel(
-                targetDistanceInches,
-                targetElevationInches,
-                empiricalLookupDistanceShorteningInches)) {
+        if (shouldUseEmpiricalHubMovingShotModel(targetDistanceInches, targetElevationInches)) {
             boolean hasPreferredSolution = solveEmpiricalMovingShotWithTimeOfFlight(
                     preferredHoodAngleDegrees,
                     currentFlywheelSpeedIps,
@@ -763,15 +757,22 @@ final class MovingShotMath {
 
         boolean useEmpiricalMovingShotModel =
                 shouldUseEmpiricalHubMovingShotModel(targetDistanceInches, targetElevationInches);
+        double empiricalLookupTargetDistanceInches = targetDistanceInches;
         double validMinimumHoodAngleDegrees;
         double validMaximumHoodAngleDegrees;
         if (useEmpiricalMovingShotModel) {
+            empiricalLookupTargetDistanceInches = getClampedEmpiricalSolveLookupDistanceInches(
+                    targetDistanceInches,
+                    ShooterConstants.COMMANDED_EMPIRICAL_MOVING_SHOT_LOOKUP_DISTANCE_SHORTENING_INCHES);
+            if (!Double.isFinite(empiricalLookupTargetDistanceInches)) {
+                return false;
+            }
             validMinimumHoodAngleDegrees = Math.max(
                     minimumHoodAngleDegrees,
-                    ShortRangeHubFlywheelLookup.getMinimumHoodAngleDegrees(targetDistanceInches));
+                    ShortRangeHubFlywheelLookup.getMinimumHoodAngleDegrees(empiricalLookupTargetDistanceInches));
             validMaximumHoodAngleDegrees = Math.min(
                     maximumHoodAngleDegrees,
-                    ShortRangeHubFlywheelLookup.getMaximumHoodAngleDegrees(targetDistanceInches));
+                    ShortRangeHubFlywheelLookup.getMaximumHoodAngleDegrees(empiricalLookupTargetDistanceInches));
         } else {
             BallTrajectoryLookup.MovingShotSolution shallowestSolution =
                     new BallTrajectoryLookup.MovingShotSolution();
@@ -835,7 +836,7 @@ final class MovingShotMath {
                 commandedHoodAngleDegrees,
                 hoodAngleSearchStepDegrees,
                 useEmpiricalMovingShotModel,
-                targetDistanceInches,
+                empiricalLookupTargetDistanceInches,
                 futureRobotXMeters,
                 futureRobotYMeters,
                 futureRobotHeadingRadians,
@@ -877,6 +878,28 @@ final class MovingShotMath {
             return Double.NaN;
         }
         return Math.max(0.0, targetDistanceInches - empiricalLookupDistanceShorteningInches);
+    }
+
+    private static double getClampedEmpiricalSolveLookupDistanceInches(
+            double targetDistanceInches,
+            double empiricalLookupDistanceShorteningInches) {
+        double shortenedTargetDistanceInches = applyEmpiricalLookupDistanceShorteningInches(
+                targetDistanceInches,
+                empiricalLookupDistanceShorteningInches);
+        if (!Double.isFinite(shortenedTargetDistanceInches)) {
+            return Double.NaN;
+        }
+        return clampEmpiricalLookupDistanceInches(shortenedTargetDistanceInches);
+    }
+
+    private static double clampEmpiricalLookupDistanceInches(double lookupTargetDistanceInches) {
+        if (!Double.isFinite(lookupTargetDistanceInches)) {
+            return Double.NaN;
+        }
+        return MathUtil.clamp(
+                lookupTargetDistanceInches,
+                ShooterConstants.DATA_COLLECTION_SHORT_RANGE_MIN_DISTANCE_INCHES,
+                ShooterConstants.DATA_COLLECTION_SHORT_RANGE_EMPIRICAL_MAX_DISTANCE_INCHES);
     }
 
     static boolean populateEmpiricalMovingShotSolution(
@@ -1121,10 +1144,7 @@ final class MovingShotMath {
         if (!Double.isFinite(shortenedTargetDistanceInches)) {
             return Double.NaN;
         }
-        return MathUtil.clamp(
-                shortenedTargetDistanceInches,
-                ShooterConstants.DATA_COLLECTION_SHORT_RANGE_MIN_DISTANCE_INCHES,
-                ShooterConstants.DATA_COLLECTION_SHORT_RANGE_EMPIRICAL_MAX_DISTANCE_INCHES);
+        return clampEmpiricalLookupDistanceInches(shortenedTargetDistanceInches);
     }
 
     private static double getRawEmpiricalMovingShotLookupDistanceInches(
@@ -1314,10 +1334,7 @@ final class MovingShotMath {
                                     > ShooterConstants.DATA_COLLECTION_SHORT_RANGE_EMPIRICAL_MAX_DISTANCE_INCHES + 1e-9)) {
                 return false;
             }
-            lookupTargetDistanceInches = MathUtil.clamp(
-                    lookupTargetDistanceInches,
-                    ShooterConstants.DATA_COLLECTION_SHORT_RANGE_MIN_DISTANCE_INCHES,
-                    ShooterConstants.DATA_COLLECTION_SHORT_RANGE_EMPIRICAL_MAX_DISTANCE_INCHES);
+            lookupTargetDistanceInches = clampEmpiricalLookupDistanceInches(lookupTargetDistanceInches);
             double commandedFlywheelCommandIps =
                     ShortRangeHubFlywheelLookup.getFallbackManifoldFlywheelCommandIps(
                             lookupTargetDistanceInches);
