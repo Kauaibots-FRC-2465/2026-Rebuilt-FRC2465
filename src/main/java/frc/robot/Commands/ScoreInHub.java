@@ -76,6 +76,7 @@ public class ScoreInHub extends Command {
     private final double[] futureFieldVelocity = new double[3];
     private Rotation2d lastValidRobotHeadingTarget = new Rotation2d();
     private double lastValidTurretDeltaDegrees = 0.0;
+    private double lastValidHoodAngleDegrees = Double.NaN;
     private double lastValidFlywheelCommandIps = 0.0;
     private double lastValidSolutionTimestampSeconds = Double.NEGATIVE_INFINITY;
     private boolean hasLatchedValidSolution = false;
@@ -130,6 +131,7 @@ public class ScoreInHub extends Command {
     @Override
     public void initialize() {
         lastVelocityLimitTimestampSeconds = Double.NaN;
+        lastValidHoodAngleDegrees = verticalAim.getAngle().in(Degrees);
         previousCycleMeasuredHoodAngleDegrees = Double.NaN;
         previousCycleCommandedHoodAngleDegrees = Double.NaN;
         previousCycleMeasuredFlywheelSpeedIps = Double.NaN;
@@ -343,13 +345,17 @@ public class ScoreInHub extends Command {
         // targetElevationInchesPublisher.set(ShooterConstants.COMMANDED_SCORE_IN_HUB_TARGET_ELEVATION_INCHES);
         // validSolutionPublisher.set(hasSolution);
 
-        double commandedHoodAngleDegrees = MovingShotMath.getCommandedHoodAngleDegrees(
+        BallTrajectoryLookup.MovingShotSolution commandedShotSolution =
+                fixedFlywheelStatus == BallTrajectoryLookup.FixedFlywheelShotStatus.VALID
+                        ? movingShotSolution
+                        : idealMovingShotSolution;
+        double commandedHoodAngleDegrees = getCommandedTrackingHoodAngleDegrees(
                 fixedFlywheelStatus,
                 minimumHoodAngleDegrees,
                 maximumHoodAngleDegrees,
-                movingShotSolution);
+                commandedShotSolution);
         double clampedTurretDeltaDegrees = MovingShotMath.clampTurretDeltaDegrees(
-                movingShotSolution.getTurretDeltaDegrees(),
+                commandedShotSolution.getTurretDeltaDegrees(),
                 horizontalAim.getMinimumAngle().in(Degrees),
                 horizontalAim.getMaximumAngle().in(Degrees));
         // hoodAngleDegreesPublisher.set(movingShotSolution.getHoodAngleDegrees());
@@ -364,8 +370,9 @@ public class ScoreInHub extends Command {
         shooter.setCoupledIPS(idealFlywheelCommandIps);
         recordPreviousCycleTargets(commandedHoodAngleDegrees, idealFlywheelCommandIps);
         if (fixedFlywheelStatus == BallTrajectoryLookup.FixedFlywheelShotStatus.VALID) {
-            lastValidRobotHeadingTarget = Rotation2d.fromDegrees(movingShotSolution.getRobotHeadingDegrees());
+            lastValidRobotHeadingTarget = Rotation2d.fromDegrees(commandedShotSolution.getRobotHeadingDegrees());
             lastValidTurretDeltaDegrees = clampedTurretDeltaDegrees;
+            lastValidHoodAngleDegrees = commandedHoodAngleDegrees;
             lastValidFlywheelCommandIps = idealFlywheelCommandIps;
             lastValidSolutionTimestampSeconds = Timer.getFPGATimestamp();
             hasLatchedValidSolution = true;
@@ -447,7 +454,16 @@ public class ScoreInHub extends Command {
     private void applyNoSolutionShotCommand(
             Translation2d robotPosition,
             Translation2d target) {
+        double fallbackDistanceInches = getFallbackHubDistanceInches(robotPosition, target);
         double fallbackFlywheelCommandIps = getNoSolutionHubFlywheelCommandIps(robotPosition, target);
+        double fallbackHoodAngleDegrees = ShortRangeHubFlywheelLookup.getIdealHoodAngleDegrees(fallbackDistanceInches);
+        if (!Double.isFinite(fallbackHoodAngleDegrees)) {
+            fallbackHoodAngleDegrees = verticalAim.getMaximumAngle().in(Degrees);
+        }
+        fallbackHoodAngleDegrees = Math.max(
+                verticalAim.getMinimumAngle().in(Degrees),
+                Math.min(verticalAim.getMaximumAngle().in(Degrees), fallbackHoodAngleDegrees));
+        verticalAim.setAngle(Degrees.of(fallbackHoodAngleDegrees));
         shooter.setCoupledIPS(fallbackFlywheelCommandIps);
         recordPreviousCycleTargets(verticalAim.getAngle().in(Degrees), fallbackFlywheelCommandIps);
         horizontalAim.setAngle(Degrees.of(0.0));
@@ -485,6 +501,9 @@ public class ScoreInHub extends Command {
             SwerveRequest.FieldCentric fieldCentricRequest,
             double velocityXMetersPerSecond,
             double velocityYMetersPerSecond) {
+        if (Double.isFinite(lastValidHoodAngleDegrees)) {
+            verticalAim.setAngle(Degrees.of(lastValidHoodAngleDegrees));
+        }
         horizontalAim.setAngle(Degrees.of(lastValidTurretDeltaDegrees));
         shooter.setCoupledIPS(lastValidFlywheelCommandIps);
         recordPreviousCycleTargets(verticalAim.getAngle().in(Degrees), lastValidFlywheelCommandIps);
@@ -577,5 +596,23 @@ public class ScoreInHub extends Command {
             return velocity;
         }
         return velocity.times(maximumSpeedMetersPerSecond / speedMetersPerSecond);
+    }
+
+    private static double getCommandedTrackingHoodAngleDegrees(
+            BallTrajectoryLookup.FixedFlywheelShotStatus fixedFlywheelStatus,
+            double minimumHoodAngleDegrees,
+            double maximumHoodAngleDegrees,
+            BallTrajectoryLookup.MovingShotSolution commandedShotSolution) {
+        double solvedHoodAngleDegrees = commandedShotSolution.getHoodAngleDegrees();
+        if (Double.isFinite(solvedHoodAngleDegrees)) {
+            return Math.max(
+                    minimumHoodAngleDegrees,
+                    Math.min(maximumHoodAngleDegrees, solvedHoodAngleDegrees));
+        }
+        return MovingShotMath.getCommandedHoodAngleDegrees(
+                fixedFlywheelStatus,
+                minimumHoodAngleDegrees,
+                maximumHoodAngleDegrees,
+                commandedShotSolution);
     }
 }

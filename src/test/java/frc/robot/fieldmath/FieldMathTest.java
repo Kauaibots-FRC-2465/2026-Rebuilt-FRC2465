@@ -83,6 +83,19 @@ class FieldMathTest {
     }
 
     @Test
+    void smallStickInputAppliesProportionalHubOffset() {
+        Translation2d hubTarget = FieldMath.getHubTarget(Alliance.Blue);
+        Translation2d adjustedTarget = FieldMath.getAdjustedHubTarget(
+                Alliance.Blue,
+                new Translation2d(0.0, hubTarget.getY()),
+                0.05,
+                -0.05);
+
+        assertEquals(hubTarget.getX() + 0.05 * HUB_TARGET_ENGINEER_ADJUSTMENT_LIMIT_METERS, adjustedTarget.getX(), 1e-9);
+        assertEquals(hubTarget.getY() - 0.05 * HUB_TARGET_ENGINEER_ADJUSTMENT_LIMIT_METERS, adjustedTarget.getY(), 1e-9);
+    }
+
+    @Test
     void forwardStickMovesHubTargetFartherAlongShotLine() {
         Translation2d hubTarget = FieldMath.getHubTarget(Alliance.Blue);
         Translation2d adjustedTarget = FieldMath.getAdjustedHubTarget(

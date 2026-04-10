@@ -110,7 +110,7 @@ public class ShooterSubsystem extends SubsystemBase {
 
     public ShooterSubsystem(
             String canBusName,
-            FlywheelConfig mainFlyw
+            FlywheelConfig mainFlywheelConfig,
             FlywheelConfig mirroredMainFlywheelConfig,
             FlywheelConfig kickerConfig,
             FlywheelConfig backspinConfig) {
