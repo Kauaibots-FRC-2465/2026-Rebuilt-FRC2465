@@ -45,6 +45,7 @@ public final class ShooterConstants {
     static final double COMMANDED_REBOUND_INTAKE_ANGLE_DEGREES = 0.0;
     static final double COMMANDED_REBOUND_INTAKE_DRIVE_SPEED_IPS = 0.0;
     public static final double COMMANDED_SCORE_IN_HUB_TARGET_ELEVATION_INCHES = 72.0;
+    static final double COMMANDED_SCORE_IN_HUB_EMPIRICAL_LOOKUP_DISTANCE_SHORTENING_INCHES = 10.0;
     public static final double COMMANDED_SCORE_IN_HUB_ALLIANCE_WALL_TO_HUB_CENTER_INCHES = 182.11125;
     public static final double COMMANDED_SCORE_IN_HUB_RIGHT_FIELD_WALL_TO_HUB_CENTER_INCHES = 158.84375;
 

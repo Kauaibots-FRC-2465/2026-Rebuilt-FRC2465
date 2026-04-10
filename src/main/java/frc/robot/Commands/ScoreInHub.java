@@ -484,7 +484,8 @@ public class ScoreInHub extends Command {
                         lastCommandedFlywheelSetpointIps,
                         idealMovingShotSolution,
                         movingShotSolution,
-                        empiricalDebugInfo);
+                        empiricalDebugInfo,
+                        ShooterConstants.COMMANDED_SCORE_IN_HUB_EMPIRICAL_LOOKUP_DISTANCE_SHORTENING_INCHES);
         publishEmpiricalSolverTelemetry();
         if (fixedFlywheelStatus == BallTrajectoryLookup.FixedFlywheelShotStatus.NO_SOLUTION) {
             long solverMicros = SlowCallMonitor.nowMicros() - solverStartMicros;
@@ -1142,7 +1143,8 @@ public class ScoreInHub extends Command {
                 Meters);
         if (!MovingShotMath.shouldUseEmpiricalHubMovingShotModel(
                 targetDistanceInches,
-                ShooterConstants.COMMANDED_SCORE_IN_HUB_TARGET_ELEVATION_INCHES)) {
+                ShooterConstants.COMMANDED_SCORE_IN_HUB_TARGET_ELEVATION_INCHES,
+                ShooterConstants.COMMANDED_SCORE_IN_HUB_EMPIRICAL_LOOKUP_DISTANCE_SHORTENING_INCHES)) {
             return true;
         }
 
@@ -1167,7 +1169,8 @@ public class ScoreInHub extends Command {
                 lastCommandedFlywheelSetpointIps,
                 true,
                 radialSpeedLimitSearchSolution,
-                null);
+                null,
+                ShooterConstants.COMMANDED_SCORE_IN_HUB_EMPIRICAL_LOOKUP_DISTANCE_SHORTENING_INCHES);
     }
 
     private Translation2d driverVelocityToFieldVelocity(Translation2d velocityDrvMetersPerSecond) {

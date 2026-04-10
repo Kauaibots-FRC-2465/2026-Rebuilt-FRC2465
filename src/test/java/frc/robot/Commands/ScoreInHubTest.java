@@ -81,6 +81,110 @@ class ScoreInHubTest {
         assertTrue(!ScoreInHub.hasResolvedAim(BallTrajectoryLookup.FixedFlywheelShotStatus.NO_SOLUTION));
     }
 
+    @Test
+    void scoreInHubLookupDistanceShorteningOnlyAppliesWhenRequested() {
+        double rawTargetDistanceInches =
+                ShooterConstants.DATA_COLLECTION_SHORT_RANGE_EMPIRICAL_MAX_DISTANCE_INCHES
+                        + ShooterConstants.COMMANDED_SCORE_IN_HUB_EMPIRICAL_LOOKUP_DISTANCE_SHORTENING_INCHES
+                        - 1.0;
+
+        assertTrue(
+                !MovingShotMath.shouldUseEmpiricalHubMovingShotModel(
+                        rawTargetDistanceInches,
+                        ShooterConstants.COMMANDED_SCORE_IN_HUB_TARGET_ELEVATION_INCHES));
+        assertTrue(
+                MovingShotMath.shouldUseEmpiricalHubMovingShotModel(
+                        rawTargetDistanceInches,
+                        ShooterConstants.COMMANDED_SCORE_IN_HUB_TARGET_ELEVATION_INCHES,
+                        ShooterConstants.COMMANDED_SCORE_IN_HUB_EMPIRICAL_LOOKUP_DISTANCE_SHORTENING_INCHES));
+    }
+
+    @Test
+    void scoreInHubLookupDistanceShorteningDoesNotMoveStationaryAimOffTarget() {
+        int distanceRowIndex = 5;
+        int shotColumnIndex = 2;
+        double rawTargetDistanceInches = ShooterConstants.DATA_COLLECTION_SHORT_RANGE_DISTANCES_INCHES[distanceRowIndex];
+        double preferredHoodAngleDegrees =
+                ShooterConstants.DATA_COLLECTION_SHORT_RANGE_HOOD_ANGLES_DEGREES[distanceRowIndex][shotColumnIndex];
+        double flywheelCommandIps =
+                ShooterConstants.DATA_COLLECTION_SHORT_RANGE_COMMAND_SPEEDS_IPS[distanceRowIndex][shotColumnIndex];
+        double targetAzimuthDegrees = 27.0;
+        double targetAzimuthRadians = Math.toRadians(targetAzimuthDegrees);
+        double targetXMeters = Inches.of(rawTargetDistanceInches * Math.cos(targetAzimuthRadians)).in(Meters);
+        double targetYMeters = Inches.of(rawTargetDistanceInches * Math.sin(targetAzimuthRadians)).in(Meters);
+        MovingShotMath.EmpiricalMovingShotDebugInfo uncompensatedDebugInfo =
+                new MovingShotMath.EmpiricalMovingShotDebugInfo();
+        MovingShotMath.EmpiricalMovingShotDebugInfo compensatedDebugInfo =
+                new MovingShotMath.EmpiricalMovingShotDebugInfo();
+        BallTrajectoryLookup.MovingShotSolution uncompensatedSolution =
+                new BallTrajectoryLookup.MovingShotSolution();
+        BallTrajectoryLookup.MovingShotSolution compensatedSolution =
+                new BallTrajectoryLookup.MovingShotSolution();
+
+        boolean uncompensatedSolved = MovingShotMath.solveIdealMovingShotWithUpperHoodFallback(
+                ShooterConstants.COMMANDED_MINIMUM_ALLOWED_HOOD_ANGLE_DEGREES,
+                ShooterConstants.COMMANDED_MAXIMUM_ALLOWED_HOOD_ANGLE_DEGREES,
+                preferredHoodAngleDegrees,
+                ShooterConstants.COMMANDED_MOVING_SHOT_HOOD_SEARCH_STEP_DEGREES,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                targetXMeters,
+                targetYMeters,
+                ShooterConstants.COMMANDED_SCORE_IN_HUB_TARGET_ELEVATION_INCHES,
+                ShooterConstants.COMMANDED_MAXIMUM_SHOOTING_HEIGHT_INCHES,
+                Rotation2d.kZero.getRadians(),
+                MIN_TURRET_ANGLE_DEGREES,
+                MAX_TURRET_ANGLE_DEGREES,
+                flywheelCommandIps,
+                flywheelCommandIps,
+                uncompensatedSolution,
+                uncompensatedDebugInfo);
+        boolean compensatedSolved = MovingShotMath.solveIdealMovingShotWithUpperHoodFallback(
+                ShooterConstants.COMMANDED_MINIMUM_ALLOWED_HOOD_ANGLE_DEGREES,
+                ShooterConstants.COMMANDED_MAXIMUM_ALLOWED_HOOD_ANGLE_DEGREES,
+                preferredHoodAngleDegrees,
+                ShooterConstants.COMMANDED_MOVING_SHOT_HOOD_SEARCH_STEP_DEGREES,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                targetXMeters,
+                targetYMeters,
+                ShooterConstants.COMMANDED_SCORE_IN_HUB_TARGET_ELEVATION_INCHES,
+                ShooterConstants.COMMANDED_MAXIMUM_SHOOTING_HEIGHT_INCHES,
+                Rotation2d.kZero.getRadians(),
+                MIN_TURRET_ANGLE_DEGREES,
+                MAX_TURRET_ANGLE_DEGREES,
+                flywheelCommandIps,
+                flywheelCommandIps,
+                compensatedSolution,
+                compensatedDebugInfo,
+                ShooterConstants.COMMANDED_SCORE_IN_HUB_EMPIRICAL_LOOKUP_DISTANCE_SHORTENING_INCHES);
+
+        assertTrue(uncompensatedSolved);
+        assertTrue(compensatedSolved);
+        assertEquals(rawTargetDistanceInches, uncompensatedDebugInfo.getLookupTargetDistanceInches(), 1e-9);
+        assertEquals(
+                rawTargetDistanceInches
+                        - ShooterConstants.COMMANDED_SCORE_IN_HUB_EMPIRICAL_LOOKUP_DISTANCE_SHORTENING_INCHES,
+                compensatedDebugInfo.getLookupTargetDistanceInches(),
+                1e-9);
+        assertEquals(rawTargetDistanceInches, uncompensatedSolution.getTargetRadialDistanceInches(), 1e-9);
+        assertEquals(rawTargetDistanceInches, compensatedSolution.getTargetRadialDistanceInches(), 1e-9);
+        assertEquals(
+                uncompensatedSolution.getTurretDeltaDegrees(),
+                compensatedSolution.getTurretDeltaDegrees(),
+                1e-9);
+        assertEquals(
+                uncompensatedSolution.getShotAzimuthDegrees(),
+                compensatedSolution.getShotAzimuthDegrees(),
+                1e-9);
+    }
+
     private static final class LatchSequenceResult {
         private final int[] distanceRowIndexes;
         private final double[] updatedMaximumTravelSpeedsMetersPerSecond;
