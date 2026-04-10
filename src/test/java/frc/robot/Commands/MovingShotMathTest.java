@@ -39,8 +39,10 @@ class MovingShotMathTest {
         double targetDistanceInches = 0.5 * (
                 ShooterConstants.DATA_COLLECTION_SHORT_RANGE_DISTANCES_INCHES[0]
                         + ShooterConstants.DATA_COLLECTION_SHORT_RANGE_DISTANCES_INCHES[1]);
+        double lookupTargetDistanceInches =
+                MovingShotMath.getClampedEmpiricalSolveLookupDistanceInches(targetDistanceInches);
         double expectedMinimumHoodAngleDegrees =
-                ShortRangeHubFlywheelLookup.getMinimumHoodAngleDegrees(targetDistanceInches);
+                ShortRangeHubFlywheelLookup.getMinimumHoodAngleDegrees(lookupTargetDistanceInches);
         double preferredHoodAngleDegrees = expectedMinimumHoodAngleDegrees - 5.0;
         BallTrajectoryLookup.MovingShotSolution solution = new BallTrajectoryLookup.MovingShotSolution();
 
@@ -69,6 +71,53 @@ class MovingShotMathTest {
                 solution.getHoodAngleDegrees(),
                 1e-6,
                 "Empirical fallback should clamp to the interpolated minimum hood angle");
+    }
+
+    @Test
+    void empiricalFixedHoodSolveUsesShortenedLookupDistanceWithoutMovingAim() {
+        double targetDistanceInches = ShooterConstants.DATA_COLLECTION_SHORT_RANGE_DISTANCES_INCHES[5];
+        double lookupTargetDistanceInches =
+                MovingShotMath.getClampedEmpiricalSolveLookupDistanceInches(targetDistanceInches);
+        double preferredHoodAngleDegrees =
+                ShooterConstants.DATA_COLLECTION_SHORT_RANGE_HOOD_ANGLES_DEGREES[5][2];
+        BallTrajectoryLookup.MovingShotSolution solution = new BallTrajectoryLookup.MovingShotSolution();
+
+        boolean solved = MovingShotMath.solveMovingShotAtClosestHoodAngle(
+                preferredHoodAngleDegrees,
+                ShooterConstants.COMMANDED_MINIMUM_ALLOWED_HOOD_ANGLE_DEGREES,
+                ShooterConstants.COMMANDED_MAXIMUM_ALLOWED_HOOD_ANGLE_DEGREES,
+                SEARCH_STEP_DEGREES,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                Inches.of(targetDistanceInches).in(Meters),
+                0.0,
+                TARGET_ELEVATION_INCHES,
+                MAX_HEIGHT_INCHES,
+                0.0,
+                MIN_TURRET_ANGLE_DEGREES,
+                MAX_TURRET_ANGLE_DEGREES,
+                solution);
+
+        double shortenedLookupFlywheelCommandIps =
+                ShortRangeHubFlywheelLookup.getFlywheelCommandIps(
+                        lookupTargetDistanceInches,
+                        solution.getHoodAngleDegrees());
+        double rawLookupFlywheelCommandIps =
+                ShortRangeHubFlywheelLookup.getFlywheelCommandIps(
+                        targetDistanceInches,
+                        solution.getHoodAngleDegrees());
+
+        assertTrue(solved, "Expected a valid empirical fixed-hood shot");
+        assertEquals(targetDistanceInches, solution.getTargetRadialDistanceInches(), 1e-9);
+        assertEquals(0.0, solution.getShotAzimuthDegrees(), 1e-9);
+        assertEquals(0.0, solution.getTurretDeltaDegrees(), 1e-9);
+        assertEquals(shortenedLookupFlywheelCommandIps, solution.getFlywheelCommandIps(), 1e-9);
+        assertTrue(
+                Math.abs(solution.getFlywheelCommandIps() - rawLookupFlywheelCommandIps) > 1e-3,
+                "Expected the empirical fixed-hood solve to use the shortened lookup distance");
     }
 
     @Test

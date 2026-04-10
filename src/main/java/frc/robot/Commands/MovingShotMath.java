@@ -321,15 +321,21 @@ final class MovingShotMath {
 
         boolean useEmpiricalMovingShotModel =
                 shouldUseEmpiricalHubMovingShotModel(targetDistanceInches, targetElevationInches);
+        double empiricalLookupTargetDistanceInches = targetDistanceInches;
         double validMinimumHoodAngleDegrees;
         double validMaximumHoodAngleDegrees;
         if (useEmpiricalMovingShotModel) {
+            empiricalLookupTargetDistanceInches =
+                    getClampedEmpiricalSolveLookupDistanceInches(targetDistanceInches);
+            if (!Double.isFinite(empiricalLookupTargetDistanceInches)) {
+                return false;
+            }
             validMinimumHoodAngleDegrees = Math.max(
                     minimumHoodAngleDegrees,
-                    ShortRangeHubFlywheelLookup.getMinimumHoodAngleDegrees(targetDistanceInches));
+                    ShortRangeHubFlywheelLookup.getMinimumHoodAngleDegrees(empiricalLookupTargetDistanceInches));
             validMaximumHoodAngleDegrees = Math.min(
                     maximumHoodAngleDegrees,
-                    ShortRangeHubFlywheelLookup.getMaximumHoodAngleDegrees(targetDistanceInches));
+                    ShortRangeHubFlywheelLookup.getMaximumHoodAngleDegrees(empiricalLookupTargetDistanceInches));
         } else {
             BallTrajectoryLookup.MovingShotSolution shallowestSolution =
                     new BallTrajectoryLookup.MovingShotSolution();
@@ -393,7 +399,7 @@ final class MovingShotMath {
                 commandedHoodAngleDegrees,
                 hoodAngleSearchStepDegrees,
                 useEmpiricalMovingShotModel,
-                targetDistanceInches,
+                empiricalLookupTargetDistanceInches,
                 futureRobotXMeters,
                 futureRobotYMeters,
                 futureRobotHeadingRadians,
@@ -413,6 +419,27 @@ final class MovingShotMath {
             double targetDistanceInches,
             double targetElevationInches) {
         return ShortRangeHubFlywheelLookup.shouldUseEmpiricalMovingShotModel(targetDistanceInches, targetElevationInches);
+    }
+
+    static double applyEmpiricalLookupDistanceShorteningInches(double targetDistanceInches) {
+        if (!Double.isFinite(targetDistanceInches)) {
+            return Double.NaN;
+        }
+        return Math.max(
+                0.0,
+                targetDistanceInches - ShooterConstants.COMMANDED_EMPIRICAL_MOVING_SHOT_LOOKUP_DISTANCE_SHORTENING_INCHES);
+    }
+
+    static double getClampedEmpiricalSolveLookupDistanceInches(double targetDistanceInches) {
+        double shortenedTargetDistanceInches =
+                applyEmpiricalLookupDistanceShorteningInches(targetDistanceInches);
+        if (!Double.isFinite(shortenedTargetDistanceInches)) {
+            return Double.NaN;
+        }
+        return MathUtil.clamp(
+                shortenedTargetDistanceInches,
+                ShooterConstants.DATA_COLLECTION_SHORT_RANGE_MIN_DISTANCE_INCHES,
+                ShooterConstants.DATA_COLLECTION_SHORT_RANGE_EMPIRICAL_MAX_DISTANCE_INCHES);
     }
 
     static boolean populateEmpiricalMovingShotSolution(
@@ -630,9 +657,14 @@ final class MovingShotMath {
                 iteration++) {
             double equivalentTargetDistanceInches =
                     Math.hypot(equivalentTargetDxInches, equivalentTargetDyInches);
+            double lookupTargetDistanceInches =
+                    getClampedEmpiricalSolveLookupDistanceInches(equivalentTargetDistanceInches);
+            if (!Double.isFinite(lookupTargetDistanceInches)) {
+                return false;
+            }
             double commandedFlywheelCommandIps =
                     ShortRangeHubFlywheelLookup.getFallbackManifoldFlywheelCommandIps(
-                            equivalentTargetDistanceInches);
+                            lookupTargetDistanceInches);
             if (!Double.isFinite(commandedFlywheelCommandIps)) {
                 return false;
             }
@@ -643,7 +675,7 @@ final class MovingShotMath {
                 return false;
             }
             if (!ShortRangeHubFlywheelLookup.findPreferredLegalShot(
-                    equivalentTargetDistanceInches,
+                    lookupTargetDistanceInches,
                     predictedFlywheelCommandIps,
                     preferredHoodAngleDegrees,
                     candidate)) {
@@ -657,7 +689,7 @@ final class MovingShotMath {
             double flightTimeSeconds = BallTrajectoryLookup.getEstimatedTimeOfFlightSecondsForCommandedShot(
                     candidate.getHoodAngleDegrees(),
                     candidate.getModeledFlywheelCommandIps(),
-                    equivalentTargetDistanceInches);
+                    lookupTargetDistanceInches);
             if (!Double.isFinite(flightTimeSeconds) || flightTimeSeconds < 0.0) {
                 return false;
             }
