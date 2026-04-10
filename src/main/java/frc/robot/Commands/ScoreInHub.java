@@ -31,6 +31,11 @@ import frc.robot.utility.TuningDashboard;
 
 /**
  * Drives while solving a moving shot into the fixed hub target.
+ *
+ * Frame suffixes used in this command:
+ * Fld = field frame and the default for internal geometry/solver math.
+ * Drv = driver-perspective field-centric request frame at the Phoenix request boundary.
+ * Rbt = robot/body frame.
  */
 public class ScoreInHub extends Command {
     private static final double SLOW_EXECUTE_THRESHOLD_MS = 8.0;
@@ -62,19 +67,19 @@ public class ScoreInHub extends Command {
     private final DoublePublisher robotHeadingDegreesPublisher;
     private final DoublePublisher hoodTrackingErrorDegreesPublisher;
     private final DoublePublisher flywheelPredictionErrorIpsPublisher;
-    private final edu.wpi.first.networktables.DoubleArrayPublisher futurePosePublisher;
-    private final edu.wpi.first.networktables.DoubleArrayPublisher futureVelocityPublisher;
+    private final edu.wpi.first.networktables.DoubleArrayPublisher futurePoseFldPublisher;
+    private final edu.wpi.first.networktables.DoubleArrayPublisher futureVelocityFldPublisher;
     private final BooleanPublisher validSolutionPublisher;
     private final StringPublisher fieldTypePublisher;
-    private final PoseEstimatorSubsystem.PredictedFusedState futureState =
+    private final PoseEstimatorSubsystem.PredictedFusedState futureStateFld =
             new PoseEstimatorSubsystem.PredictedFusedState();
     private final BallTrajectoryLookup.MovingShotSolution idealMovingShotSolution =
             new BallTrajectoryLookup.MovingShotSolution();
     private final BallTrajectoryLookup.MovingShotSolution movingShotSolution =
             new BallTrajectoryLookup.MovingShotSolution();
-    private final double[] futureFieldPose = new double[3];
-    private final double[] futureFieldVelocity = new double[3];
-    private Rotation2d lastValidRobotHeadingTarget = new Rotation2d();
+    private final double[] futurePoseFldArray = new double[3];
+    private final double[] futureVelocityFldArray = new double[3];
+    private Rotation2d lastValidRobotHeadingTargetFld = new Rotation2d();
     private double lastValidTurretDeltaDegrees = 0.0;
     private double lastValidHoodAngleDegrees = Double.NaN;
     private double lastValidFlywheelCommandIps = 0.0;
@@ -115,8 +120,8 @@ public class ScoreInHub extends Command {
         robotHeadingDegreesPublisher = scoreTable.getDoubleTopic("robotHeadingDegrees").publish();
         hoodTrackingErrorDegreesPublisher = scoreTable.getDoubleTopic("hoodTrackingErrorDegrees").publish();
         flywheelPredictionErrorIpsPublisher = scoreTable.getDoubleTopic("flywheelPredictionErrorIps").publish();
-        futurePosePublisher = scoreTable.getDoubleArrayTopic("futurePose").publish();
-        futureVelocityPublisher = scoreTable.getDoubleArrayTopic("futureVelocity").publish();
+        futurePoseFldPublisher = scoreTable.getDoubleArrayTopic("futurePose").publish();
+        futureVelocityFldPublisher = scoreTable.getDoubleArrayTopic("futureVelocity").publish();
         validSolutionPublisher = scoreTable.getBooleanTopic("validSolution").publish();
         fieldTypePublisher = scoreTable.getStringTopic(".type").publish();
         // Debug dashboard telemetry disabled to reduce NetworkTables traffic.
@@ -146,10 +151,10 @@ public class ScoreInHub extends Command {
         long predictionMicros = 0L;
         long solutionMicros = 0L;
         long setControlMicros = 0L;
-        Translation2d target = getTarget();
+        Translation2d targetFld = getTargetFld();
 
         SwerveRequest requestedDrive = driveRequestSupplier.get();
-        if (!(requestedDrive instanceof SwerveRequest.FieldCentric fieldCentricRequest)) {
+        if (!(requestedDrive instanceof SwerveRequest.FieldCentric fieldCentricRequestDrv)) {
             clearSolutionTelemetry();
             drivetrain.setControl(requestedDrive);
             long totalMicros = SlowCallMonitor.nowMicros() - executeStartMicros;
@@ -164,31 +169,31 @@ public class ScoreInHub extends Command {
 
         publishTrackingDiagnostics();
 
-        double limitedVelocityXMetersPerSecond;
-        double limitedVelocityYMetersPerSecond;
+        double limitedVelocityXDrvMetersPerSecond;
+        double limitedVelocityYDrvMetersPerSecond;
         {
-            Translation2d limitedVelocity = limitTranslationalAcceleration(fieldCentricRequest);
-            limitedVelocityXMetersPerSecond = limitedVelocity.getX();
-            limitedVelocityYMetersPerSecond = limitedVelocity.getY();
+            Translation2d limitedVelocityDrvMps = limitDriverFrameTranslationalAcceleration(fieldCentricRequestDrv);
+            limitedVelocityXDrvMetersPerSecond = limitedVelocityDrvMps.getX();
+            limitedVelocityYDrvMetersPerSecond = limitedVelocityDrvMps.getY();
         }
 
         long predictionStartMicros = SlowCallMonitor.nowMicros();
         if (!poseEstimator.getPredictedFusedState(
                 ShooterConstants.COMMANDED_SHOOTER_LOOKAHEAD_SECONDS,
-                futureState)) {
+                futureStateFld)) {
             predictionMicros = SlowCallMonitor.nowMicros() - predictionStartMicros;
             clearSolutionTelemetry();
             boolean holdingLastSolution = shouldHoldLastSolution();
             if (holdingLastSolution) {
                 applyHeldShotCommand(
-                        fieldCentricRequest,
-                        limitedVelocityXMetersPerSecond,
-                        limitedVelocityYMetersPerSecond);
+                        fieldCentricRequestDrv,
+                        limitedVelocityXDrvMetersPerSecond,
+                        limitedVelocityYDrvMetersPerSecond);
             } else {
-                applyNoSolutionShotCommand(getCurrentRobotPosition(), target);
-                drivetrain.setControl(fieldCentricRequest
-                        .withVelocityX(limitedVelocityXMetersPerSecond)
-                        .withVelocityY(limitedVelocityYMetersPerSecond));
+                applyNoSolutionShotCommand(getCurrentRobotTranslationFld(), targetFld);
+                drivetrain.setControl(fieldCentricRequestDrv
+                        .withVelocityX(limitedVelocityXDrvMetersPerSecond)
+                        .withVelocityY(limitedVelocityYDrvMetersPerSecond));
             }
             long totalMicros = SlowCallMonitor.nowMicros() - executeStartMicros;
             if (SlowCallMonitor.isSlow(totalMicros, SLOW_EXECUTE_THRESHOLD_MS)
@@ -205,27 +210,27 @@ public class ScoreInHub extends Command {
             return;
         }
         predictionMicros = SlowCallMonitor.nowMicros() - predictionStartMicros;
-        publishFutureState();
+        publishFutureFieldState();
 
-        Pose2d futurePose = new Pose2d(
-                futureState.xMeters,
-                futureState.yMeters,
-                Rotation2d.fromRadians(futureState.headingRadians));
-        publishTarget(target);
+        Pose2d futurePoseFld = new Pose2d(
+                futureStateFld.xMeters,
+                futureStateFld.yMeters,
+                Rotation2d.fromRadians(futureStateFld.headingRadians));
+        publishTargetFld(targetFld);
 
-        Rotation2d preferredRobotHeading = getPreferredRobotHeading(
-                futurePose.getTranslation(),
-                target,
-                futurePose.getRotation());
-        Rotation2d robotHeadingTarget = preferredRobotHeading;
+        Rotation2d preferredRobotHeadingFld = getPreferredRobotHeadingFld(
+                futurePoseFld.getTranslation(),
+                targetFld,
+                futurePoseFld.getRotation());
+        Rotation2d robotHeadingTargetFld = preferredRobotHeadingFld;
         long solutionStartMicros = SlowCallMonitor.nowMicros();
-        if (updateShooterSolution(target, preferredRobotHeading)) {
-            robotHeadingTarget = Rotation2d.fromDegrees(movingShotSolution.getRobotHeadingDegrees());
+        if (updateShooterSolution(targetFld, preferredRobotHeadingFld)) {
+            robotHeadingTargetFld = Rotation2d.fromDegrees(movingShotSolution.getRobotHeadingDegrees());
         } else if (shouldHoldLastSolution()) {
             applyHeldShotCommand(
-                    fieldCentricRequest,
-                    limitedVelocityXMetersPerSecond,
-                    limitedVelocityYMetersPerSecond);
+                    fieldCentricRequestDrv,
+                    limitedVelocityXDrvMetersPerSecond,
+                    limitedVelocityYDrvMetersPerSecond);
             long totalMicros = SlowCallMonitor.nowMicros() - executeStartMicros;
             solutionMicros = SlowCallMonitor.nowMicros() - solutionStartMicros;
             if (SlowCallMonitor.isSlow(totalMicros, SLOW_EXECUTE_THRESHOLD_MS)
@@ -241,25 +246,25 @@ public class ScoreInHub extends Command {
             }
             return;
         } else {
-            applyNoSolutionShotCommand(futurePose.getTranslation(), target);
+            applyNoSolutionShotCommand(futurePoseFld.getTranslation(), targetFld);
         }
         solutionMicros = SlowCallMonitor.nowMicros() - solutionStartMicros;
-        Rotation2d operatorPerspectiveHeadingTarget =
-                robotHeadingTarget.minus(drivetrain.getDriverPerspectiveForward());
+        Rotation2d robotHeadingTargetDrv =
+                robotHeadingTargetFld.minus(drivetrain.getDriverPerspectiveForward());
 
         long setControlStartMicros = SlowCallMonitor.nowMicros();
         drivetrain.setControl(
                 facingAngleDrive
-                        .withVelocityX(limitedVelocityXMetersPerSecond)
-                        .withVelocityY(limitedVelocityYMetersPerSecond)
-                        .withTargetDirection(operatorPerspectiveHeadingTarget)
-                        .withDeadband(fieldCentricRequest.Deadband)
-                        .withRotationalDeadband(fieldCentricRequest.RotationalDeadband)
-                        .withCenterOfRotation(fieldCentricRequest.CenterOfRotation)
-                        .withDriveRequestType(fieldCentricRequest.DriveRequestType)
-                        .withSteerRequestType(fieldCentricRequest.SteerRequestType)
-                        .withDesaturateWheelSpeeds(fieldCentricRequest.DesaturateWheelSpeeds)
-                        .withForwardPerspective(fieldCentricRequest.ForwardPerspective));
+                        .withVelocityX(limitedVelocityXDrvMetersPerSecond)
+                        .withVelocityY(limitedVelocityYDrvMetersPerSecond)
+                        .withTargetDirection(robotHeadingTargetDrv)
+                        .withDeadband(fieldCentricRequestDrv.Deadband)
+                        .withRotationalDeadband(fieldCentricRequestDrv.RotationalDeadband)
+                        .withCenterOfRotation(fieldCentricRequestDrv.CenterOfRotation)
+                        .withDriveRequestType(fieldCentricRequestDrv.DriveRequestType)
+                        .withSteerRequestType(fieldCentricRequestDrv.SteerRequestType)
+                        .withDesaturateWheelSpeeds(fieldCentricRequestDrv.DesaturateWheelSpeeds)
+                        .withForwardPerspective(fieldCentricRequestDrv.ForwardPerspective));
         setControlMicros = SlowCallMonitor.nowMicros() - setControlStartMicros;
 
         long totalMicros = SlowCallMonitor.nowMicros() - executeStartMicros;
@@ -288,23 +293,23 @@ public class ScoreInHub extends Command {
         lastVelocityLimitTimestampSeconds = Double.NaN;
     }
 
-    private Translation2d getTarget() {
-        Translation2d suppliedTarget = targetSupplier.get();
-        if (suppliedTarget != null) {
-            return suppliedTarget;
+    private Translation2d getTargetFld() {
+        Translation2d suppliedTargetFld = targetSupplier.get();
+        if (suppliedTargetFld != null) {
+            return suppliedTargetFld;
         }
         Alliance alliance = DriverStation.getAlliance().orElse(Alliance.Blue);
         return FieldMath.getHubTarget(alliance);
     }
 
     private boolean updateShooterSolution(
-            Translation2d target,
-            Rotation2d preferredRobotHeading) {
+            Translation2d targetFld,
+            Rotation2d preferredRobotHeadingFld) {
         long functionStartMicros = SlowCallMonitor.nowMicros();
         double minimumHoodAngleDegrees = verticalAim.getMinimumAngle().in(Degrees);
         double maximumHoodAngleDegrees = verticalAim.getMaximumAngle().in(Degrees);
         double targetDistanceInches = Inches.convertFrom(
-                target.getDistance(new Translation2d(futureState.xMeters, futureState.yMeters)),
+                targetFld.getDistance(new Translation2d(futureStateFld.xMeters, futureStateFld.yMeters)),
                 Meters);
         long solverStartMicros = SlowCallMonitor.nowMicros();
         BallTrajectoryLookup.FixedFlywheelShotStatus fixedFlywheelStatus =
@@ -312,11 +317,11 @@ public class ScoreInHub extends Command {
                         verticalAim,
                         ShooterConstants.COMMANDED_MOVING_SHOT_HOOD_SEARCH_STEP_DEGREES,
                         ShooterConstants.COMMANDED_MOVING_SHOT_FIXED_FLYWHEEL_HOOD_SEARCH_STEP_DEGREES,
-                        futureState,
-                        target,
+                        futureStateFld,
+                        targetFld,
                         ShooterConstants.COMMANDED_SCORE_IN_HUB_TARGET_ELEVATION_INCHES,
                         ShooterConstants.COMMANDED_MAXIMUM_SHOOTING_HEIGHT_INCHES,
-                        preferredRobotHeading.getRadians(),
+                        preferredRobotHeadingFld.getRadians(),
                         horizontalAim.getMinimumAngle().in(Degrees),
                         horizontalAim.getMaximumAngle().in(Degrees),
                         shooter.getMainFlywheelSpeedIPS(),
@@ -370,7 +375,7 @@ public class ScoreInHub extends Command {
         shooter.setCoupledIPS(idealFlywheelCommandIps);
         recordPreviousCycleTargets(commandedHoodAngleDegrees, idealFlywheelCommandIps);
         if (fixedFlywheelStatus == BallTrajectoryLookup.FixedFlywheelShotStatus.VALID) {
-            lastValidRobotHeadingTarget = Rotation2d.fromDegrees(commandedShotSolution.getRobotHeadingDegrees());
+            lastValidRobotHeadingTargetFld = Rotation2d.fromDegrees(commandedShotSolution.getRobotHeadingDegrees());
             lastValidTurretDeltaDegrees = clampedTurretDeltaDegrees;
             lastValidHoodAngleDegrees = commandedHoodAngleDegrees;
             lastValidFlywheelCommandIps = idealFlywheelCommandIps;
@@ -394,30 +399,30 @@ public class ScoreInHub extends Command {
         return true;
     }
 
-    private Rotation2d getPreferredRobotHeading(
-            Translation2d futureRobotPosition,
-            Translation2d target,
-            Rotation2d fallbackHeading) {
+    private Rotation2d getPreferredRobotHeadingFld(
+            Translation2d futureRobotTranslationFld,
+            Translation2d targetFld,
+            Rotation2d fallbackHeadingFld) {
         return MovingShotMath.getHeadingTowardTarget(
-                target.getX() - futureRobotPosition.getX(),
-                target.getY() - futureRobotPosition.getY(),
-                fallbackHeading);
+                targetFld.getX() - futureRobotTranslationFld.getX(),
+                targetFld.getY() - futureRobotTranslationFld.getY(),
+                fallbackHeadingFld);
     }
 
-    private void publishTarget(Translation2d target) {
-        TuningDashboard.publishShootingTarget(target);
+    private void publishTargetFld(Translation2d targetFld) {
+        TuningDashboard.publishShootingTarget(targetFld);
     }
 
-    private void publishFutureState() {
-        futureFieldPose[0] = futureState.xMeters;
-        futureFieldPose[1] = futureState.yMeters;
-        futureFieldPose[2] = Math.toDegrees(futureState.headingRadians);
-        futureFieldVelocity[0] = futureState.vxMetersPerSecond;
-        futureFieldVelocity[1] = futureState.vyMetersPerSecond;
-        futureFieldVelocity[2] = Math.toDegrees(futureState.omegaRadiansPerSecond);
+    private void publishFutureFieldState() {
+        futurePoseFldArray[0] = futureStateFld.xMeters;
+        futurePoseFldArray[1] = futureStateFld.yMeters;
+        futurePoseFldArray[2] = Math.toDegrees(futureStateFld.headingRadians);
+        futureVelocityFldArray[0] = futureStateFld.vxMetersPerSecond;
+        futureVelocityFldArray[1] = futureStateFld.vyMetersPerSecond;
+        futureVelocityFldArray[2] = Math.toDegrees(futureStateFld.omegaRadiansPerSecond);
         // Debug dashboard telemetry disabled to reduce NetworkTables traffic.
-        // futurePosePublisher.set(futureFieldPose);
-        // futureVelocityPublisher.set(futureFieldVelocity);
+        // futurePoseFldPublisher.set(futurePoseFldArray);
+        // futureVelocityFldPublisher.set(futureVelocityFldArray);
     }
 
     private void clearSolutionTelemetry() {
@@ -446,16 +451,16 @@ public class ScoreInHub extends Command {
         return Timer.getFPGATimestamp() - lastValidSolutionTimestampSeconds;
     }
 
-    private Translation2d getCurrentRobotPosition() {
-        Pose2d currentPose = poseEstimator.getFusedPoseSupplier().get();
-        return currentPose != null ? currentPose.getTranslation() : null;
+    private Translation2d getCurrentRobotTranslationFld() {
+        Pose2d currentPoseFld = poseEstimator.getFusedPoseSupplier().get();
+        return currentPoseFld != null ? currentPoseFld.getTranslation() : null;
     }
 
     private void applyNoSolutionShotCommand(
-            Translation2d robotPosition,
-            Translation2d target) {
-        double fallbackDistanceInches = getFallbackHubDistanceInches(robotPosition, target);
-        double fallbackFlywheelCommandIps = getNoSolutionHubFlywheelCommandIps(robotPosition, target);
+            Translation2d robotTranslationFld,
+            Translation2d targetFld) {
+        double fallbackDistanceInches = getFallbackHubDistanceInches(robotTranslationFld, targetFld);
+        double fallbackFlywheelCommandIps = getNoSolutionHubFlywheelCommandIps(robotTranslationFld, targetFld);
         double fallbackHoodAngleDegrees = ShortRangeHubFlywheelLookup.getIdealHoodAngleDegrees(fallbackDistanceInches);
         if (!Double.isFinite(fallbackHoodAngleDegrees)) {
             fallbackHoodAngleDegrees = verticalAim.getMaximumAngle().in(Degrees);
@@ -471,19 +476,19 @@ public class ScoreInHub extends Command {
     }
 
     private double getNoSolutionHubFlywheelCommandIps(
-            Translation2d robotPosition,
-            Translation2d target) {
-        double fallbackDistanceInches = getFallbackHubDistanceInches(robotPosition, target);
+            Translation2d robotTranslationFld,
+            Translation2d targetFld) {
+        double fallbackDistanceInches = getFallbackHubDistanceInches(robotTranslationFld, targetFld);
         double fallbackFlywheelCommandIps =
                 ShortRangeHubFlywheelLookup.getFallbackManifoldFlywheelCommandIps(fallbackDistanceInches);
         return Double.isFinite(fallbackFlywheelCommandIps) ? fallbackFlywheelCommandIps : 0.0;
     }
 
     private double getFallbackHubDistanceInches(
-            Translation2d robotPosition,
-            Translation2d target) {
-        if (robotPosition != null && target != null) {
-            return Inches.convertFrom(target.getDistance(robotPosition), Meters);
+            Translation2d robotTranslationFld,
+            Translation2d targetFld) {
+        if (robotTranslationFld != null && targetFld != null) {
+            return Inches.convertFrom(targetFld.getDistance(robotTranslationFld), Meters);
         }
         return 0.5 * (
                 ShooterConstants.DATA_COLLECTION_SHORT_RANGE_MIN_DISTANCE_INCHES
@@ -498,29 +503,29 @@ public class ScoreInHub extends Command {
     }
 
     private void applyHeldShotCommand(
-            SwerveRequest.FieldCentric fieldCentricRequest,
-            double velocityXMetersPerSecond,
-            double velocityYMetersPerSecond) {
+            SwerveRequest.FieldCentric fieldCentricRequestDrv,
+            double velocityXDrvMetersPerSecond,
+            double velocityYDrvMetersPerSecond) {
         if (Double.isFinite(lastValidHoodAngleDegrees)) {
             verticalAim.setAngle(Degrees.of(lastValidHoodAngleDegrees));
         }
         horizontalAim.setAngle(Degrees.of(lastValidTurretDeltaDegrees));
         shooter.setCoupledIPS(lastValidFlywheelCommandIps);
         recordPreviousCycleTargets(verticalAim.getAngle().in(Degrees), lastValidFlywheelCommandIps);
-        Rotation2d operatorPerspectiveHeadingTarget =
-                lastValidRobotHeadingTarget.minus(drivetrain.getDriverPerspectiveForward());
+        Rotation2d robotHeadingTargetDrv =
+                lastValidRobotHeadingTargetFld.minus(drivetrain.getDriverPerspectiveForward());
         drivetrain.setControl(
                 facingAngleDrive
-                        .withVelocityX(velocityXMetersPerSecond)
-                        .withVelocityY(velocityYMetersPerSecond)
-                        .withTargetDirection(operatorPerspectiveHeadingTarget)
-                        .withDeadband(fieldCentricRequest.Deadband)
-                        .withRotationalDeadband(fieldCentricRequest.RotationalDeadband)
-                        .withCenterOfRotation(fieldCentricRequest.CenterOfRotation)
-                        .withDriveRequestType(fieldCentricRequest.DriveRequestType)
-                        .withSteerRequestType(fieldCentricRequest.SteerRequestType)
-                        .withDesaturateWheelSpeeds(fieldCentricRequest.DesaturateWheelSpeeds)
-                        .withForwardPerspective(fieldCentricRequest.ForwardPerspective));
+                        .withVelocityX(velocityXDrvMetersPerSecond)
+                        .withVelocityY(velocityYDrvMetersPerSecond)
+                        .withTargetDirection(robotHeadingTargetDrv)
+                        .withDeadband(fieldCentricRequestDrv.Deadband)
+                        .withRotationalDeadband(fieldCentricRequestDrv.RotationalDeadband)
+                        .withCenterOfRotation(fieldCentricRequestDrv.CenterOfRotation)
+                        .withDriveRequestType(fieldCentricRequestDrv.DriveRequestType)
+                        .withSteerRequestType(fieldCentricRequestDrv.SteerRequestType)
+                        .withDesaturateWheelSpeeds(fieldCentricRequestDrv.DesaturateWheelSpeeds)
+                        .withForwardPerspective(fieldCentricRequestDrv.ForwardPerspective));
     }
 
     private void publishTrackingDiagnostics() {
@@ -547,32 +552,31 @@ public class ScoreInHub extends Command {
                 commandedFlywheelIps);
     }
 
-    private Translation2d limitTranslationalAcceleration(SwerveRequest.FieldCentric fieldCentricRequest) {
-        double requestedVelocityXMetersPerSecond = fieldCentricRequest.VelocityX;
-        double requestedVelocityYMetersPerSecond = fieldCentricRequest.VelocityY;
-        Translation2d requestedVelocity = clampVelocityMagnitude(new Translation2d(
-                requestedVelocityXMetersPerSecond,
-                requestedVelocityYMetersPerSecond),
+    private Translation2d limitDriverFrameTranslationalAcceleration(
+            SwerveRequest.FieldCentric fieldCentricRequestDrv) {
+        Translation2d requestedVelocityDrvMps = clampVelocityMagnitude(new Translation2d(
+                fieldCentricRequestDrv.VelocityX,
+                fieldCentricRequestDrv.VelocityY),
                 MAX_TRANSLATIONAL_SPEED_METERS_PER_SECOND);
         if (!ENABLE_SPEED_UP_ACCELERATION_LIMIT) {
             lastVelocityLimitTimestampSeconds = Double.NaN;
-            return requestedVelocity;
+            return requestedVelocityDrvMps;
         }
 
         double currentTimestampSeconds = Timer.getFPGATimestamp();
 
         if (!Double.isFinite(lastVelocityLimitTimestampSeconds)) {
             lastVelocityLimitTimestampSeconds = currentTimestampSeconds;
-            return requestedVelocity;
+            return requestedVelocityDrvMps;
         }
 
         double dtSeconds = Math.max(0.0, currentTimestampSeconds - lastVelocityLimitTimestampSeconds);
-        Translation2d limitedVelocity = requestedVelocity;
+        Translation2d limitedVelocityDrvMps = requestedVelocityDrvMps;
         double currentRobotSpeedMetersPerSecond = Math.hypot(
                 drivetrain.getState().Speeds.vxMetersPerSecond,
                 drivetrain.getState().Speeds.vyMetersPerSecond);
 
-        double requestedSpeedMetersPerSecond = requestedVelocity.getNorm();
+        double requestedSpeedMetersPerSecond = requestedVelocityDrvMps.getNorm();
         if (requestedSpeedMetersPerSecond > currentRobotSpeedMetersPerSecond && dtSeconds > 0.0) {
             double maximumSpeedIncreaseMetersPerSecond =
                     SPEED_UP_ACCELERATION_LIMIT_METERS_PER_SECOND_SQUARED * dtSeconds;
@@ -580,14 +584,14 @@ public class ScoreInHub extends Command {
                     requestedSpeedMetersPerSecond,
                     currentRobotSpeedMetersPerSecond + maximumSpeedIncreaseMetersPerSecond);
             if (requestedSpeedMetersPerSecond > 1e-9) {
-                limitedVelocity = new Translation2d(
+                limitedVelocityDrvMps = new Translation2d(
                         limitedSpeedMetersPerSecond,
-                        requestedVelocity.getAngle());
+                        requestedVelocityDrvMps.getAngle());
             }
         }
 
         lastVelocityLimitTimestampSeconds = currentTimestampSeconds;
-        return limitedVelocity;
+        return limitedVelocityDrvMps;
     }
 
     private static Translation2d clampVelocityMagnitude(Translation2d velocity, double maximumSpeedMetersPerSecond) {

@@ -24,6 +24,10 @@ import frc.robot.subsystems.ShooterSubsystem;
 import frc.robot.subsystems.SparkAnglePositionSubsystem;
 import com.pathplanner.lib.util.DriveFeedforwards;
 
+/**
+ * Autonomous shot-assist state that keeps shot geometry in the absolute WPILib field frame
+ * while accepting PathPlanner robot-relative chassis speeds at the drive boundary.
+ */
 public class PathPlannerAutoAssist {
     public enum ShotMode {
         OFF,
@@ -38,8 +42,8 @@ public class PathPlannerAutoAssist {
     private final SparkAnglePositionSubsystem horizontalAim;
     private final SparkAnglePositionSubsystem verticalAim;
     private final ShooterSubsystem shooter;
-    private final Supplier<Translation2d> activePointTowardsTargetSupplier;
-    private final PoseEstimatorSubsystem.PredictedFusedState futureState =
+    private final Supplier<Translation2d> activePointTowardsTargetFldSupplier;
+    private final PoseEstimatorSubsystem.PredictedFusedState futureStateFld =
             new PoseEstimatorSubsystem.PredictedFusedState();
     private final BallTrajectoryLookup.MovingShotSolution idealMovingShotSolution =
             new BallTrajectoryLookup.MovingShotSolution();
@@ -71,22 +75,22 @@ public class PathPlannerAutoAssist {
                     Meters.convertFrom(
                             ShooterConstants.COMMANDED_PREFERRED_HEADING_MIN_SAMPLE_SPACING_INCHES,
                             Inches));
-    private Translation2d lastFieldRelativeDriveDirection = new Translation2d();
+    private Translation2d lastDriveDirectionFld = new Translation2d();
 
     public PathPlannerAutoAssist(
             PoseEstimatorSubsystem poseEstimator,
             SparkAnglePositionSubsystem horizontalAim,
             SparkAnglePositionSubsystem verticalAim,
             ShooterSubsystem shooter,
-            Supplier<Translation2d> activePointTowardsTargetSupplier) {
+            Supplier<Translation2d> activePointTowardsTargetFldSupplier) {
         this.poseEstimator = Objects.requireNonNull(poseEstimator, "poseEstimator must not be null");
         this.horizontalAim = Objects.requireNonNull(horizontalAim, "horizontalAim must not be null");
         this.verticalAim = Objects.requireNonNull(verticalAim, "verticalAim must not be null");
         this.shooter = Objects.requireNonNull(shooter, "shooter must not be null");
-        this.activePointTowardsTargetSupplier =
+        this.activePointTowardsTargetFldSupplier =
                 Objects.requireNonNull(
-                        activePointTowardsTargetSupplier,
-                        "activePointTowardsTargetSupplier must not be null");
+                        activePointTowardsTargetFldSupplier,
+                        "activePointTowardsTargetFldSupplier must not be null");
         facingAngleDrive.HeadingController.enableContinuousInput(-Math.PI, Math.PI);
     }
 
@@ -95,7 +99,7 @@ public class PathPlannerAutoAssist {
         intakeEnabled = false;
         clearShotOutputs();
         preferredHeadingTracker.reset();
-        lastFieldRelativeDriveDirection = new Translation2d();
+        lastDriveDirectionFld = new Translation2d();
     }
 
     public void enableScoreInHub() {
@@ -141,106 +145,106 @@ public class PathPlannerAutoAssist {
 
     public SwerveRequest buildDriveRequest(
             CommandSwerveDrivetrain drivetrain,
-            ChassisSpeeds robotRelativeSpeeds,
+            ChassisSpeeds robotRelativeSpeedsRbt,
             DriveFeedforwards feedforwards) {
         Objects.requireNonNull(drivetrain, "drivetrain must not be null");
-        Objects.requireNonNull(robotRelativeSpeeds, "robotRelativeSpeeds must not be null");
+        Objects.requireNonNull(robotRelativeSpeedsRbt, "robotRelativeSpeedsRbt must not be null");
         Objects.requireNonNull(feedforwards, "feedforwards must not be null");
 
-        updateLastDriveDirection();
+        updateLastDriveDirectionFld();
         if (shotMode == ShotMode.OFF) {
             clearShotOutputs();
-            return buildPathFollowingRequest(robotRelativeSpeeds, feedforwards);
+            return buildPathFollowingRequest(robotRelativeSpeedsRbt, feedforwards);
         }
         if (!poseEstimator.getPredictedFusedState(
                 ShooterConstants.COMMANDED_SHOOTER_LOOKAHEAD_SECONDS,
-                futureState)) {
+                futureStateFld)) {
             applyNoSolutionShotOutputs(poseEstimator.getFusedPoseSupplier().get(), null);
-            return buildPathFollowingRequest(robotRelativeSpeeds, feedforwards);
+            return buildPathFollowingRequest(robotRelativeSpeedsRbt, feedforwards);
         }
 
-        Pose2d futurePose = new Pose2d(
-                futureState.xMeters,
-                futureState.yMeters,
-                Rotation2d.fromRadians(futureState.headingRadians));
-        Translation2d target = getTarget(futurePose);
-        Rotation2d preferredRobotHeading = getPreferredRobotHeading(
-                futurePose,
-                target,
-                futurePose.getRotation());
+        Pose2d futurePoseFld = new Pose2d(
+                futureStateFld.xMeters,
+                futureStateFld.yMeters,
+                Rotation2d.fromRadians(futureStateFld.headingRadians));
+        Translation2d targetFld = getTargetFld(futurePoseFld);
+        Rotation2d preferredRobotHeadingFld = getPreferredRobotHeadingFld(
+                futurePoseFld,
+                targetFld,
+                futurePoseFld.getRotation());
 
-        if (!updateShotSolution(target, preferredRobotHeading)) {
-            applyNoSolutionShotOutputs(futurePose, target);
-            return buildPathFollowingRequest(robotRelativeSpeeds, feedforwards);
+        if (!updateShotSolution(targetFld, preferredRobotHeadingFld)) {
+            applyNoSolutionShotOutputs(futurePoseFld, targetFld);
+            return buildPathFollowingRequest(robotRelativeSpeedsRbt, feedforwards);
         }
 
         return facingAngleDrive
-                .withVelocityX(robotRelativeSpeeds.vxMetersPerSecond)
-                .withVelocityY(robotRelativeSpeeds.vyMetersPerSecond)
+                .withVelocityX(robotRelativeSpeedsRbt.vxMetersPerSecond)
+                .withVelocityY(robotRelativeSpeedsRbt.vyMetersPerSecond)
                 .withTargetDirection(Rotation2d.fromDegrees(movingShotSolution.getRobotHeadingDegrees()))
                 .withTargetRateFeedforward(0.0)
                 .withDeadband(0.0)
                 .withRotationalDeadband(0.0);
     }
 
-    private void updateLastDriveDirection() {
-        Pose2d currentPose = poseEstimator.getFusedPoseSupplier().get();
-        if (currentPose == null) {
+    private void updateLastDriveDirectionFld() {
+        Pose2d currentPoseFld = poseEstimator.getFusedPoseSupplier().get();
+        if (currentPoseFld == null) {
             return;
         }
 
-        lastFieldRelativeDriveDirection = preferredHeadingTracker.update(currentPose.getTranslation());
+        lastDriveDirectionFld = preferredHeadingTracker.update(currentPoseFld.getTranslation());
     }
 
     private SwerveRequest buildPathFollowingRequest(
-            ChassisSpeeds robotRelativeSpeeds,
+            ChassisSpeeds robotRelativeSpeedsRbt,
             DriveFeedforwards feedforwards) {
         // PathPlanner's documented integration only requires driving the robot-relative
         // chassis speeds. Dropping module force feedforwards here keeps the CTRE bridge
         // aligned with the official "driveRobotRelative(speeds)" pattern.
         return pathFollowingRequest
-                .withSpeeds(robotRelativeSpeeds)
+                .withSpeeds(robotRelativeSpeedsRbt)
                 .withCenterOfRotation(new Translation2d())
                 .withDesaturateWheelSpeeds(true);
     }
 
-    private Translation2d getTarget(Pose2d futurePose) {
+    private Translation2d getTargetFld(Pose2d futurePoseFld) {
         DriverStation.Alliance alliance = DriverStation.getAlliance().orElse(DriverStation.Alliance.Blue);
         return switch (shotMode) {
             case SCORE_IN_HUB -> FieldMath.getHubTarget(alliance);
-            case SNOWBLOW_TO_ALLIANCE -> getSnowblowTarget(futurePose, alliance);
-            case OFF -> futurePose.getTranslation();
+            case SNOWBLOW_TO_ALLIANCE -> getSnowblowTargetFld(futurePoseFld, alliance);
+            case OFF -> futurePoseFld.getTranslation();
         };
     }
 
-    private Translation2d getSnowblowTarget(Pose2d futurePose, DriverStation.Alliance alliance) {
-        Translation2d activePointTowardsTarget = activePointTowardsTargetSupplier.get();
-        if (activePointTowardsTarget != null) {
-            return activePointTowardsTarget;
+    private Translation2d getSnowblowTargetFld(Pose2d futurePoseFld, DriverStation.Alliance alliance) {
+        Translation2d activePointTowardsTargetFld = activePointTowardsTargetFldSupplier.get();
+        if (activePointTowardsTargetFld != null) {
+            return activePointTowardsTargetFld;
         }
 
-        return FieldMath.getSnowblowTarget(futurePose, lastFieldRelativeDriveDirection, alliance);
+        return FieldMath.getSnowblowTarget(futurePoseFld, lastDriveDirectionFld, alliance);
     }
 
-    private Rotation2d getPreferredRobotHeading(
-            Pose2d futurePose,
-            Translation2d target,
-            Rotation2d fallbackHeading) {
+    private Rotation2d getPreferredRobotHeadingFld(
+            Pose2d futurePoseFld,
+            Translation2d targetFld,
+            Rotation2d fallbackHeadingFld) {
         if (shotMode == ShotMode.SCORE_IN_HUB) {
             return MovingShotMath.getHeadingTowardTarget(
-                    target.getX() - futurePose.getX(),
-                    target.getY() - futurePose.getY(),
-                    fallbackHeading);
+                    targetFld.getX() - futurePoseFld.getX(),
+                    targetFld.getY() - futurePoseFld.getY(),
+                    fallbackHeadingFld);
         }
-        if (lastFieldRelativeDriveDirection.getNorm() > 1e-9) {
-            return lastFieldRelativeDriveDirection.getAngle();
+        if (lastDriveDirectionFld.getNorm() > 1e-9) {
+            return lastDriveDirectionFld.getAngle();
         }
-        return fallbackHeading;
+        return fallbackHeadingFld;
     }
 
     private boolean updateShotSolution(
-            Translation2d target,
-            Rotation2d preferredRobotHeading) {
+            Translation2d targetFld,
+            Rotation2d preferredRobotHeadingFld) {
         double minimumHoodAngleDegrees = verticalAim.getMinimumAngle().in(Degrees);
         double maximumHoodAngleDegrees = verticalAim.getMaximumAngle().in(Degrees);
         BallTrajectoryLookup.FixedFlywheelShotStatus fixedFlywheelStatus =
@@ -248,11 +252,11 @@ public class PathPlannerAutoAssist {
                         verticalAim,
                         ShooterConstants.COMMANDED_MOVING_SHOT_HOOD_SEARCH_STEP_DEGREES,
                         ShooterConstants.COMMANDED_MOVING_SHOT_FIXED_FLYWHEEL_HOOD_SEARCH_STEP_DEGREES,
-                        futureState,
-                        target,
+                        futureStateFld,
+                        targetFld,
                         getTargetElevationInches(),
                         ShooterConstants.COMMANDED_MAXIMUM_SHOOTING_HEIGHT_INCHES,
-                        preferredRobotHeading.getRadians(),
+                        preferredRobotHeadingFld.getRadians(),
                         horizontalAim.getMinimumAngle().in(Degrees),
                         horizontalAim.getMaximumAngle().in(Degrees),
                         shooter.getMainFlywheelSpeedIPS(),
@@ -283,30 +287,30 @@ public class PathPlannerAutoAssist {
                 : ShooterConstants.COMMANDED_SNOWBLOW_TARGET_ELEVATION_INCHES;
     }
 
-    private void applyNoSolutionShotOutputs(Pose2d aimingPose, Translation2d target) {
+    private void applyNoSolutionShotOutputs(Pose2d aimingPoseFld, Translation2d targetFld) {
         if (shotMode != ShotMode.SCORE_IN_HUB) {
             clearShotOutputs();
             return;
         }
 
-        Translation2d fallbackTarget = target;
-        if (fallbackTarget == null) {
-            Pose2d targetPose = aimingPose != null ? aimingPose : new Pose2d();
-            fallbackTarget = getTarget(targetPose);
+        Translation2d fallbackTargetFld = targetFld;
+        if (fallbackTargetFld == null) {
+            Pose2d targetPoseFld = aimingPoseFld != null ? aimingPoseFld : new Pose2d();
+            fallbackTargetFld = getTargetFld(targetPoseFld);
         }
 
         double fallbackFlywheelIps =
                 ShortRangeHubFlywheelLookup.getFallbackManifoldFlywheelCommandIps(
-                        getFallbackHubDistanceInches(aimingPose, fallbackTarget));
+                        getFallbackHubDistanceInches(aimingPoseFld, fallbackTargetFld));
         commandedTurretDeltaDegrees = 0.0;
         commandedHoodAngleDegrees = ShooterConstants.COMMANDED_MAXIMUM_ALLOWED_HOOD_ANGLE_DEGREES;
         commandedFlywheelIps = Double.isFinite(fallbackFlywheelIps) ? fallbackFlywheelIps : 0.0;
         shotOutputsActive = commandedFlywheelIps > 0.0;
     }
 
-    private double getFallbackHubDistanceInches(Pose2d aimingPose, Translation2d target) {
-        if (aimingPose != null && target != null) {
-            return Inches.convertFrom(target.getDistance(aimingPose.getTranslation()), Meters);
+    private double getFallbackHubDistanceInches(Pose2d aimingPoseFld, Translation2d targetFld) {
+        if (aimingPoseFld != null && targetFld != null) {
+            return Inches.convertFrom(targetFld.getDistance(aimingPoseFld.getTranslation()), Meters);
         }
         return 0.5 * (
                 ShooterConstants.DATA_COLLECTION_SHORT_RANGE_MIN_DISTANCE_INCHES

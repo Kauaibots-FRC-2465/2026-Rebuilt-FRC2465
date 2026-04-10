@@ -33,6 +33,10 @@ import frc.robot.utility.TuningDashboard;
  *
  * <p>For now this command only preserves normal driving while taking ownership
  * of the drivetrain, horizontal aim, vertical aim, and shooter subsystems.
+ *
+ * <p>Frame suffixes used in this command:
+ * Fld = field frame and the default for internal geometry/solver math.
+ * Drv = driver-perspective field-centric request frame at the Phoenix request boundary.
  */
 public class SnowblowToAlliance extends Command {
     private final CommandSwerveDrivetrain drivetrain;
@@ -52,18 +56,18 @@ public class SnowblowToAlliance extends Command {
     private final DoublePublisher shotAzimuthDegreesPublisher;
     private final DoublePublisher turretDeltaDegreesPublisher;
     private final DoublePublisher robotHeadingDegreesPublisher;
-    private final edu.wpi.first.networktables.DoubleArrayPublisher futurePosePublisher;
-    private final edu.wpi.first.networktables.DoubleArrayPublisher futureVelocityPublisher;
+    private final edu.wpi.first.networktables.DoubleArrayPublisher futurePoseFldPublisher;
+    private final edu.wpi.first.networktables.DoubleArrayPublisher futureVelocityFldPublisher;
     private final BooleanPublisher validSolutionPublisher;
     private final StringPublisher fieldTypePublisher;
-    private final PoseEstimatorSubsystem.PredictedFusedState futureState =
+    private final PoseEstimatorSubsystem.PredictedFusedState futureStateFld =
             new PoseEstimatorSubsystem.PredictedFusedState();
     private final BallTrajectoryLookup.MovingShotSolution idealMovingShotSolution =
             new BallTrajectoryLookup.MovingShotSolution();
     private final BallTrajectoryLookup.MovingShotSolution movingShotSolution =
             new BallTrajectoryLookup.MovingShotSolution();
-    private final double[] futureFieldPose = new double[3];
-    private final double[] futureFieldVelocity = new double[3];
+    private final double[] futurePoseFldArray = new double[3];
+    private final double[] futureVelocityFldArray = new double[3];
     private final TravelWindowDirectionTracker preferredHeadingTracker =
             new TravelWindowDirectionTracker(
                     Meters.convertFrom(
@@ -72,7 +76,7 @@ public class SnowblowToAlliance extends Command {
                     Meters.convertFrom(
                             ShooterConstants.COMMANDED_PREFERRED_HEADING_MIN_SAMPLE_SPACING_INCHES,
                             Inches));
-    private Translation2d lastFieldRelativeDriveDirection = new Translation2d();
+    private Translation2d lastDriveDirectionFld = new Translation2d();
 
     public SnowblowToAlliance(
             CommandSwerveDrivetrain drivetrain,
@@ -99,8 +103,8 @@ public class SnowblowToAlliance extends Command {
         shotAzimuthDegreesPublisher = snowblowTable.getDoubleTopic("shotAzimuthDegrees").publish();
         turretDeltaDegreesPublisher = snowblowTable.getDoubleTopic("turretDeltaDegrees").publish();
         robotHeadingDegreesPublisher = snowblowTable.getDoubleTopic("robotHeadingDegrees").publish();
-        futurePosePublisher = snowblowTable.getDoubleArrayTopic("futurePose").publish();
-        futureVelocityPublisher = snowblowTable.getDoubleArrayTopic("futureVelocity").publish();
+        futurePoseFldPublisher = snowblowTable.getDoubleArrayTopic("futurePose").publish();
+        futureVelocityFldPublisher = snowblowTable.getDoubleArrayTopic("futureVelocity").publish();
         validSolutionPublisher = snowblowTable.getBooleanTopic("validSolution").publish();
         fieldTypePublisher = snowblowTable.getStringTopic(".type").publish();
         // Debug dashboard telemetry disabled to reduce NetworkTables traffic.
@@ -115,57 +119,57 @@ public class SnowblowToAlliance extends Command {
     @Override
     public void initialize() {
         preferredHeadingTracker.reset();
-        lastFieldRelativeDriveDirection = new Translation2d();
+        lastDriveDirectionFld = new Translation2d();
     }
 
     @Override
     public void execute() {
         SwerveRequest requestedDrive = driveRequestSupplier.get();
-        if (!(requestedDrive instanceof SwerveRequest.FieldCentric fieldCentricRequest)) {
+        if (!(requestedDrive instanceof SwerveRequest.FieldCentric fieldCentricRequestDrv)) {
             clearSolutionTelemetry();
             drivetrain.setControl(requestedDrive);
             return;
         }
 
-        updateLastDriveDirection();
+        updateLastDriveDirectionFld();
         if (!poseEstimator.getPredictedFusedState(
                 ShooterConstants.COMMANDED_SHOOTER_LOOKAHEAD_SECONDS,
-                futureState)) {
+                futureStateFld)) {
             clearSolutionTelemetry();
             shooter.setCoupledIPS(0.0);
             horizontalAim.setAngle(Degrees.of(0.0));
             drivetrain.setControl(requestedDrive);
             return;
         }
-        publishFutureState();
+        publishFutureFieldState();
 
-        Pose2d futurePose = new Pose2d(
-                futureState.xMeters,
-                futureState.yMeters,
-                Rotation2d.fromRadians(futureState.headingRadians));
-        Translation2d target = getTarget(futurePose);
-        publishTarget(target);
+        Pose2d futurePoseFld = new Pose2d(
+                futureStateFld.xMeters,
+                futureStateFld.yMeters,
+                Rotation2d.fromRadians(futureStateFld.headingRadians));
+        Translation2d targetFld = getTargetFld(futurePoseFld);
+        publishTargetFld(targetFld);
 
-        Rotation2d preferredRobotHeading = getPreferredRobotHeading(futurePose.getRotation());
-        Rotation2d robotHeadingTarget = preferredRobotHeading;
-        if (updateShooterSolution(target, preferredRobotHeading)) {
-            robotHeadingTarget = Rotation2d.fromDegrees(movingShotSolution.getRobotHeadingDegrees());
+        Rotation2d preferredRobotHeadingFld = getPreferredRobotHeadingFld(futurePoseFld.getRotation());
+        Rotation2d robotHeadingTargetFld = preferredRobotHeadingFld;
+        if (updateShooterSolution(targetFld, preferredRobotHeadingFld)) {
+            robotHeadingTargetFld = Rotation2d.fromDegrees(movingShotSolution.getRobotHeadingDegrees());
         }
-        Rotation2d operatorPerspectiveHeadingTarget =
-                robotHeadingTarget.minus(drivetrain.getDriverPerspectiveForward());
+        Rotation2d robotHeadingTargetDrv =
+                robotHeadingTargetFld.minus(drivetrain.getDriverPerspectiveForward());
 
         drivetrain.setControl(
                 facingAngleDrive
-                        .withVelocityX(fieldCentricRequest.VelocityX)
-                        .withVelocityY(fieldCentricRequest.VelocityY)
-                        .withTargetDirection(operatorPerspectiveHeadingTarget)
-                        .withDeadband(fieldCentricRequest.Deadband)
-                        .withRotationalDeadband(fieldCentricRequest.RotationalDeadband)
-                        .withCenterOfRotation(fieldCentricRequest.CenterOfRotation)
-                        .withDriveRequestType(fieldCentricRequest.DriveRequestType)
-                        .withSteerRequestType(fieldCentricRequest.SteerRequestType)
-                        .withDesaturateWheelSpeeds(fieldCentricRequest.DesaturateWheelSpeeds)
-                        .withForwardPerspective(fieldCentricRequest.ForwardPerspective));
+                        .withVelocityX(fieldCentricRequestDrv.VelocityX)
+                        .withVelocityY(fieldCentricRequestDrv.VelocityY)
+                        .withTargetDirection(robotHeadingTargetDrv)
+                        .withDeadband(fieldCentricRequestDrv.Deadband)
+                        .withRotationalDeadband(fieldCentricRequestDrv.RotationalDeadband)
+                        .withCenterOfRotation(fieldCentricRequestDrv.CenterOfRotation)
+                        .withDriveRequestType(fieldCentricRequestDrv.DriveRequestType)
+                        .withSteerRequestType(fieldCentricRequestDrv.SteerRequestType)
+                        .withDesaturateWheelSpeeds(fieldCentricRequestDrv.DesaturateWheelSpeeds)
+                        .withForwardPerspective(fieldCentricRequestDrv.ForwardPerspective));
     }
 
     @Override
@@ -180,14 +184,14 @@ public class SnowblowToAlliance extends Command {
     /**
      * Returns the current alliance-relative snowblow target point on the field.
      */
-    private Translation2d getTarget(Pose2d robotPose) {
+    private Translation2d getTargetFld(Pose2d robotPoseFld) {
         Alliance alliance = DriverStation.getAlliance().orElse(Alliance.Blue);
-        return FieldMath.getSnowblowTarget(robotPose, lastFieldRelativeDriveDirection, alliance);
+        return FieldMath.getSnowblowTarget(robotPoseFld, lastDriveDirectionFld, alliance);
     }
 
     private boolean updateShooterSolution(
-            Translation2d target,
-            Rotation2d preferredRobotHeading) {
+            Translation2d targetFld,
+            Rotation2d preferredRobotHeadingFld) {
         double minimumHoodAngleDegrees = verticalAim.getMinimumAngle().in(Degrees);
         double maximumHoodAngleDegrees = verticalAim.getMaximumAngle().in(Degrees);
         BallTrajectoryLookup.FixedFlywheelShotStatus fixedFlywheelStatus =
@@ -195,11 +199,11 @@ public class SnowblowToAlliance extends Command {
                         verticalAim,
                         ShooterConstants.COMMANDED_MOVING_SHOT_HOOD_SEARCH_STEP_DEGREES,
                         ShooterConstants.COMMANDED_MOVING_SHOT_FIXED_FLYWHEEL_HOOD_SEARCH_STEP_DEGREES,
-                        futureState,
-                        target,
+                        futureStateFld,
+                        targetFld,
                         ShooterConstants.COMMANDED_SNOWBLOW_TARGET_ELEVATION_INCHES,
                         ShooterConstants.COMMANDED_MAXIMUM_SHOOTING_HEIGHT_INCHES,
-                        preferredRobotHeading.getRadians(),
+                        preferredRobotHeadingFld.getRadians(),
                         horizontalAim.getMinimumAngle().in(Degrees),
                         horizontalAim.getMaximumAngle().in(Degrees),
                         shooter.getMainFlywheelSpeedIPS(),
@@ -238,35 +242,35 @@ public class SnowblowToAlliance extends Command {
         return true;
     }
 
-    private void updateLastDriveDirection() {
-        Pose2d currentPose = poseEstimator.getFusedPoseSupplier().get();
-        if (currentPose == null) {
+    private void updateLastDriveDirectionFld() {
+        Pose2d currentPoseFld = poseEstimator.getFusedPoseSupplier().get();
+        if (currentPoseFld == null) {
             return;
         }
-        lastFieldRelativeDriveDirection = preferredHeadingTracker.update(currentPose.getTranslation());
+        lastDriveDirectionFld = preferredHeadingTracker.update(currentPoseFld.getTranslation());
     }
 
-    private Rotation2d getPreferredRobotHeading(Rotation2d fallbackHeading) {
-        if (lastFieldRelativeDriveDirection.getNorm() > 1e-9) {
-            return lastFieldRelativeDriveDirection.getAngle();
+    private Rotation2d getPreferredRobotHeadingFld(Rotation2d fallbackHeadingFld) {
+        if (lastDriveDirectionFld.getNorm() > 1e-9) {
+            return lastDriveDirectionFld.getAngle();
         }
-        return fallbackHeading;
+        return fallbackHeadingFld;
     }
 
-    private void publishTarget(Translation2d target) {
-        TuningDashboard.publishShootingTarget(target);
+    private void publishTargetFld(Translation2d targetFld) {
+        TuningDashboard.publishShootingTarget(targetFld);
     }
 
-    private void publishFutureState() {
-        futureFieldPose[0] = futureState.xMeters;
-        futureFieldPose[1] = futureState.yMeters;
-        futureFieldPose[2] = Math.toDegrees(futureState.headingRadians);
-        futureFieldVelocity[0] = futureState.vxMetersPerSecond;
-        futureFieldVelocity[1] = futureState.vyMetersPerSecond;
-        futureFieldVelocity[2] = Math.toDegrees(futureState.omegaRadiansPerSecond);
+    private void publishFutureFieldState() {
+        futurePoseFldArray[0] = futureStateFld.xMeters;
+        futurePoseFldArray[1] = futureStateFld.yMeters;
+        futurePoseFldArray[2] = Math.toDegrees(futureStateFld.headingRadians);
+        futureVelocityFldArray[0] = futureStateFld.vxMetersPerSecond;
+        futureVelocityFldArray[1] = futureStateFld.vyMetersPerSecond;
+        futureVelocityFldArray[2] = Math.toDegrees(futureStateFld.omegaRadiansPerSecond);
         // Debug dashboard telemetry disabled to reduce NetworkTables traffic.
-        // futurePosePublisher.set(futureFieldPose);
-        // futureVelocityPublisher.set(futureFieldVelocity);
+        // futurePoseFldPublisher.set(futurePoseFldArray);
+        // futureVelocityFldPublisher.set(futureVelocityFldArray);
     }
 
     private void clearSolutionTelemetry() {

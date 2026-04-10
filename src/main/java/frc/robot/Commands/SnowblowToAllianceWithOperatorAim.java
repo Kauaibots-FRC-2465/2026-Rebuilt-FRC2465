@@ -29,6 +29,10 @@ import frc.robot.utility.TuningDashboard;
 
 /**
  * Snowblow variant that uses an operator-selected field target inside the alliance zone.
+ *
+ * Frame suffixes used in this command:
+ * Fld = field frame and the default for internal geometry/solver math.
+ * Drv = driver-perspective field-centric request frame at the Phoenix request boundary.
  */
 public class SnowblowToAllianceWithOperatorAim extends Command {
     private static final String SOLVE_STATUS_NOT_RUN = "NOT_RUN";
@@ -52,7 +56,7 @@ public class SnowblowToAllianceWithOperatorAim extends Command {
     private final SparkAnglePositionSubsystem verticalAim;
     private final ShooterSubsystem shooter;
     private final Supplier<SwerveRequest> driveRequestSupplier;
-    private final Supplier<Translation2d> targetSupplier;
+    private final Supplier<Translation2d> targetFldSupplier;
     private final SwerveRequest.FieldCentricFacingAngle facingAngleDrive =
             new SwerveRequest.FieldCentricFacingAngle();
     private final DoublePublisher targetDistanceInchesPublisher;
@@ -64,8 +68,8 @@ public class SnowblowToAllianceWithOperatorAim extends Command {
     private final DoublePublisher shotAzimuthDegreesPublisher;
     private final DoublePublisher turretDeltaDegreesPublisher;
     private final DoublePublisher robotHeadingDegreesPublisher;
-    private final edu.wpi.first.networktables.DoubleArrayPublisher futurePosePublisher;
-    private final edu.wpi.first.networktables.DoubleArrayPublisher futureVelocityPublisher;
+    private final edu.wpi.first.networktables.DoubleArrayPublisher futurePoseFldPublisher;
+    private final edu.wpi.first.networktables.DoubleArrayPublisher futureVelocityFldPublisher;
     private final BooleanPublisher validSolutionPublisher;
     private final BooleanPublisher tuningActivePublisher;
     private final BooleanPublisher tuningPredictedStateValidPublisher;
@@ -89,15 +93,15 @@ public class SnowblowToAllianceWithOperatorAim extends Command {
     private final IntegerPublisher tuningTimeSinceLatestOdometryMicrosPublisher;
     private final IntegerPublisher tuningTimeBetweenLatestAndPriorOdometryMicrosPublisher;
     private final StringPublisher tuningOdometryHistoryResetReasonPublisher;
-    private final PoseEstimatorSubsystem.PredictedFusedState futureState =
+    private final PoseEstimatorSubsystem.PredictedFusedState futureStateFld =
             new PoseEstimatorSubsystem.PredictedFusedState();
     private final BallTrajectoryLookup.MovingShotSolution idealMovingShotSolution =
             new BallTrajectoryLookup.MovingShotSolution();
     private final BallTrajectoryLookup.MovingShotSolution movingShotSolution =
             new BallTrajectoryLookup.MovingShotSolution();
-    private final double[] futureFieldPose = new double[3];
-    private final double[] futureFieldVelocity = new double[3];
-    private Rotation2d lastValidRobotHeadingTarget = new Rotation2d();
+    private final double[] futurePoseFldArray = new double[3];
+    private final double[] futureVelocityFldArray = new double[3];
+    private Rotation2d lastValidRobotHeadingTargetFld = new Rotation2d();
     private double lastValidTurretDeltaDegrees = 0.0;
     private double lastValidHoodAngleDegrees = ShooterConstants.COMMANDED_MAXIMUM_ALLOWED_HOOD_ANGLE_DEGREES;
     private double lastValidFlywheelCommandIps = 0.0;
@@ -110,7 +114,7 @@ public class SnowblowToAllianceWithOperatorAim extends Command {
                     Meters.convertFrom(
                             ShooterConstants.COMMANDED_PREFERRED_HEADING_MIN_SAMPLE_SPACING_INCHES,
                             Inches));
-    private Translation2d lastFieldRelativeDriveDirection = new Translation2d();
+    private Translation2d lastDriveDirectionFld = new Translation2d();
     private int predictionInvalidCount;
     private int noSolutionCount;
     private int nonFieldCentricCount;
@@ -122,7 +126,7 @@ public class SnowblowToAllianceWithOperatorAim extends Command {
             SparkAnglePositionSubsystem verticalAim,
             ShooterSubsystem shooter,
             Supplier<SwerveRequest> driveRequestSupplier,
-            Supplier<Translation2d> targetSupplier) {
+            Supplier<Translation2d> targetFldSupplier) {
         this.drivetrain = Objects.requireNonNull(drivetrain, "drivetrain must not be null");
         this.poseEstimator = Objects.requireNonNull(poseEstimator, "poseEstimator must not be null");
         this.horizontalAim = Objects.requireNonNull(horizontalAim, "horizontalAim must not be null");
@@ -130,7 +134,7 @@ public class SnowblowToAllianceWithOperatorAim extends Command {
         this.shooter = Objects.requireNonNull(shooter, "shooter must not be null");
         this.driveRequestSupplier =
                 Objects.requireNonNull(driveRequestSupplier, "driveRequestSupplier must not be null");
-        this.targetSupplier = Objects.requireNonNull(targetSupplier, "targetSupplier must not be null");
+        this.targetFldSupplier = Objects.requireNonNull(targetFldSupplier, "targetFldSupplier must not be null");
 
         NetworkTable snowblowTable = NetworkTableInstance.getDefault()
                 .getTable("SnowblowToAllianceWithOperatorAim");
@@ -144,8 +148,8 @@ public class SnowblowToAllianceWithOperatorAim extends Command {
         shotAzimuthDegreesPublisher = snowblowTable.getDoubleTopic("shotAzimuthDegrees").publish();
         turretDeltaDegreesPublisher = snowblowTable.getDoubleTopic("turretDeltaDegrees").publish();
         robotHeadingDegreesPublisher = snowblowTable.getDoubleTopic("robotHeadingDegrees").publish();
-        futurePosePublisher = snowblowTable.getDoubleArrayTopic("futurePose").publish();
-        futureVelocityPublisher = snowblowTable.getDoubleArrayTopic("futureVelocity").publish();
+        futurePoseFldPublisher = snowblowTable.getDoubleArrayTopic("futurePose").publish();
+        futureVelocityFldPublisher = snowblowTable.getDoubleArrayTopic("futureVelocity").publish();
         validSolutionPublisher = snowblowTable.getBooleanTopic("validSolution").publish();
         NetworkTable tuningSnowblowTable =
                 NetworkTableInstance.getDefault().getTable("Tuning").getSubTable("SnowblowOperatorAim");
@@ -194,7 +198,7 @@ public class SnowblowToAllianceWithOperatorAim extends Command {
     @Override
     public void initialize() {
         preferredHeadingTracker.reset();
-        lastFieldRelativeDriveDirection = new Translation2d();
+        lastDriveDirectionFld = new Translation2d();
         predictionInvalidCount = 0;
         noSolutionCount = 0;
         nonFieldCentricCount = 0;
@@ -210,7 +214,7 @@ public class SnowblowToAllianceWithOperatorAim extends Command {
         tuningTargetDistanceInchesPublisher.set(Double.NaN);
         tuningTargetElevationInchesPublisher.set(ShooterConstants.COMMANDED_SNOWBLOW_TARGET_ELEVATION_INCHES);
         hasLatchedShotCommand = false;
-        lastValidRobotHeadingTarget = new Rotation2d();
+        lastValidRobotHeadingTargetFld = new Rotation2d();
         lastValidTurretDeltaDegrees = 0.0;
         lastValidHoodAngleDegrees = verticalAim.getAngle().in(Degrees);
         lastValidFlywheelCommandIps = 0.0;
@@ -221,7 +225,7 @@ public class SnowblowToAllianceWithOperatorAim extends Command {
     @Override
     public void execute() {
         SwerveRequest requestedDrive = driveRequestSupplier.get();
-        if (!(requestedDrive instanceof SwerveRequest.FieldCentric fieldCentricRequest)) {
+        if (!(requestedDrive instanceof SwerveRequest.FieldCentric fieldCentricRequestDrv)) {
             clearSolutionTelemetry();
             nonFieldCentricCount++;
             tuningActivePublisher.set(true);
@@ -239,10 +243,10 @@ public class SnowblowToAllianceWithOperatorAim extends Command {
             return;
         }
 
-        updateLastDriveDirection();
+        updateLastDriveDirectionFld();
         if (!poseEstimator.getPredictedFusedState(
                 ShooterConstants.COMMANDED_SHOOTER_LOOKAHEAD_SECONDS,
-                futureState)) {
+                futureStateFld)) {
             clearSolutionTelemetry();
             predictionInvalidCount++;
             tuningActivePublisher.set(true);
@@ -271,30 +275,30 @@ public class SnowblowToAllianceWithOperatorAim extends Command {
         tuningPredictedStateValidPublisher.set(true);
         tuningPredictionOutcomePublisher.set(poseEstimator.getLastPredictionOutcome());
         publishPredictionDiagnostics();
-        publishFutureState();
+        publishFutureFieldState();
 
-        Pose2d futurePose = new Pose2d(
-                futureState.xMeters,
-                futureState.yMeters,
-                Rotation2d.fromRadians(futureState.headingRadians));
-        Translation2d target = targetSupplier.get();
-        publishTarget(target);
+        Pose2d futurePoseFld = new Pose2d(
+                futureStateFld.xMeters,
+                futureStateFld.yMeters,
+                Rotation2d.fromRadians(futureStateFld.headingRadians));
+        Translation2d targetFld = targetFldSupplier.get();
+        publishTargetFld(targetFld);
         tuningTargetDistanceInchesPublisher.set(Inches.convertFrom(
-                target.getDistance(futurePose.getTranslation()),
+                targetFld.getDistance(futurePoseFld.getTranslation()),
                 Meters));
         tuningTargetElevationInchesPublisher.set(ShooterConstants.COMMANDED_SNOWBLOW_TARGET_ELEVATION_INCHES);
 
-        Rotation2d preferredRobotHeading = getPreferredRobotHeading(futurePose.getRotation());
-        Rotation2d robotHeadingTarget = preferredRobotHeading;
+        Rotation2d preferredRobotHeadingFld = getPreferredRobotHeadingFld(futurePoseFld.getRotation());
+        Rotation2d robotHeadingTargetFld = preferredRobotHeadingFld;
         BallTrajectoryLookup.FixedFlywheelShotStatus fixedFlywheelStatus =
-                updateShooterSolution(target, preferredRobotHeading);
+                updateShooterSolution(targetFld, preferredRobotHeadingFld);
         tuningSolveStatusPublisher.set(fixedFlywheelStatus.name());
         tuningMeasuredFlywheelSpeedIpsPublisher.set(shooter.getMainFlywheelSpeedIPS());
         if (fixedFlywheelStatus != BallTrajectoryLookup.FixedFlywheelShotStatus.NO_SOLUTION) {
             tuningActivePublisher.set(true);
             tuningCommandStatePublisher.set(COMMAND_STATE_ACTIVE);
             tuningAppliedFlywheelCommandIpsPublisher.set(lastValidFlywheelCommandIps);
-            robotHeadingTarget = Rotation2d.fromDegrees(movingShotSolution.getRobotHeadingDegrees());
+            robotHeadingTargetFld = Rotation2d.fromDegrees(movingShotSolution.getRobotHeadingDegrees());
         } else {
             noSolutionCount++;
             tuningActivePublisher.set(true);
@@ -309,25 +313,25 @@ public class SnowblowToAllianceWithOperatorAim extends Command {
                     hasLatchedShotCommand ? lastValidFlywheelCommandIps : 0.0);
             if (hasLatchedShotCommand) {
                 applyHeldShotCommand();
-                robotHeadingTarget = lastValidRobotHeadingTarget;
+                robotHeadingTargetFld = lastValidRobotHeadingTargetFld;
             }
             publishFailureCounters();
         }
-        Rotation2d operatorPerspectiveHeadingTarget =
-                robotHeadingTarget.minus(drivetrain.getDriverPerspectiveForward());
+        Rotation2d robotHeadingTargetDrv =
+                robotHeadingTargetFld.minus(drivetrain.getDriverPerspectiveForward());
 
         drivetrain.setControl(
                 facingAngleDrive
-                        .withVelocityX(fieldCentricRequest.VelocityX)
-                        .withVelocityY(fieldCentricRequest.VelocityY)
-                        .withTargetDirection(operatorPerspectiveHeadingTarget)
-                        .withDeadband(fieldCentricRequest.Deadband)
-                        .withRotationalDeadband(fieldCentricRequest.RotationalDeadband)
-                        .withCenterOfRotation(fieldCentricRequest.CenterOfRotation)
-                        .withDriveRequestType(fieldCentricRequest.DriveRequestType)
-                        .withSteerRequestType(fieldCentricRequest.SteerRequestType)
-                        .withDesaturateWheelSpeeds(fieldCentricRequest.DesaturateWheelSpeeds)
-                        .withForwardPerspective(fieldCentricRequest.ForwardPerspective));
+                        .withVelocityX(fieldCentricRequestDrv.VelocityX)
+                        .withVelocityY(fieldCentricRequestDrv.VelocityY)
+                        .withTargetDirection(robotHeadingTargetDrv)
+                        .withDeadband(fieldCentricRequestDrv.Deadband)
+                        .withRotationalDeadband(fieldCentricRequestDrv.RotationalDeadband)
+                        .withCenterOfRotation(fieldCentricRequestDrv.CenterOfRotation)
+                        .withDriveRequestType(fieldCentricRequestDrv.DriveRequestType)
+                        .withSteerRequestType(fieldCentricRequestDrv.SteerRequestType)
+                        .withDesaturateWheelSpeeds(fieldCentricRequestDrv.DesaturateWheelSpeeds)
+                        .withForwardPerspective(fieldCentricRequestDrv.ForwardPerspective));
     }
 
     @Override
@@ -350,8 +354,8 @@ public class SnowblowToAllianceWithOperatorAim extends Command {
     }
 
     private BallTrajectoryLookup.FixedFlywheelShotStatus updateShooterSolution(
-            Translation2d target,
-            Rotation2d preferredRobotHeading) {
+            Translation2d targetFld,
+            Rotation2d preferredRobotHeadingFld) {
         double minimumHoodAngleDegrees = verticalAim.getMinimumAngle().in(Degrees);
         double maximumHoodAngleDegrees = verticalAim.getMaximumAngle().in(Degrees);
         BallTrajectoryLookup.FixedFlywheelShotStatus fixedFlywheelStatus =
@@ -359,11 +363,11 @@ public class SnowblowToAllianceWithOperatorAim extends Command {
                         verticalAim,
                         ShooterConstants.COMMANDED_MOVING_SHOT_HOOD_SEARCH_STEP_DEGREES,
                         ShooterConstants.COMMANDED_MOVING_SHOT_FIXED_FLYWHEEL_HOOD_SEARCH_STEP_DEGREES,
-                        futureState,
-                        target,
+                        futureStateFld,
+                        targetFld,
                         ShooterConstants.COMMANDED_SNOWBLOW_TARGET_ELEVATION_INCHES,
                         ShooterConstants.COMMANDED_MAXIMUM_SHOOTING_HEIGHT_INCHES,
-                        preferredRobotHeading.getRadians(),
+                        preferredRobotHeadingFld.getRadians(),
                         horizontalAim.getMinimumAngle().in(Degrees),
                         horizontalAim.getMaximumAngle().in(Degrees),
                         shooter.getMainFlywheelSpeedIPS(),
@@ -397,7 +401,7 @@ public class SnowblowToAllianceWithOperatorAim extends Command {
         verticalAim.setAngle(Degrees.of(commandedHoodAngleDegrees));
         horizontalAim.setAngle(Degrees.of(clampedTurretDeltaDegrees));
         shooter.setCoupledIPS(idealFlywheelCommandIps);
-        lastValidRobotHeadingTarget = Rotation2d.fromDegrees(movingShotSolution.getRobotHeadingDegrees());
+        lastValidRobotHeadingTargetFld = Rotation2d.fromDegrees(movingShotSolution.getRobotHeadingDegrees());
         lastValidTurretDeltaDegrees = clampedTurretDeltaDegrees;
         lastValidHoodAngleDegrees = commandedHoodAngleDegrees;
         lastValidFlywheelCommandIps = idealFlywheelCommandIps;
@@ -405,35 +409,35 @@ public class SnowblowToAllianceWithOperatorAim extends Command {
         return fixedFlywheelStatus;
     }
 
-    private void updateLastDriveDirection() {
-        Pose2d currentPose = poseEstimator.getFusedPoseSupplier().get();
-        if (currentPose == null) {
+    private void updateLastDriveDirectionFld() {
+        Pose2d currentPoseFld = poseEstimator.getFusedPoseSupplier().get();
+        if (currentPoseFld == null) {
             return;
         }
-        lastFieldRelativeDriveDirection = preferredHeadingTracker.update(currentPose.getTranslation());
+        lastDriveDirectionFld = preferredHeadingTracker.update(currentPoseFld.getTranslation());
     }
 
-    private Rotation2d getPreferredRobotHeading(Rotation2d fallbackHeading) {
-        if (lastFieldRelativeDriveDirection.getNorm() > 1e-9) {
-            return lastFieldRelativeDriveDirection.getAngle();
+    private Rotation2d getPreferredRobotHeadingFld(Rotation2d fallbackHeadingFld) {
+        if (lastDriveDirectionFld.getNorm() > 1e-9) {
+            return lastDriveDirectionFld.getAngle();
         }
-        return fallbackHeading;
+        return fallbackHeadingFld;
     }
 
-    private void publishTarget(Translation2d target) {
-        TuningDashboard.publishShootingTarget(target);
+    private void publishTargetFld(Translation2d targetFld) {
+        TuningDashboard.publishShootingTarget(targetFld);
     }
 
-    private void publishFutureState() {
-        futureFieldPose[0] = futureState.xMeters;
-        futureFieldPose[1] = futureState.yMeters;
-        futureFieldPose[2] = Math.toDegrees(futureState.headingRadians);
-        futureFieldVelocity[0] = futureState.vxMetersPerSecond;
-        futureFieldVelocity[1] = futureState.vyMetersPerSecond;
-        futureFieldVelocity[2] = Math.toDegrees(futureState.omegaRadiansPerSecond);
+    private void publishFutureFieldState() {
+        futurePoseFldArray[0] = futureStateFld.xMeters;
+        futurePoseFldArray[1] = futureStateFld.yMeters;
+        futurePoseFldArray[2] = Math.toDegrees(futureStateFld.headingRadians);
+        futureVelocityFldArray[0] = futureStateFld.vxMetersPerSecond;
+        futureVelocityFldArray[1] = futureStateFld.vyMetersPerSecond;
+        futureVelocityFldArray[2] = Math.toDegrees(futureStateFld.omegaRadiansPerSecond);
         // Debug dashboard telemetry disabled to reduce NetworkTables traffic.
-        // futurePosePublisher.set(futureFieldPose);
-        // futureVelocityPublisher.set(futureFieldVelocity);
+        // futurePoseFldPublisher.set(futurePoseFldArray);
+        // futureVelocityFldPublisher.set(futureVelocityFldArray);
     }
 
     private void clearSolutionTelemetry() {
