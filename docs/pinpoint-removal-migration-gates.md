@@ -41,9 +41,16 @@ $env:GRADLE_USER_HOME="$PWD\.gradle-user-home"
   - `frc.robot.Commands.ScoreInHubTest`: `13`
   - `frc.robot.subsystems.PoseEstimatorMigrationGateTest`: `4`
   - `frc.robot.LimelightHelpersMigrationGateTest`: `1`
-  - Total: `18`
+  - `frc.robot.LimelightSubsystemMigrationGateTest`: `1`
+  - Total: `19`
 
 ## Step 3 addition
 
 - Date: `2026-04-10`
 - Added `frc.robot.LimelightSubsystemMigrationGateTest` to lock direct use of the official Limelight pose-estimate timestamp path for CTRE vision injection.
+
+## Legacy retention
+
+- Date: `2026-04-10`
+- Decision: keep the legacy supplier-based `PoseEstimatorSubsystem` path and the unused Pinpoint classes in the repo for now.
+- Rationale: production pose authority has moved to CTRE plus Limelight vision injection, but retaining the legacy code reduces migration risk while final on-robot validation is still pending.

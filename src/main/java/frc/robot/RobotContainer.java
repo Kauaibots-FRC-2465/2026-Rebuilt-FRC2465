@@ -74,7 +74,6 @@ import frc.robot.subsystems.BatteryMonitorSubsystem;
 import frc.robot.subsystems.IntakePositionSubsystem;
 import frc.robot.subsystems.KrakenFlywheelSubsystem;
 import frc.robot.subsystems.LimelightSubsystem;
-import frc.robot.subsystems.PinpointSubsystem;
 import frc.robot.subsystems.PoseEstimatorSubsystem;
 import frc.robot.subsystems.ShooterSubsystem;
 import frc.robot.subsystems.SparkAnglePositionSubsystem;
@@ -217,7 +216,6 @@ private Command showAllianceMarquee() {
 
     public final PoseEstimatorSubsystem poseEstimatorSubsystem;
     public final PoseEstimatorSubsystem.Configuration poseEstimatorConfiguration = new PoseEstimatorSubsystem.Configuration();
-    private final PinpointSubsystem pinpointSubsystem;
     private final LimelightSubsystem limelightSubsystem;
     private boolean hasReliableFieldHeading = false;
 
@@ -280,18 +278,6 @@ private Command showAllianceMarquee() {
         poseEstimatorConfiguration.odoLongitudinalDeviationPerDistance =
         poseEstimatorConfiguration.odoLongitudinalDeviationPerRadian = 0.01;
 
-        pinpointSubsystem = new PinpointSubsystem(
-            -6.0625 /*y of x-forward pod*/,
-            -2.5 /*x of y- strafe pod*/,
-            Inch,
-            frc.robot.subsystems.GoBildaPinpointFRCDriver.GoBildaOdometryPods.goBILDA_4_BAR_POD,
-            frc.robot.subsystems.GoBildaPinpointFRCDriver.EncoderDirection.FORWARD,
-            frc.robot.subsystems.GoBildaPinpointFRCDriver.EncoderDirection.REVERSED);
-        poseEstimatorConfiguration.odometryPose = pinpointSubsystem.getPose2dSupplier();
-        poseEstimatorConfiguration.odometryTimestampFpga =
-                pinpointSubsystem.getTimestampFpgaSupplier();
-        poseEstimatorConfiguration.odometryValid = pinpointSubsystem.getIsValidSupplier();
-        
         DoubleSupplier limelightHeadingDegreesSupplier =
                 () -> drivetrain.getState().Pose.getRotation().getDegrees();
         BooleanSupplier limelightHeadingReliableSupplier = () -> hasReliableFieldHeading;
@@ -767,9 +753,6 @@ private Command showAllianceMarquee() {
             currentPose = drivetrain.getState().Pose;
         }
         if (currentPose == null) {
-            currentPose = pinpointSubsystem.getPose2dSupplier().get();
-        }
-        if (currentPose == null) {
             return;
         }
 
@@ -787,7 +770,6 @@ private Command showAllianceMarquee() {
     }
 
     private void applyPoseReset(Pose2d pose, boolean headingReliable) {
-        pinpointSubsystem.setPosition(pose);
         poseEstimatorSubsystem.resetPose(pose);
         hasReliableFieldHeading = headingReliable;
     }
