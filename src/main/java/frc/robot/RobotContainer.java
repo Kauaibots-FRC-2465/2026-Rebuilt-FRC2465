@@ -218,6 +218,7 @@ private Command showAllianceMarquee() {
     public final PoseEstimatorSubsystem poseEstimatorSubsystem;
     public final PoseEstimatorSubsystem.Configuration poseEstimatorConfiguration = new PoseEstimatorSubsystem.Configuration();
     private final PinpointSubsystem pinpointSubsystem;
+    private final LimelightSubsystem limelightSubsystem;
     private boolean hasReliableFieldHeading = false;
 
     public final SwerveDrivetrainSubsystem encapsulatedDrivetrain;
@@ -287,19 +288,15 @@ private Command showAllianceMarquee() {
             frc.robot.subsystems.GoBildaPinpointFRCDriver.EncoderDirection.FORWARD,
             frc.robot.subsystems.GoBildaPinpointFRCDriver.EncoderDirection.REVERSED);
         poseEstimatorConfiguration.odometryPose = pinpointSubsystem.getPose2dSupplier();
-        poseEstimatorConfiguration.odometryTimestamp = pinpointSubsystem.getTimestampSupplier();
+        poseEstimatorConfiguration.odometryTimestampFpga =
+                pinpointSubsystem.getTimestampFpgaSupplier();
         poseEstimatorConfiguration.odometryValid = pinpointSubsystem.getIsValidSupplier();
         
-        DoubleSupplier limelightHeadingDegreesSupplier = () -> {
-            Pose2d odometryPose = this.pinpointSubsystem.getPose2dSupplier().get();
-            if (odometryPose != null) {
-                return odometryPose.getRotation().getDegrees();
-            }
-            return this.pinpointSubsystem.getHeadingSupplier(Degree).getAsDouble();
-        };
+        DoubleSupplier limelightHeadingDegreesSupplier =
+                () -> drivetrain.getState().Pose.getRotation().getDegrees();
         BooleanSupplier limelightHeadingReliableSupplier = () -> hasReliableFieldHeading;
         Consumer<Pose2d> limelightMt1SeedConsumer = this::seedPoseFromMt1;
-        LimelightSubsystem limelightSubsystem = new LimelightSubsystem(
+        limelightSubsystem = new LimelightSubsystem(
             limelightHeadingDegreesSupplier,
             limelightHeadingReliableSupplier,
             limelightMt1SeedConsumer,
@@ -310,15 +307,16 @@ private Command showAllianceMarquee() {
              20, 21, 22, 23, 24, 25, 26, 27, 28, 29,
              30, 31, 32});
         poseEstimatorConfiguration.visionPose = limelightSubsystem.getPose2dSupplier();
-        poseEstimatorConfiguration.visionTimestamp = limelightSubsystem.getPose2dTimestampSupplier();
+        poseEstimatorConfiguration.visionTimestampNtLocal =
+                limelightSubsystem.getPoseTimestampNtLocalSupplier();
         poseEstimatorConfiguration.visionIsValid = limelightSubsystem.getIsValidSupplier();
 
         poseEstimatorConfiguration.visionThetaDeviation = limelightSubsystem.getThetaDeviationSupplier();
         poseEstimatorConfiguration.visionXDeviation = limelightSubsystem.getXDeviationSupplier();
         poseEstimatorConfiguration.visionYDeviation = limelightSubsystem.getYDeviationSupplier();
         
-        poseEstimatorSubsystem = new PoseEstimatorSubsystem(poseEstimatorConfiguration);
-        encapsulatedDrivetrain = new SwerveDrivetrainSubsystem(drivetrain, poseEstimatorSubsystem); 
+        poseEstimatorSubsystem = new PoseEstimatorSubsystem(drivetrain, poseEstimatorConfiguration);
+        encapsulatedDrivetrain = new SwerveDrivetrainSubsystem(drivetrain, limelightSubsystem); 
 
         horizontalAim = new SparkAnglePositionSubsystem(
             2,
@@ -766,6 +764,9 @@ private Command showAllianceMarquee() {
     private void resetFieldOrientedHeadingToAllianceForward() {
         Pose2d currentPose = poseEstimatorSubsystem.getFusedPoseSupplier().get();
         if (currentPose == null) {
+            currentPose = drivetrain.getState().Pose;
+        }
+        if (currentPose == null) {
             currentPose = pinpointSubsystem.getPose2dSupplier().get();
         }
         if (currentPose == null) {
@@ -788,7 +789,6 @@ private Command showAllianceMarquee() {
     private void applyPoseReset(Pose2d pose, boolean headingReliable) {
         pinpointSubsystem.setPosition(pose);
         poseEstimatorSubsystem.resetPose(pose);
-        drivetrain.resetPose(pose);
         hasReliableFieldHeading = headingReliable;
     }
 

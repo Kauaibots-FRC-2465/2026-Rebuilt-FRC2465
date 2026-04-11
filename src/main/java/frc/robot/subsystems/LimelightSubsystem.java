@@ -26,16 +26,72 @@ public class LimelightSubsystem extends SubsystemBase {
     private static final double MT1_BOOTSTRAP_MAX_HEADING_DELTA_DEGREES = 10.0;
     private static final double MT1_BOOTSTRAP_MAX_SINGLE_TAG_AMBIGUITY = 0.1;
 
+    public static final class VisionMeasurement {
+        public Pose2d robotPoseFldMeters = new Pose2d();
+        public long captureTimestampPoseEstimateMicros = -1L;
+        public double xDeviationFldMeters = Double.NaN;
+        public double yDeviationFldMeters = Double.NaN;
+        public double thetaDeviationFldRadians = Double.NaN;
+        public long sequenceNumber = -1L;
+        private boolean valid = false;
+
+        public boolean isValid() {
+            return valid;
+        }
+
+        public void setInvalid() {
+            robotPoseFldMeters = new Pose2d();
+            captureTimestampPoseEstimateMicros = -1L;
+            xDeviationFldMeters = Double.NaN;
+            yDeviationFldMeters = Double.NaN;
+            thetaDeviationFldRadians = Double.NaN;
+            sequenceNumber = -1L;
+            valid = false;
+        }
+
+        void set(
+                Pose2d robotPoseFldMeters,
+                long captureTimestampPoseEstimateMicros,
+                double xDeviationFldMeters,
+                double yDeviationFldMeters,
+                double thetaDeviationFldRadians,
+                long sequenceNumber) {
+            this.robotPoseFldMeters = robotPoseFldMeters;
+            this.captureTimestampPoseEstimateMicros = captureTimestampPoseEstimateMicros;
+            this.xDeviationFldMeters = xDeviationFldMeters;
+            this.yDeviationFldMeters = yDeviationFldMeters;
+            this.thetaDeviationFldRadians = thetaDeviationFldRadians;
+            this.sequenceNumber = sequenceNumber;
+            valid = true;
+        }
+
+        public void copyFrom(VisionMeasurement other) {
+            if (other == null || !other.valid) {
+                setInvalid();
+                return;
+            }
+            set(
+                    other.robotPoseFldMeters,
+                    other.captureTimestampPoseEstimateMicros,
+                    other.xDeviationFldMeters,
+                    other.yDeviationFldMeters,
+                    other.thetaDeviationFldRadians,
+                    other.sequenceNumber);
+        }
+    }
+
     private final DoubleSupplier externalHeadingDegreesSupplier;
     private final BooleanSupplier externalHeadingReliableSupplier;
     private final Consumer<Pose2d> mt1SeedPoseConsumer;
     PoseEstimate currentPoseEstimate;
     private double lastHeartbeat = Double.NaN;
-    private double lastProcessedPoseTimestampSeconds = Double.NaN;
+    private double lastProcessedPoseEstimateTimestampSeconds = Double.NaN;
     private boolean hasReceivedValidMt2Pose = false;
     private boolean hasSeededHeadingFromMt1 = false;
     private PoseEstimate lastMt1BootstrapCandidate = null;
     private int consecutiveConsistentMt1BootstrapFrames = 0;
+    private final VisionMeasurement latestVisionMeasurement = new VisionMeasurement();
+    private long nextVisionMeasurementSequenceNumber = 0L;
     
     public LimelightSubsystem(
             DoubleSupplier externalHeadingDegreesSupplier,
@@ -60,11 +116,11 @@ public class LimelightSubsystem extends SubsystemBase {
         };
     }
 
-    public Supplier<Time> getPose2dTimestampSupplier() {
+    public Supplier<Time> getPoseTimestampNtLocalSupplier() {
         return ()-> {
             return currentPoseEstimate == null
                     ? Seconds.zero()
-                    : Seconds.of(currentPoseEstimate.timestampSeconds);
+                    : Seconds.of(currentPoseEstimate.timestampNtLocalSeconds);
         };
     }
     
@@ -82,6 +138,14 @@ public class LimelightSubsystem extends SubsystemBase {
 
     public DoubleSupplier getThetaDeviationSupplier() {
         return ()-> yawDeviation;
+    }
+
+    public boolean getLatestVisionMeasurement(VisionMeasurement out) {
+        if (out == null) {
+            throw new IllegalArgumentException("VisionMeasurement output must not be null.");
+        }
+        out.copyFrom(latestVisionMeasurement);
+        return out.isValid();
     }
     
     private double xDeviation, yDeviation, yawDeviation;
@@ -150,14 +214,21 @@ public class LimelightSubsystem extends SubsystemBase {
             poseFetchMicros = SlowCallMonitor.nowMicros() - poseFetchStartMicros;
 
             if (currentPoseEstimate != null
-                    && Double.compare(currentPoseEstimate.timestampSeconds, lastProcessedPoseTimestampSeconds) != 0) {
+                    && Double.compare(
+                                    currentPoseEstimate.timestampNtLocalSeconds,
+                                    lastProcessedPoseEstimateTimestampSeconds)
+                            != 0) {
                 poseChanged = true;
-                lastProcessedPoseTimestampSeconds = currentPoseEstimate.timestampSeconds;
+                lastProcessedPoseEstimateTimestampSeconds =
+                        currentPoseEstimate.timestampNtLocalSeconds;
 
                 // MegaTag Standard Deviations [0=MT1x, 1=MT1y, 2=MT1z, 3=MT1roll, 4=MT1pitch, 5=MT1Yaw, 6=MT2x, 7=MT2y, 8=MT2z, 9=MT2roll, 10=MT2pitch, 11=MT2yaw]
                 long stddevsStartMicros = SlowCallMonitor.nowMicros();
                 double[] stddevs = LimelightHelpers.getLimelightNTDoubleArray(LIMELIGHT_NAME, "stddevs");
                 stddevsMicros = SlowCallMonitor.nowMicros() - stddevsStartMicros;
+                xDeviation = Double.NaN;
+                yDeviation = Double.NaN;
+                yawDeviation = Double.NaN;
 
                 if (!useMT2 && stddevs.length >= 6) {
                     xDeviation = stddevs[0];
@@ -167,6 +238,20 @@ public class LimelightSubsystem extends SubsystemBase {
                     xDeviation = stddevs[6];
                     yDeviation = stddevs[7];
                     yawDeviation = Math.toRadians(stddevs[11]);
+                }
+
+                if (Double.isFinite(xDeviation)
+                        && Double.isFinite(yDeviation)
+                        && Double.isFinite(yawDeviation)) {
+                    long captureTimestampPoseEstimateMicros =
+                            poseEstimateTimestampSecondsToMicros(currentPoseEstimate.timestampNtLocalSeconds);
+                    latestVisionMeasurement.set(
+                            currentPoseEstimate.pose,
+                            captureTimestampPoseEstimateMicros,
+                            xDeviation,
+                            yDeviation,
+                            yawDeviation,
+                            nextVisionMeasurementSequenceNumber++);
                 }
             }
         }
@@ -195,6 +280,10 @@ public class LimelightSubsystem extends SubsystemBase {
         return externalHeadingReliableSupplier.getAsBoolean()
                 || hasReceivedValidMt2Pose
                 || hasSeededHeadingFromMt1;
+    }
+
+    public static long poseEstimateTimestampSecondsToMicros(double timestampSeconds) {
+        return Math.round(timestampSeconds * 1_000_000.0);
     }
 
     private static boolean isPoseEstimateValid(PoseEstimate poseEstimate) {

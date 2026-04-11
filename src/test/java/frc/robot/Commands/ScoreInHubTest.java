@@ -43,6 +43,17 @@ class ScoreInHubTest {
     }
 
     @Test
+    void driverVelocityToFieldVelocityRotatesQuarterTurnPerspective() {
+        Translation2d velocityDrvMetersPerSecond = new Translation2d(1.0, 0.0);
+        Translation2d velocityFldMetersPerSecond = ScoreInHub.driverVelocityToFieldVelocity(
+                velocityDrvMetersPerSecond,
+                Rotation2d.fromDegrees(90.0));
+
+        assertEquals(0.0, velocityFldMetersPerSecond.getX(), 1e-9);
+        assertEquals(1.0, velocityFldMetersPerSecond.getY(), 1e-9);
+    }
+
+    @Test
     void fieldAndDriverVelocityConversionsRoundTripForArbitraryPerspective() {
         Rotation2d driverPerspectiveForward = Rotation2d.fromDegrees(37.0);
         Translation2d originalVelocityDrvMetersPerSecond = new Translation2d(0.9, -1.7);

@@ -314,13 +314,15 @@ public class CommandSwerveDrivetrain extends TunerSwerveDrivetrain implements Su
      * while still accounting for measurement noise.
      *
      * @param visionRobotPoseMeters The pose of the robot as measured by the vision camera.
-     * @param timestampSeconds The timestamp of the vision measurement in seconds.
+     * @param fpgaTimestampMicroseconds The timestamp of the vision measurement in FPGA microseconds.
      */
     @Override
-    public void addVisionMeasurement(Pose2d visionRobotPoseMeters, double timestampSeconds) {
+    public void addVisionMeasurement(
+            Pose2d visionRobotPoseMeters,
+            double fpgaTimestampMicroseconds) {
         super.addVisionMeasurement(
                 visionRobotPoseMeters,
-                Utils.fpgaToCurrentTime(fpgaMicrosecondsToSeconds(timestampSeconds)));
+                Utils.fpgaToCurrentTime(fpgaMicrosecondsToSeconds(fpgaTimestampMicroseconds)));
     }
 
     public void addVisionMeasurement(Pose2d visionRobotPoseMeters, Time fpgaTimestamp) {
@@ -336,19 +338,19 @@ public class CommandSwerveDrivetrain extends TunerSwerveDrivetrain implements Su
      * {@link #setVisionMeasurementStdDevs(Matrix)} or this method.
      *
      * @param visionRobotPoseMeters The pose of the robot as measured by the vision camera.
-     * @param timestampSeconds The timestamp of the vision measurement in seconds.
+     * @param fpgaTimestampMicroseconds The timestamp of the vision measurement in FPGA microseconds.
      * @param visionMeasurementStdDevs Standard deviations of the vision pose measurement
      *     in the form [x, y, theta]ᵀ, with units in meters and radians.
      */
     @Override
     public void addVisionMeasurement(
         Pose2d visionRobotPoseMeters,
-        double timestampSeconds,
+        double fpgaTimestampMicroseconds,
         Matrix<N3, N1> visionMeasurementStdDevs
     ) {
         super.addVisionMeasurement(
                 visionRobotPoseMeters,
-                Utils.fpgaToCurrentTime(fpgaMicrosecondsToSeconds(timestampSeconds)),
+                Utils.fpgaToCurrentTime(fpgaMicrosecondsToSeconds(fpgaTimestampMicroseconds)),
                 visionMeasurementStdDevs);
     }
 
@@ -366,12 +368,13 @@ public class CommandSwerveDrivetrain extends TunerSwerveDrivetrain implements Su
     /**
      * Return the pose at a given timestamp, if the buffer is not empty.
      *
-     * @param timestampSeconds The timestamp of the pose in seconds.
+     * @param fpgaTimestampMicroseconds The timestamp of the pose in FPGA microseconds.
      * @return The pose at the given timestamp (or Optional.empty() if the buffer is empty).
      */
     @Override
-    public Optional<Pose2d> samplePoseAt(double timestampSeconds) {
-        return super.samplePoseAt(Utils.fpgaToCurrentTime(fpgaMicrosecondsToSeconds(timestampSeconds)));
+    public Optional<Pose2d> samplePoseAt(double fpgaTimestampMicroseconds) {
+        return super.samplePoseAt(
+                Utils.fpgaToCurrentTime(fpgaMicrosecondsToSeconds(fpgaTimestampMicroseconds)));
     }
 
     public Optional<Pose2d> samplePoseAt(Time fpgaTimestamp) {

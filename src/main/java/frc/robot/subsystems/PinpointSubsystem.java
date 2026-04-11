@@ -104,11 +104,11 @@ public class PinpointSubsystem extends SubsystemBase {
         return () -> {return pinpoint.getDeviceStatus()==GoBildaPinpointFRCDriver.DeviceStatus.READY;};
     } 
 
-    public Supplier<Time> getTimestampSupplier() {
+    public Supplier<Time> getTimestampFpgaSupplier() {
         return () -> Microseconds.of(pinpoint.getFpgaBulkReadTimestamp());
     }
 
-    public Supplier<Time> getLatencySupplier() {
+    public Supplier<Time> getLatencyFpgaSupplier() {
         return () -> Microseconds.of(pinpoint.getFpgaBulkReadLatency());
     }
 

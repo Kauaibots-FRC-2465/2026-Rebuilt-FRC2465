@@ -530,7 +530,7 @@ public class LimelightHelpers {
      */
     public static class PoseEstimate {
         public Pose2d pose;
-        public double timestampSeconds;
+        public double timestampNtLocalSeconds;
         public double latency;
         public int tagCount;
         public double tagSpan;
@@ -545,7 +545,7 @@ public class LimelightHelpers {
          */
         public PoseEstimate() {
             this.pose = new Pose2d();
-            this.timestampSeconds = 0;
+            this.timestampNtLocalSeconds = 0;
             this.latency = 0;
             this.tagCount = 0;
             this.tagSpan = 0;
@@ -555,12 +555,12 @@ public class LimelightHelpers {
             this.isMegaTag2 = false;
         }
 
-        public PoseEstimate(Pose2d pose, double timestampSeconds, double latency, 
+        public PoseEstimate(Pose2d pose, double timestampNtLocalSeconds, double latency,
             int tagCount, double tagSpan, double avgTagDist, 
             double avgTagArea, RawFiducial[] rawFiducials, boolean isMegaTag2) {
 
             this.pose = pose;
-            this.timestampSeconds = timestampSeconds;
+            this.timestampNtLocalSeconds = timestampNtLocalSeconds;
             this.latency = latency;
             this.tagCount = tagCount;
             this.tagSpan = tagSpan;
@@ -710,7 +710,7 @@ public class LimelightHelpers {
         
         TimestampedDoubleArray tsValue = poseEntry.getAtomic();
         double[] poseArray = tsValue.value;
-        long timestamp = tsValue.timestamp;
+        long publishedTimestampNtLocalMicros = tsValue.timestamp;
         
         if (poseArray.length == 0) {
             // Handle the case where no data is available
@@ -724,8 +724,8 @@ public class LimelightHelpers {
         double tagDist = extractArrayEntry(poseArray, 9);
         double tagArea = extractArrayEntry(poseArray, 10);
         
-        // Convert server timestamp from microseconds to seconds and adjust for latency
-        double adjustedTimestamp = (timestamp / 1000000.0) - (latency / 1000.0);
+        double captureTimestampNtLocalSeconds =
+                (publishedTimestampNtLocalMicros / 1_000_000.0) - (latency / 1_000.0);
     
         RawFiducial[] rawFiducials = new RawFiducial[tagCount];
         int valsPerFiducial = 7;
@@ -747,7 +747,16 @@ public class LimelightHelpers {
             }
         }
     
-        return new PoseEstimate(pose, adjustedTimestamp, latency, tagCount, tagSpan, tagDist, tagArea, rawFiducials, isMegaTag2);
+        return new PoseEstimate(
+                pose,
+                captureTimestampNtLocalSeconds,
+                latency,
+                tagCount,
+                tagSpan,
+                tagDist,
+                tagArea,
+                rawFiducials,
+                isMegaTag2);
     }
 
     /**
@@ -835,7 +844,7 @@ public class LimelightHelpers {
         }
     
         System.out.printf("Pose Estimate Information:%n");
-        System.out.printf("Timestamp (Seconds): %.3f%n", pose.timestampSeconds);
+        System.out.printf("Timestamp (NT Local Seconds): %.3f%n", pose.timestampNtLocalSeconds);
         System.out.printf("Latency: %.3f ms%n", pose.latency);
         System.out.printf("Tag Count: %d%n", pose.tagCount);
         System.out.printf("Tag Span: %.2f meters%n", pose.tagSpan);
